@@ -1,0 +1,29 @@
+model CartItem {
+  id String @id @default(cuid())
+
+  cartId String
+  cart   Cart   @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  quantity Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// NOTE: PostgreSQL treats NULL as distinct from NULL in unique
+  /// constraints, so this does NOT prevent two rows for the same
+  /// cartId+productId when variantId is null (simple, non-variant
+  /// products). "At most one line item per product/variant combination"
+  /// (see specs/commerce/cart/spec.md) must additionally be enforced by
+  /// the application layer (e.g. find-or-increment instead of blind
+  /// insert) until/unless a NULLS NOT DISTINCT index is added via a raw
+  /// migration edit.
+  @@unique([cartId, productId, variantId])
+  @@index([cartId])
+  @@index([productId])
+}

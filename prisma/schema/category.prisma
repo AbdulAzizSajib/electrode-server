@@ -1,0 +1,33 @@
+model Category {
+  id String @id @default(cuid())
+
+  name        String
+  slug        String  @unique
+  description String?
+  image       String?
+  banner      String?
+
+  status Boolean @default(true)
+
+  parentId String?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryHierarchy")
+
+  products Product[]
+
+  /// Supplementary product tagging via ProductCategory (many-to-many,
+  /// additive to each Product's primary `categoryId`/`category`).
+  productCategories ProductCategory[]
+
+  seoTitle       String?
+  seoDescription String?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([status])
+  @@index([sortOrder])
+}

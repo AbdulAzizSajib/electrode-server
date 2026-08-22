@@ -1,0 +1,24 @@
+/// Singleton store-wide configuration row. There must always be exactly
+/// one row, keyed by the fixed id "singleton" (upsert on that id - never
+/// create a second row). Deliberately a flat single-currency,
+/// single-tax-rate model - no per-region/per-category tax rules and no
+/// multi-currency support (see design.md Non-Goals in
+/// openspec/changes/add-cart-wishlist-store-config).
+model StoreSetting {
+  id String @id @default("singleton")
+
+  storeName String @default("Ecom")
+
+  currency       String @default("BDT")
+  currencySymbol String @default("৳")
+
+  defaultTaxRatePercent Decimal @default(0) @db.Decimal(5, 2)
+
+  freeShippingThreshold Decimal? @db.Decimal(12, 2)
+
+  contactEmail String?
+  contactPhone String?
+  address      String?
+
+  updatedAt DateTime @updatedAt
+}

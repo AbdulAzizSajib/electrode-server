@@ -1,0 +1,18 @@
+model Warehouse {
+  id String @id @default(cuid())
+
+  name String
+  code String @unique
+
+  address String?
+  city    String?
+  country String  @default("Bangladesh")
+
+  isActive Boolean @default(true)
+
+  stocks         Stock[]
+  stockMovements StockMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

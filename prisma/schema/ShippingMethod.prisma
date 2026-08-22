@@ -1,0 +1,17 @@
+model ShippingMethod {
+  id String @id @default(cuid())
+
+  name        String
+  description String?
+
+  price Decimal @db.Decimal(12, 2)
+
+  estimatedDays Int?
+
+  isActive Boolean @default(true)
+
+  shipments Shipment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

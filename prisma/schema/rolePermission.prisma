@@ -1,0 +1,15 @@
+model RolePermission {
+  id String @id @default(cuid())
+
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}

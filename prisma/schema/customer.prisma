@@ -1,0 +1,34 @@
+// =====================================================
+// CUSTOMER
+// =====================================================
+
+model Customer {
+  id String @id @default(cuid())
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  firstName String
+  lastName  String?
+  email     String?
+  phone     String?
+  avatar    String?
+
+  status CustomerStatus @default(ACTIVE)
+
+  addresses CustomerAddress[]
+  orders    Order[]
+  reviews   Review[]
+  returns   ReturnRequest[]
+  tickets   SupportTicket[]
+  cart      Cart?
+  wishlist  Wishlist?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([phone])
+  @@index([status])
+  @@index([createdAt])
+}

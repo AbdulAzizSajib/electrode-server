@@ -1,0 +1,47 @@
+[FOLDER] Auth
+  POST Register
+  POST Verify Email (OTP)
+  POST Resend Verification OTP
+  POST Login
+  GET Get Me
+  PATCH Update Own Profile
+  POST Refresh Token
+  POST Change Password
+  POST Forget Password
+  POST Resend Password Reset OTP
+  POST Reset Password
+  POST Logout
+  GET Google Login (open in browser)
+[FOLDER] Users (Admin - OWNER/ADMIN only)
+  GET Get All Users
+  GET Get User By Id
+  PATCH Update User
+  DELETE Delete User (soft delete)
+[FOLDER] Categories
+  POST Admin - Create Category
+  POST Admin - Create Child Category
+  GET Admin - Get All Categories
+  GET Admin - Get Category By Id
+  PATCH Admin - Update Category
+  DELETE Admin - Delete Category
+  GET Public - Get Category Tree
+  GET Public - Get Category By Slug
+[FOLDER] Brands
+  POST Admin - Create Brand
+  GET Admin - Get All Brands
+  GET Admin - Get Brand By Id
+  PATCH Admin - Update Brand
+  GET Public - Get Brands
+  GET Public - Get Brand By Slug
+  DELETE Admin - Delete Brand
+[FOLDER] Products
+  POST Admin - Create Product (with variants/images/attributes)
+  GET Admin - Get All Products
+  GET Admin - Get Product By Id
+  PATCH Admin - Update Product (scalar fields)
+  PATCH Admin - Update Product Variants/Images/Attributes (sync)
+  POST Admin - Add Product Category Tag
+  DELETE Admin - Remove Product Category Tag
+  GET Public - Get Products
+  GET Public - Get Product By Slug
+  DELETE Admin - Delete Product

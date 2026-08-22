@@ -1,0 +1,210 @@
+// =====================================================
+// ENUMS
+// =====================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductType {
+  SIMPLE
+  VARIABLE
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  COD
+  CARD
+  BKASH
+  NAGAD
+  ROCKET
+  STRIPE
+  PAYPAL
+  BANK_TRANSFER
+  OTHER
+}
+
+enum ShipmentStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+  RETURNED
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  RECEIVED
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  RETURN
+  REFUND
+  ADJUSTMENT
+  DAMAGE
+  LOSS
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED
+  FREE_SHIPPING
+}
+
+enum CouponStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum BannerStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  SCHEDULED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  HIDDEN
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationType {
+  ORDER
+  PAYMENT
+  PRODUCT
+  INVENTORY
+  CUSTOMER
+  REVIEW
+  RETURN
+  REFUND
+  SUPPORT
+  SYSTEM
+  MARKETING
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+  BOTH
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  CANCEL
+  REFUND
+  EXPORT
+  IMPORT
+  OTHER
+}

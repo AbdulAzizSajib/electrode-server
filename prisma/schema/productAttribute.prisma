@@ -1,0 +1,13 @@
+model ProductAttribute {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name  String
+  value String
+
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}

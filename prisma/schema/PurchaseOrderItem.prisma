@@ -1,0 +1,21 @@
+model PurchaseOrderItem {
+  id String @id @default(cuid())
+
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Int
+
+  unitCost  Decimal @db.Decimal(12, 2)
+  totalCost Decimal @db.Decimal(12, 2)
+
+  receivedQuantity Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+}

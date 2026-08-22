@@ -1,0 +1,27 @@
+model SupportTicket {
+  id String @id @default(cuid())
+
+  ticketNumber String @unique
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  subject     String
+  description String
+
+  status   TicketStatus   @default(OPEN)
+  priority TicketPriority @default(MEDIUM)
+
+  assignedToId String?
+  assignedTo   User?   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  messages SupportMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([priority])
+}

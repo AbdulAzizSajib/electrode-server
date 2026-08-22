@@ -1,0 +1,25 @@
+model Shipment {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  shippingMethodId String?
+  shippingMethod   ShippingMethod? @relation(fields: [shippingMethodId], references: [id], onDelete: SetNull)
+
+  trackingNumber String? @unique
+
+  carrier String?
+
+  status ShipmentStatus @default(PENDING)
+
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([shippingMethodId])
+  @@index([status])
+}

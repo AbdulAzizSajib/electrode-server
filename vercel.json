@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm build",
+  "outputDirectory": ".",
+  "installCommand": "pnpm install",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "includeFiles": "dist/app/templates/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ]
+}

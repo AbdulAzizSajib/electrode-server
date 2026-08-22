@@ -1,0 +1,17 @@
+model Brand {
+  id String @id @default(cuid())
+
+  name        String
+  slug        String  @unique
+  description String?
+  logo        String?
+
+  status Boolean @default(true)
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}

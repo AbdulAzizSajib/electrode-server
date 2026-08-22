@@ -1,0 +1,11 @@
+model CouponProduct {
+  id String @id @default(cuid())
+
+  couponId String
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, productId])
+}

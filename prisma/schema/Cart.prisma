@@ -1,0 +1,22 @@
+/// A shopping cart, owned by either a logged-in Customer or a guest.
+/// Exactly one of `customerId` / `guestToken` should be set - this
+/// invariant is enforced by the application layer, not the database
+/// (Prisma has no cross-column CHECK constraint), per design.md.
+model Cart {
+  id String @id @default(cuid())
+
+  customerId String?   @unique
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  /// Opaque token minted by the API layer and stored in a plain (non-auth)
+  /// cookie for not-logged-in shoppers. Unrelated to better-auth Session.
+  guestToken String? @unique
+
+  items CartItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([guestToken])
+}

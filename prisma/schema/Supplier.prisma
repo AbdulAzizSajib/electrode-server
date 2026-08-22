@@ -1,0 +1,20 @@
+model Supplier {
+  id String @id @default(cuid())
+
+  name        String
+  companyName String?
+
+  email String?
+  phone String?
+
+  address String?
+  city    String?
+  country String  @default("Bangladesh")
+
+  isActive Boolean @default(true)
+
+  purchases PurchaseOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

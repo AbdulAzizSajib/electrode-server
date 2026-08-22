@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Database ER Diagram — Ecom</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: 'class' };
+</script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  window.mermaid = mermaid;
+  mermaid.initialize({ startOnLoad: false, theme: "default", er: { useMaxWidth: false } });
+
+  const rendered = new Set();
+
+  // Mermaid draws every ER relationship line in the same flat color, which
+  // makes crossing lines hard to trace by eye in a busy diagram. Give each
+  // line (in source order) a distinct color from this palette after render.
+  const LINE_COLORS = [
+    "#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed",
+    "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5",
+    "#0d9488", "#c026d3", "#0369a1", "#b91c1c", "#15803d",
+  ];
+
+  function colorizeRelationshipLines(container) {
+    container.querySelectorAll("svg").forEach((svg) => {
+      const lines = svg.querySelectorAll("path");
+      lines.forEach((path, i) => {
+        const color = LINE_COLORS[i % LINE_COLORS.length];
+        path.style.stroke = color;
+        path.setAttribute("stroke", color);
+      });
+    });
+  }
+
+  async function renderSection(id) {
+    if (rendered.has(id)) return;
+    rendered.add(id);
+    const section = document.getElementById(id);
+    if (!section) return;
+    await mermaid.run({ querySelector: `#${id} pre.mermaid` });
+    colorizeRelationshipLines(section);
+  }
+
+  function activate(id) {
+    document.querySelectorAll("section.page").forEach((sec) => sec.classList.add("hidden"));
+    document.getElementById(id)?.classList.remove("hidden");
+    document.querySelectorAll(".nav-link").forEach((l) => {
+      const isActive = l.dataset.target === id;
+      l.classList.toggle("bg-emerald-50", isActive);
+      l.classList.toggle("dark:bg-emerald-950/50", isActive);
+      l.classList.toggle("text-emerald-700", isActive);
+      l.classList.toggle("dark:text-emerald-300", isActive);
+      l.classList.toggle("font-semibold", isActive);
+      l.classList.toggle("text-slate-600", !isActive);
+      l.classList.toggle("dark:text-slate-400", !isActive);
+    });
+    renderSection(id);
+    window.scrollTo(0, 0);
+    history.replaceState(null, "", `#${id}`);
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".nav-link").forEach((link) => {
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        activate(link.dataset.target);
+      });
+    });
+
+    const themeToggle = document.getElementById("theme-toggle");
+    const root = document.documentElement;
+    const applyTheme = (dark) => {
+      root.classList.toggle("dark", dark);
+      themeToggle.textContent = dark ? "☀️ Light" : "🌙 Dark";
+    };
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+    themeToggle.addEventListener("click", () => applyTheme(!root.classList.contains("dark")));
+
+    const initial = (location.hash || "#overview").slice(1);
+    activate(document.getElementById(initial) ? initial : "overview");
+  });
+</script>
+<style>
+  /* Mermaid renders its own inline SVG theme; keep every diagram card on a
+     fixed light surface (independent of the page's dark/light toggle) so
+     diagram text stays legible without re-rendering on theme switch. */
+  .diagram-card { background: #ffffff; }
+  pre.mermaid svg { max-width: none !important; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-200 antialiased">
+
+<div class="grid grid-cols-1 md:grid-cols-[280px_1fr] min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="md:sticky md:top-0 md:h-screen overflow-y-auto border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-6">
+    <div class="flex items-center gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-600 to-emerald-900 grid place-items-center text-emerald-50 font-bold text-sm shrink-0">ER</div>
+      <div class="leading-tight">
+        <div class="font-bold text-sm">Ecom Database</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400">ER Diagram</div>
+      </div>
+    </div>
+
+    <nav class="flex flex-col gap-1">
+      <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 pb-1">Whole system</p>
+      <a href="#overview" data-target="overview" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Overview (46 models)</a>
+
+      <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 pt-4 pb-1">Domains</p>
+      <a href="#auth-rbac" data-target="auth-rbac" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Auth &amp; RBAC</a>
+      <a href="#customer" data-target="customer" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Customer</a>
+      <a href="#catalog" data-target="catalog" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Catalog</a>
+      <a href="#cart-wishlist" data-target="cart-wishlist" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Cart &amp; Wishlist</a>
+      <a href="#inventory" data-target="inventory" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Inventory &amp; Procurement</a>
+      <a href="#orders" data-target="orders" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Orders &amp; Fulfillment</a>
+      <a href="#payments-returns" data-target="payments-returns" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Payments, Refunds &amp; Returns</a>
+      <a href="#marketing" data-target="marketing" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Marketing</a>
+      <a href="#support" data-target="support" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Support</a>
+      <a href="#audit" data-target="audit" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Audit &amp; Notifications</a>
+      <a href="#settings" data-target="settings" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Store Settings</a>
+
+      <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 pt-4 pb-1">Notes</p>
+      <a href="#gaps" data-target="gaps" class="nav-link rounded-md px-2.5 py-1.5 text-sm cursor-pointer text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Known gaps (not built yet)</a>
+    </nav>
+
+    <div class="mt-auto pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+      Generated from <code class="text-[11px]">prisma/schema/*.prisma</code> as of <strong>2026-08-21</strong> — 46 models, 25 enums. Hand-authored point-in-time snapshot; regenerate manually after schema changes (see <code class="text-[11px]">openspec/changes/add-schema-erd-diagram</code> and <code class="text-[11px]">openspec/changes/add-cart-wishlist-store-config</code>).
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex flex-col min-w-0">
+    <header class="sticky top-0 z-10 flex items-center gap-3 px-6 h-14 bg-white/85 dark:bg-slate-900/85 backdrop-blur border-b border-slate-200 dark:border-slate-800">
+      <span class="text-sm text-slate-500 dark:text-slate-400">Ecom · Database ER Diagram</span>
+      <button id="theme-toggle" class="ml-auto text-xs font-semibold px-3 py-1.5 rounded-full border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">🌙 Dark</button>
+    </header>
+
+    <main class="p-6 md:p-10 w-full">
+
+      <!-- OVERVIEW -->
+      <section id="overview" class="page">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">FULL SCHEMA</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Overview — all 46 models</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">Every model in <code>prisma/schema/*.prisma</code> and every relationship between them, in one diagram. Entity boxes are name-only here (no field lists) so the whole graph stays legible — open a domain section in the sidebar for fields and a closer look at one area.</p>
+
+        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 mb-6 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
+          <span class="font-bold text-slate-700 dark:text-slate-300">Legend:</span>
+          <span><code>||--o{ }</code> one → zero-or-many (required FK)</span>
+          <span><code>|o--o{ }</code> one → zero-or-many (optional/nullable FK)</span>
+          <span><code>|o--o|</code> optional one-to-one</span>
+          <span><code>||--|{ }</code> one → one-or-many</span>
+        </div>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Role ||--o{ User : "assigned to"
+  User ||--o{ Session : has
+  User ||--o{ Account : has
+  User |o--o| Customer : "linked to"
+  User |o--o{ OrderStatusHistory : changed
+  User ||--o{ Notification : receives
+  User |o--o{ SupportTicket : "assigned to"
+  User |o--o{ SupportMessage : sends
+  User |o--o{ AuditLog : performed
+  Role ||--o{ RolePermission : grants
+  Permission ||--o{ RolePermission : "granted via"
+
+  Customer ||--o{ CustomerAddress : has
+  Customer ||--o{ Order : places
+  Customer ||--o{ Review : writes
+  Customer ||--o{ ReturnRequest : requests
+  Customer ||--o{ SupportTicket : opens
+
+  Category |o--o{ Category : "parent of"
+  Category |o--o{ Product : contains
+  Brand |o--o{ Product : makes
+  Product ||--o{ ProductImage : has
+  Product ||--o{ ProductVariant : has
+  Product ||--o{ ProductAttribute : has
+  Product ||--o{ Review : receives
+  Product ||--o{ ProductCategory : "tagged into"
+  Category ||--o{ ProductCategory : "tags in"
+
+  Order ||--o{ OrderItem : contains
+  Product ||--o{ OrderItem : "ordered as"
+  ProductVariant |o--o{ OrderItem : "ordered as"
+  Order ||--o{ OrderStatusHistory : logs
+  Order ||--o{ Payment : "paid via"
+  Order ||--o{ Shipment : "shipped via"
+  ShippingMethod |o--o{ Shipment : "used for"
+  CustomerAddress |o--o{ Order : "ships to"
+  OrderItem ||--o{ ReturnItem : "returned as"
+
+  Order ||--o{ Refund : refunds
+  Payment |o--o{ Refund : "refunded from"
+  Order ||--o{ ReturnRequest : "returned via"
+  ReturnRequest ||--o{ ReturnItem : contains
+
+  Warehouse ||--o{ Stock : stores
+  Product ||--o{ Stock : "tracked as"
+  ProductVariant |o--o{ Stock : "tracked as"
+  Product ||--o{ StockMovement : logs
+  ProductVariant |o--o{ StockMovement : logs
+  Warehouse |o--o{ StockMovement : logs
+  Supplier ||--o{ PurchaseOrder : supplies
+  PurchaseOrder ||--o{ PurchaseOrderItem : contains
+  Product ||--o{ PurchaseOrderItem : "ordered as"
+
+  Coupon ||--o{ CouponProduct : "applies to"
+  Product ||--o{ CouponProduct : "eligible for"
+  Campaign ||--o{ CampaignProduct : includes
+  Product ||--o{ CampaignProduct : "featured in"
+
+  SupportTicket ||--o{ SupportMessage : contains
+
+  Customer |o--o| Cart : owns
+  Customer ||--o| Wishlist : owns
+  Cart ||--o{ CartItem : contains
+  Product ||--o{ CartItem : "added as"
+  ProductVariant |o--o{ CartItem : "added as"
+  Wishlist ||--o{ WishlistItem : contains
+  Product ||--o{ WishlistItem : "saved as"
+
+  Verification {
+    string id PK
+    string identifier
+  }
+  Banner {
+    string id PK
+    string title
+    string status
+  }
+  StoreSetting {
+    string id PK "fixed: singleton"
+    string currency
+    decimal defaultTaxRatePercent
+  }
+</pre>
+        </div>
+
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3">Models with no relationship of their own: <code>Verification</code> (auth-only), <code>Banner</code> (standalone marketing asset), and <code>StoreSetting</code> (singleton config row) appear as isolated boxes above — see the domain sections for details on each.</p>
+      </section>
+
+      <!-- AUTH & RBAC -->
+      <section id="auth-rbac" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Auth &amp; RBAC</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">7 models: <code>User</code>, <code>Session</code>, <code>Account</code>, <code>Verification</code>, <code>Role</code>, <code>Permission</code>, <code>RolePermission</code>. better-auth manages <code>Session</code>/<code>Account</code>/<code>Verification</code>; <code>Role</code>→<code>RolePermission</code>→<code>Permission</code> is the admin-panel RBAC layer <code>User.roleId</code> points into.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  User {
+    string id PK
+    string email UK
+    string roleId FK
+    string status
+    boolean isActive
+    boolean isDeleted
+  }
+  Session {
+    string id PK
+    string userId FK
+    string token UK
+    datetime expiresAt
+  }
+  Account {
+    string id PK
+    string userId FK
+    string providerId
+  }
+  Verification {
+    string id PK
+    string identifier
+  }
+  Role {
+    string id PK
+    string name UK
+  }
+  Permission {
+    string id PK
+    string name UK
+  }
+  RolePermission {
+    string id PK
+    string roleId FK
+    string permissionId FK
+  }
+
+  Role ||--o{ User : "assigned to"
+  User ||--o{ Session : has
+  User ||--o{ Account : has
+  Role ||--o{ RolePermission : grants
+  Permission ||--o{ RolePermission : "granted via"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>Verification</code> has no FK relations (standalone OTP/email-verification records keyed by <code>identifier</code>). <code>User</code> also relates to <code>Customer</code>, <code>OrderStatusHistory</code>, <code>Notification</code>, <code>SupportTicket</code>, <code>SupportMessage</code>, and <code>AuditLog</code> — see the Overview and each of those models' home domain.</p>
+      </section>
+
+      <!-- CUSTOMER -->
+      <section id="customer" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Customer</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">3 models: <code>Customer</code>, <code>CustomerAddress</code>, <code>Review</code>. <code>Customer</code> is the storefront-shopper profile — separate from <code>User</code> (staff/admin accounts), optionally linked to one via <code>Customer.userId</code>.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  User {
+    string id PK
+  }
+  Customer {
+    string id PK
+    string userId FK "nullable, unique"
+    string firstName
+    string email
+    string status
+  }
+  CustomerAddress {
+    string id PK
+    string customerId FK
+    string type
+    boolean isDefault
+  }
+  Review {
+    string id PK
+    string productId FK
+    string customerId FK
+    int rating
+    string status
+  }
+  Order {
+    string id PK
+    string customerId FK
+  }
+  ReturnRequest {
+    string id PK
+    string customerId FK
+  }
+  SupportTicket {
+    string id PK
+    string customerId FK
+  }
+  Product {
+    string id PK
+  }
+
+  User |o--o| Customer : "linked to"
+  Customer ||--o{ CustomerAddress : has
+  Customer ||--o{ Order : places
+  Customer ||--o{ Review : writes
+  Product ||--o{ Review : receives
+  Customer ||--o{ ReturnRequest : requests
+  Customer ||--o{ SupportTicket : opens
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>CustomerAddress</code> is also the target of <code>Order.shippingAddress</code> — see Orders &amp; Fulfillment.</p>
+      </section>
+
+      <!-- CATALOG -->
+      <section id="catalog" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Catalog</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">7 models: <code>Product</code>, <code>ProductVariant</code>, <code>ProductAttribute</code>, <code>ProductImage</code>, <code>Category</code>, <code>Brand</code>, <code>ProductCategory</code>. A product still has one <em>primary</em> <code>Category</code> (<code>categoryId</code>, for its canonical URL/breadcrumb) — <code>ProductCategory</code> additionally lets it be tagged into more categories on top of that, without replacing the primary one.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Category {
+    string id PK
+    string name
+    string slug UK
+    string parentId FK "self, nullable"
+  }
+  Brand {
+    string id PK
+    string name
+    string slug UK
+  }
+  Product {
+    string id PK
+    string name
+    string slug UK
+    string sku UK
+    string categoryId FK "nullable"
+    string brandId FK "nullable"
+    decimal price
+    string status
+    string type
+  }
+  ProductVariant {
+    string id PK
+    string productId FK
+    string sku UK
+    decimal price
+    int stockQuantity
+  }
+  ProductAttribute {
+    string id PK
+    string productId FK
+    string name
+    string value
+  }
+  ProductImage {
+    string id PK
+    string productId FK
+    string url
+    boolean isPrimary
+  }
+  Review {
+    string id PK
+    string productId FK
+  }
+  ProductCategory {
+    string id PK
+    string productId FK
+    string categoryId FK
+  }
+
+  Category |o--o{ Category : "parent of"
+  Category |o--o{ Product : contains
+  Brand |o--o{ Product : makes
+  Product ||--o{ ProductImage : has
+  Product ||--o{ ProductVariant : has
+  Product ||--o{ ProductAttribute : has
+  Product ||--o{ Review : receives
+  Product ||--o{ ProductCategory : "tagged into"
+  Category ||--o{ ProductCategory : "tags in"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>Product</code> is also referenced from Orders, Inventory, Marketing, and Cart &amp; Wishlist — see those domains. <code>ProductVariant.attributes</code> is a free-form <code>Json</code> field (not a relation) for variant option values (e.g. size/color). <code>ProductCategory.@@unique([productId, categoryId])</code> prevents tagging a product into the same additional category twice.</p>
+      </section>
+
+      <!-- CART & WISHLIST -->
+      <section id="cart-wishlist" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Cart &amp; Wishlist</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">4 models: <code>Cart</code>, <code>CartItem</code>, <code>Wishlist</code>, <code>WishlistItem</code>. Schema only — added by <code>openspec/changes/add-cart-wishlist-store-config</code>, but no API routes exist yet (see Known Gaps). <code>Cart</code> supports guests (<code>guestToken</code>) as well as logged-in customers; <code>Wishlist</code> requires a customer account.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Customer {
+    string id PK
+  }
+  Product {
+    string id PK
+  }
+  ProductVariant {
+    string id PK
+  }
+  Cart {
+    string id PK
+    string customerId FK "nullable, unique"
+    string guestToken UK "nullable"
+  }
+  CartItem {
+    string id PK
+    string cartId FK
+    string productId FK
+    string variantId FK "nullable"
+    int quantity
+  }
+  Wishlist {
+    string id PK
+    string customerId FK "unique"
+  }
+  WishlistItem {
+    string id PK
+    string wishlistId FK
+    string productId FK
+  }
+
+  Customer |o--o| Cart : owns
+  Cart ||--o{ CartItem : contains
+  Product ||--o{ CartItem : "added as"
+  ProductVariant |o--o{ CartItem : "added as"
+  Customer ||--o| Wishlist : owns
+  Wishlist ||--o{ WishlistItem : contains
+  Product ||--o{ WishlistItem : "saved as"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3">A <code>Cart</code> row has exactly one of <code>customerId</code> / <code>guestToken</code> set — this is enforced by application code, not a database constraint (Prisma has no cross-column CHECK). <code>CartItem</code>'s uniqueness on <code>(cartId, productId, variantId)</code> doesn't fully dedupe null-variant (simple product) rows either, for the same reason — see the schema comment in <code>prisma/schema/CartItem.prisma</code>.</p>
+      </section>
+
+      <!-- INVENTORY -->
+      <section id="inventory" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Inventory &amp; Procurement</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">6 models: <code>Warehouse</code>, <code>Stock</code>, <code>StockMovement</code>, <code>Supplier</code>, <code>PurchaseOrder</code>, <code>PurchaseOrderItem</code>. <code>Stock</code> is current on-hand quantity per warehouse/product/variant; <code>StockMovement</code> is the append-only ledger of changes to it.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Product {
+    string id PK
+  }
+  ProductVariant {
+    string id PK
+  }
+  Warehouse {
+    string id PK
+    string name
+    string code UK
+  }
+  Stock {
+    string id PK
+    string warehouseId FK
+    string productId FK
+    string variantId FK "nullable"
+    int quantity
+    int reservedQuantity
+  }
+  StockMovement {
+    string id PK
+    string productId FK
+    string variantId FK "nullable"
+    string warehouseId FK "nullable"
+    string type
+    int quantity
+    string referenceId "polymorphic, not FK"
+  }
+  Supplier {
+    string id PK
+    string name
+  }
+  PurchaseOrder {
+    string id PK
+    string purchaseNumber UK
+    string supplierId FK
+    string status
+  }
+  PurchaseOrderItem {
+    string id PK
+    string purchaseOrderId FK
+    string productId FK
+    int quantity
+  }
+
+  Warehouse ||--o{ Stock : stores
+  Product ||--o{ Stock : "tracked as"
+  ProductVariant |o--o{ Stock : "tracked as"
+  Product ||--o{ StockMovement : logs
+  ProductVariant |o--o{ StockMovement : logs
+  Warehouse |o--o{ StockMovement : logs
+  Supplier ||--o{ PurchaseOrder : supplies
+  PurchaseOrder ||--o{ PurchaseOrderItem : contains
+  Product ||--o{ PurchaseOrderItem : "ordered as"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>StockMovement.referenceId</code> is a deliberate polymorphic pointer (to an <code>Order</code>, <code>PurchaseOrder</code>, or <code>ReturnRequest</code> id depending on <code>type</code>) — it is documented in the schema as intentionally not a Prisma relation, not a missing one.</p>
+      </section>
+
+      <!-- ORDERS -->
+      <section id="orders" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Orders &amp; Fulfillment</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">5 models: <code>Order</code>, <code>OrderItem</code>, <code>OrderStatusHistory</code>, <code>Shipment</code>, <code>ShippingMethod</code>.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Customer {
+    string id PK
+  }
+  CustomerAddress {
+    string id PK
+  }
+  Product {
+    string id PK
+  }
+  ProductVariant {
+    string id PK
+  }
+  User {
+    string id PK
+  }
+  Order {
+    string id PK
+    string orderNumber UK
+    string customerId FK
+    string shippingAddressId FK "nullable"
+    string status
+    decimal totalAmount
+  }
+  OrderItem {
+    string id PK
+    string orderId FK
+    string productId FK
+    string variantId FK "nullable"
+    int quantity
+    decimal unitPrice
+  }
+  OrderStatusHistory {
+    string id PK
+    string orderId FK
+    string changedById FK "nullable"
+    string fromStatus
+    string toStatus
+  }
+  Shipment {
+    string id PK
+    string orderId FK
+    string shippingMethodId FK "nullable"
+    string trackingNumber UK
+    string status
+  }
+  ShippingMethod {
+    string id PK
+    string name
+    decimal price
+  }
+
+  Customer ||--o{ Order : places
+  CustomerAddress |o--o{ Order : "ships to"
+  Order ||--o{ OrderItem : contains
+  Product ||--o{ OrderItem : "ordered as"
+  ProductVariant |o--o{ OrderItem : "ordered as"
+  Order ||--o{ OrderStatusHistory : logs
+  User |o--o{ OrderStatusHistory : changed
+  Order ||--o{ Shipment : "shipped via"
+  ShippingMethod |o--o{ Shipment : "used for"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>Order</code> also fans out to <code>Payment</code>, <code>Refund</code>, and <code>ReturnRequest</code> — see Payments, Refunds &amp; Returns. <code>OrderItem</code> is the target of <code>ReturnItem.orderItem</code> there too.</p>
+      </section>
+
+      <!-- PAYMENTS / RETURNS -->
+      <section id="payments-returns" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Payments, Refunds &amp; Returns</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">4 models: <code>Payment</code>, <code>Refund</code>, <code>ReturnRequest</code>, <code>ReturnItem</code>.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Order {
+    string id PK
+  }
+  OrderItem {
+    string id PK
+  }
+  Customer {
+    string id PK
+  }
+  Payment {
+    string id PK
+    string orderId FK
+    decimal amount
+    string method
+    string status
+  }
+  Refund {
+    string id PK
+    string orderId FK
+    string paymentId FK "nullable"
+    decimal amount
+    string status
+  }
+  ReturnRequest {
+    string id PK
+    string returnNumber UK
+    string orderId FK
+    string customerId FK
+    string status
+  }
+  ReturnItem {
+    string id PK
+    string returnRequestId FK
+    string orderItemId FK
+    int quantity
+  }
+
+  Order ||--o{ Payment : "paid via"
+  Order ||--o{ Refund : refunds
+  Payment |o--o{ Refund : "refunded from"
+  Order ||--o{ ReturnRequest : "returned via"
+  Customer ||--o{ ReturnRequest : requests
+  ReturnRequest ||--o{ ReturnItem : contains
+  OrderItem ||--o{ ReturnItem : "returned as"
+</pre>
+        </div>
+      </section>
+
+      <!-- MARKETING -->
+      <section id="marketing" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Marketing</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">5 models: <code>Coupon</code>, <code>CouponProduct</code>, <code>Campaign</code>, <code>CampaignProduct</code>, <code>Banner</code>. <code>CouponProduct</code>/<code>CampaignProduct</code> are join tables scoping a coupon/campaign to specific products.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Product {
+    string id PK
+  }
+  Coupon {
+    string id PK
+    string code UK
+    string type
+    decimal value
+    string status
+  }
+  CouponProduct {
+    string id PK
+    string couponId FK
+    string productId FK
+  }
+  Campaign {
+    string id PK
+    string name
+    string status
+  }
+  CampaignProduct {
+    string id PK
+    string campaignId FK
+    string productId FK
+    string discountType
+    decimal discountValue
+  }
+  Banner {
+    string id PK
+    string title
+    string status
+    int sortOrder
+  }
+
+  Coupon ||--o{ CouponProduct : "applies to"
+  Product ||--o{ CouponProduct : "eligible for"
+  Campaign ||--o{ CampaignProduct : includes
+  Product ||--o{ CampaignProduct : "featured in"
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3"><code>Banner</code> has no foreign keys — it's a standalone homepage/promo asset (image + link + schedule), not tied to specific products.</p>
+      </section>
+
+      <!-- SUPPORT -->
+      <section id="support" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Support</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">2 models: <code>SupportTicket</code>, <code>SupportMessage</code>.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  Customer {
+    string id PK
+  }
+  User {
+    string id PK
+  }
+  SupportTicket {
+    string id PK
+    string ticketNumber UK
+    string customerId FK
+    string assignedToId FK "nullable"
+    string status
+    string priority
+  }
+  SupportMessage {
+    string id PK
+    string ticketId FK
+    string senderId FK "nullable"
+    string message
+  }
+
+  Customer ||--o{ SupportTicket : opens
+  User |o--o{ SupportTicket : "assigned to"
+  SupportTicket ||--o{ SupportMessage : contains
+  User |o--o{ SupportMessage : sends
+</pre>
+        </div>
+      </section>
+
+      <!-- AUDIT & NOTIFICATIONS -->
+      <section id="audit" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Audit &amp; Notifications</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">2 models: <code>AuditLog</code>, <code>Notification</code>. Both hang off <code>User</code> only — <code>AuditLog.entity</code>/<code>entityId</code> are plain strings (a lightweight polymorphic pointer to whatever record changed), not Prisma relations.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  User {
+    string id PK
+  }
+  Notification {
+    string id PK
+    string userId FK
+    string type
+    string priority
+    boolean isRead
+  }
+  AuditLog {
+    string id PK
+    string userId FK "nullable"
+    string action
+    string entity "not FK, polymorphic"
+    string entityId "not FK, polymorphic"
+  }
+
+  User ||--o{ Notification : receives
+  User |o--o{ AuditLog : performed
+</pre>
+        </div>
+      </section>
+
+      <!-- STORE SETTINGS -->
+      <section id="settings" class="page hidden">
+        <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">DOMAIN</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Store Settings</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">1 model: <code>StoreSetting</code>. A singleton row (fixed id <code>"singleton"</code>, seeded automatically) — no relations, added by <code>openspec/changes/add-cart-wishlist-store-config</code>. Deliberately flat: one currency, one tax rate, no per-region/per-category rules.</p>
+
+        <div class="diagram-card rounded-xl border border-slate-200 dark:border-slate-800 p-4 overflow-x-auto">
+<pre class="mermaid">
+erDiagram
+  StoreSetting {
+    string id PK "fixed: singleton"
+    string storeName
+    string currency
+    string currencySymbol
+    decimal defaultTaxRatePercent
+    decimal freeShippingThreshold "nullable"
+    string contactEmail "nullable"
+    string contactPhone "nullable"
+    string address "nullable"
+  }
+</pre>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-3">No API routes read/write this yet (schema only, see Known Gaps). Seeded on server bootstrap by <code>seedStoreSettings()</code> in <code>src/app/utils/seed.ts</code>.</p>
+      </section>
+
+      <!-- KNOWN GAPS -->
+      <section id="gaps" class="page hidden">
+        <p class="text-xs font-bold text-amber-600 dark:text-amber-400 mb-1">NOT A DIAGRAM</p>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight mb-2">Known gaps</h1>
+        <p class="max-w-2xl text-slate-600 dark:text-slate-400 mb-6">The schema itself is fully valid (<code>prisma validate</code> passes with zero errors across all 46 models). What's left below is <strong>missing application/API code</strong>, not missing data model — <code>openspec/changes/add-cart-wishlist-store-config</code> was schema-only by design.</p>
+
+        <div class="grid gap-3 max-w-3xl">
+          <div class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4">
+            <div class="font-bold text-sm text-amber-800 dark:text-amber-300">Cart, Wishlist &amp; Store Settings have no API routes yet</div>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mt-1"><code>Cart</code>/<code>CartItem</code>/<code>Wishlist</code>/<code>WishlistItem</code>/<code>StoreSetting</code> exist in the schema (see Cart &amp; Wishlist and Store Settings sections) but <code>src/app/routes/index.ts</code> only mounts <code>/auth</code> and <code>/users</code> — no controllers/services/routes consume these models yet. Guest-cart cookie handling and the login-time cart-merge logic are also not implemented.</p>
+          </div>
+          <div class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4">
+            <div class="font-bold text-sm text-amber-800 dark:text-amber-300">CartItem uniqueness gap for simple products</div>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">PostgreSQL treats <code>NULL</code> as distinct from <code>NULL</code> in unique constraints, so <code>CartItem</code>'s <code>@@unique([cartId, productId, variantId])</code> doesn't fully dedupe two rows for the same non-variant product (both <code>variantId = null</code>). Must be enforced at the application layer (find-or-increment) once the cart API is built.</p>
+          </div>
+          <div class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4">
+            <div class="font-bold text-sm text-amber-800 dark:text-amber-300">Tax / currency are flat by design, not a gap to fill later</div>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mt-1"><code>StoreSetting.defaultTaxRatePercent</code> is one flat rate and <code>currency</code> is a single active currency — deliberate scope decisions (see design.md in <code>add-cart-wishlist-store-config</code>), not oversights. A per-region tax engine or multi-currency support would be a separate future change.</p>
+          </div>
+          <div class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4">
+            <div class="font-bold text-sm text-amber-800 dark:text-amber-300">Product categorization: primary + additive, not fully unified</div>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mt-1"><code>Product.categoryId</code> (primary/canonical) and the new <code>ProductCategory</code> join table (supplementary tags) are two separate mechanisms living side by side by design — see the Catalog section. Not a bug, just worth knowing when querying "all categories for a product."</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

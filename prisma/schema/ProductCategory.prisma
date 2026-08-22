@@ -1,0 +1,20 @@
+/// Supplementary many-to-many product<->category tagging, additive
+/// alongside `Product.categoryId`/`category` (which remains the primary/
+/// canonical category for URLs and breadcrumbs - unchanged by this model).
+/// A product with no rows here is still fully discoverable via its
+/// primary category exactly as before this model existed.
+model ProductCategory {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, categoryId])
+  @@index([productId])
+  @@index([categoryId])
+}

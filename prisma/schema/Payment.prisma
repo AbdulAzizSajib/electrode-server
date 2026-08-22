@@ -1,0 +1,28 @@
+model Payment {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  transactionId String? @unique
+
+  amount Decimal @db.Decimal(12, 2)
+
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  gateway         String?
+  gatewayResponse Json?
+
+  paidAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refunds Refund[]
+
+  @@index([orderId])
+  @@index([status])
+  @@index([method])
+  @@index([createdAt])
+}

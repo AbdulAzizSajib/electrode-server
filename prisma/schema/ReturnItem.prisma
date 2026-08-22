@@ -1,0 +1,18 @@
+model ReturnItem {
+  id String @id @default(cuid())
+
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
+
+  quantity Int
+
+  reason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([returnRequestId])
+  @@index([orderItemId])
+}

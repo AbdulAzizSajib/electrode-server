@@ -1,0 +1,14 @@
+model CampaignProduct {
+  id String @id @default(cuid())
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  discountType  DiscountType
+  discountValue Decimal      @db.Decimal(12, 2)
+
+  @@unique([campaignId, productId])
+}

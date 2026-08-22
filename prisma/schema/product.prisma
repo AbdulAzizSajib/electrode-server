@@ -1,0 +1,68 @@
+model Product {
+  id String @id @default(cuid())
+
+  name String
+  slug String @unique
+
+  sku String? @unique
+
+  description      String?
+  shortDescription String?
+
+  type   ProductType   @default(SIMPLE)
+  status ProductStatus @default(DRAFT)
+
+  /// Primary/canonical category (used for the product's URL/breadcrumb).
+  /// For supplementary categorization (a product listed under more than
+  /// one category page), see `categories` (ProductCategory) below -
+  /// additive, does not replace this field.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  brandId String?
+  brand   Brand?  @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  price          Decimal  @db.Decimal(12, 2)
+  compareAtPrice Decimal? @db.Decimal(12, 2)
+  costPrice      Decimal? @db.Decimal(12, 2)
+
+  stockQuantity     Int @default(0)
+  lowStockThreshold Int @default(5)
+
+  weight Decimal? @db.Decimal(10, 3)
+
+  isFeatured Boolean @default(false)
+
+  seoTitle       String?
+  seoDescription String?
+
+  images     ProductImage[]
+  variants   ProductVariant[]
+  attributes ProductAttribute[]
+  orderItems OrderItem[]
+  reviews    Review[]
+
+  stockMovements StockMovement[]
+  stocks         Stock[]
+
+  campaignProducts   CampaignProduct[]
+  couponProducts     CouponProduct[]
+  purchaseOrderItems PurchaseOrderItem[]
+
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
+
+  /// Supplementary categories beyond `category` above (many-to-many via
+  /// ProductCategory). A product with an empty list here is still fully
+  /// discoverable via its primary `category`.
+  categories ProductCategory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([status])
+  @@index([isFeatured])
+  @@index([createdAt])
+}

@@ -1,0 +1,33 @@
+model ProductVariant {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name String
+
+  sku String @unique
+
+  price          Decimal? @db.Decimal(12, 2)
+  compareAtPrice Decimal? @db.Decimal(12, 2)
+  costPrice      Decimal? @db.Decimal(12, 2)
+
+  stockQuantity Int @default(0)
+
+  attributes Json?
+
+  image String?
+
+  status Boolean @default(true)
+
+  orderItems     OrderItem[]
+  stockMovements StockMovement[]
+  stocks         Stock[]
+  cartItems      CartItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([status])
+}

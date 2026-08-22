@@ -1,0 +1,20 @@
+model Campaign {
+  id String @id @default(cuid())
+
+  name        String
+  description String?
+
+  status CampaignStatus @default(DRAFT)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  products CampaignProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([startsAt])
+  @@index([endsAt])
+}

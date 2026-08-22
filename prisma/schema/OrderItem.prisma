@@ -1,0 +1,28 @@
+model OrderItem {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  productName String
+  sku         String?
+
+  quantity Int
+
+  unitPrice  Decimal @db.Decimal(12, 2)
+  totalPrice Decimal @db.Decimal(12, 2)
+
+  returnItems ReturnItem[]
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+}
