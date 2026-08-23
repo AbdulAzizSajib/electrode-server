@@ -14,6 +14,11 @@ router.get(
     CategoryController.getAdminCategories,
 );
 router.get(
+    "/admin/tree",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    CategoryController.getAdminCategoryTree,
+);
+router.get(
     "/admin/:id",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
     CategoryController.getAdminCategoryById,

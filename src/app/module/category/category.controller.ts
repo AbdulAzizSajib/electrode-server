@@ -52,6 +52,17 @@ const getAdminCategories = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const getAdminCategoryTree = catchAsync(async (req: Request, res: Response) => {
+    const result = await CategoryService.getAdminCategoryTree();
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Category tree fetched successfully",
+        data: result,
+    });
+});
+
 const getAdminCategoryById = catchAsync(async (req: Request, res: Response) => {
     const result = await CategoryService.getAdminCategoryById(req.params.id as string);
 
@@ -90,6 +101,7 @@ export const CategoryController = {
     getPublicCategoryTree,
     getPublicCategoryBySlug,
     getAdminCategories,
+    getAdminCategoryTree,
     getAdminCategoryById,
     updateCategory,
     deleteCategory,

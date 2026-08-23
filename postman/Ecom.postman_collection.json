@@ -765,6 +765,26 @@
           "response": []
         },
         {
+          "name": "Admin - Get Category Tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/categories/admin/tree",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                "admin",
+                "tree"
+              ]
+            },
+            "description": "OWNER/ADMIN only. Full hierarchy (every status, unlimited depth), nested via children at every level — unlike the flat/paginated list above."
+          },
+          "response": []
+        },
+        {
           "name": "Admin - Get Category By Id",
           "request": {
             "method": "GET",

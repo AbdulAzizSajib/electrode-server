@@ -21,6 +21,7 @@
   POST Admin - Create Category
   POST Admin - Create Child Category
   GET Admin - Get All Categories
+  GET Admin - Get Category Tree
   GET Admin - Get Category By Id
   PATCH Admin - Update Category
   DELETE Admin - Delete Category

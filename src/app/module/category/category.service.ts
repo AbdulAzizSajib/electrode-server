@@ -124,6 +124,35 @@ const getAdminCategories = async (queryParams: IQueryParams) => {
         .execute();
 };
 
+/**
+ * Admin: full hierarchy (any status, unlimited depth), nested via `children`.
+ * Prisma can't `include` a recursive relation to arbitrary depth, so the
+ * flat list is fetched once and assembled into a tree in memory.
+ */
+const getAdminCategoryTree = async () => {
+    const all = await prisma.category.findMany({
+        orderBy: { sortOrder: "asc" },
+    });
+
+    type CategoryNode = (typeof all)[number] & { children: CategoryNode[] };
+
+    const byId = new Map<string, CategoryNode>(
+        all.map((category) => [category.id, { ...category, children: [] }]),
+    );
+    const roots: CategoryNode[] = [];
+
+    for (const node of byId.values()) {
+        const parent = node.parentId ? byId.get(node.parentId) : undefined;
+        if (parent) {
+            parent.children.push(node);
+        } else {
+            roots.push(node);
+        }
+    }
+
+    return roots;
+};
+
 const getAdminCategoryById = async (id: string) => {
     const category = await prisma.category.findUnique({
         where: { id },
@@ -193,6 +222,7 @@ export const CategoryService = {
     getPublicCategoryTree,
     getPublicCategoryBySlug,
     getAdminCategories,
+    getAdminCategoryTree,
     getAdminCategoryById,
     updateCategory,
     deleteCategory,
