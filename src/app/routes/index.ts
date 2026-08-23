@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { AnalyticsRoutes } from "../module/analytics/analytics.route";
 import { AuditLogRoutes } from "../module/audit-log/audit-log.route";
 import { AuthRoutes } from "../module/auth/auth.route";
 import { BannerRoutes } from "../module/banner/banner.route";
@@ -64,6 +65,7 @@ router.use("/settings", StoreSettingRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);
+router.use("/analytics", AnalyticsRoutes);
 router.use("/uploads", UploadRoutes);
 
 export const IndexRoutes = router;

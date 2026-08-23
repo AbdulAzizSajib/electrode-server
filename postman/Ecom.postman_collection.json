@@ -12,12 +12,12 @@
     },
     {
       "key": "userEmail",
-      "value": "customer1@example.com",
+      "value": "admin@gmail.com",
       "type": "string"
     },
     {
       "key": "userPassword",
-      "value": "Passw0rd!",
+      "value": "12345678",
       "type": "string"
     },
     {
@@ -316,7 +316,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"identifier\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}"
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}"
             }
           },
           "response": []
