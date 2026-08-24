@@ -13,3 +13,12 @@ export interface IUpdateBrandPayload {
     logo?: string;
     status?: boolean;
 }
+
+export interface IBulkCreateBrandsPayload {
+    names: string[];
+}
+
+export interface IBulkCreateBrandsResult {
+    created: Array<{ id: string; name: string; slug: string }>;
+    skipped: Array<{ name: string; reason: string }>;
+}

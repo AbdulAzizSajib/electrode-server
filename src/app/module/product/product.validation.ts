@@ -21,6 +21,17 @@ const productImageZodSchema = z.object({
     isPrimary: z.boolean().optional(),
 });
 
+/**
+ * Describes an uploaded file's metadata by position — the `i`-th entry
+ * matches the `i`-th file in the multipart `images` field. See
+ * add-product-image-upload design.md Decision 1.
+ */
+const imageSlotZodSchema = z.object({
+    altText: z.string().max(200).optional(),
+    sortOrder: z.number().int().optional(),
+    isPrimary: z.boolean().optional(),
+});
+
 const productAttributeZodSchema = z.object({
     id: z.string().optional(),
     name: z.string().min(1).max(100),
@@ -49,6 +60,7 @@ export const createProductZodSchema = z.object({
     variants: z.array(productVariantZodSchema).optional(),
     images: z.array(productImageZodSchema).optional(),
     attributes: z.array(productAttributeZodSchema).optional(),
+    imageSlots: z.array(imageSlotZodSchema).optional(),
 });
 
 export const updateProductZodSchema = createProductZodSchema.partial();

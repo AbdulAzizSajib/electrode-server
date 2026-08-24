@@ -3,7 +3,7 @@ import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
 import { BrandController } from "./brand.controller";
-import { createBrandZodSchema, updateBrandZodSchema } from "./brand.validation";
+import { bulkCreateBrandsZodSchema, createBrandZodSchema, updateBrandZodSchema } from "./brand.validation";
 
 const router = Router();
 
@@ -24,6 +24,12 @@ router.post(
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
     validateRequest(createBrandZodSchema),
     BrandController.createBrand,
+);
+router.post(
+    "/bulk",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    validateRequest(bulkCreateBrandsZodSchema),
+    BrandController.bulkCreateBrands,
 );
 router.patch(
     "/:id",

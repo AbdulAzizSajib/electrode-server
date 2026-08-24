@@ -6,7 +6,11 @@ import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { generateUniqueSlug } from "../../utils/slug";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { ICreateBrandPayload, IUpdateBrandPayload } from "./brand.interface";
+import {
+    IBulkCreateBrandsResult,
+    ICreateBrandPayload,
+    IUpdateBrandPayload,
+} from "./brand.interface";
 
 const createBrand = async (userId: string, payload: ICreateBrandPayload) => {
     const slug = await generateUniqueSlug(payload.slug || payload.name, (candidate) =>
@@ -20,6 +24,62 @@ const createBrand = async (userId: string, payload: ICreateBrandPayload) => {
     await AuditLogService.record(userId, AuditAction.CREATE, "Brand", brand.id, { newData: brand });
 
     return brand;
+};
+
+/**
+ * Creates one brand per name (defaulting `status: true`, no description/logo — a fast-entry path
+ * for "I have a list of brand names," not a substitute for the full create form). Each name is
+ * created independently: a name blank after trimming, a duplicate within the batch (case-insensitive),
+ * or a name matching an existing brand is skipped with a reason rather than failing the whole
+ * request — one bad row shouldn't block the rest of the list.
+ */
+const bulkCreateBrands = async (userId: string, names: string[]): Promise<IBulkCreateBrandsResult> => {
+    const created: IBulkCreateBrandsResult["created"] = [];
+    const skipped: IBulkCreateBrandsResult["skipped"] = [];
+    const seenInBatch = new Set<string>();
+
+    for (const rawName of names) {
+        const name = rawName.trim();
+
+        if (!name) {
+            skipped.push({ name: rawName, reason: "Blank name" });
+            continue;
+        }
+
+        const key = name.toLowerCase();
+        if (seenInBatch.has(key)) {
+            skipped.push({ name, reason: "Duplicate name in this batch" });
+            continue;
+        }
+
+        const existing = await prisma.brand.findFirst({
+            where: { name: { equals: name, mode: "insensitive" } },
+            select: { id: true },
+        });
+        if (existing) {
+            skipped.push({ name, reason: "A brand with this name already exists" });
+            continue;
+        }
+
+        seenInBatch.add(key);
+
+        const slug = await generateUniqueSlug(name, (candidate) =>
+            prisma.brand
+                .findUnique({ where: { slug: candidate }, select: { id: true } })
+                .then((found) => Boolean(found)),
+        );
+
+        const brand = await prisma.brand.create({ data: { name, slug, status: true } });
+        created.push({ id: brand.id, name: brand.name, slug: brand.slug });
+    }
+
+    if (created.length > 0) {
+        await AuditLogService.record(userId, AuditAction.CREATE, "Brand", undefined, {
+            newData: { bulkCreated: created.map((b) => b.id) },
+        });
+    }
+
+    return { created, skipped };
 };
 
 const getPublicBrands = async (queryParams: IQueryParams) => {
@@ -103,6 +163,7 @@ const deleteBrand = async (userId: string, id: string) => {
 
 export const BrandService = {
     createBrand,
+    bulkCreateBrands,
     getPublicBrands,
     getPublicBrandBySlug,
     getAdminBrands,

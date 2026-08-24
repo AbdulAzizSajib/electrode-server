@@ -1,11 +1,18 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { NextFunction, Request, Response } from "express";
 import status from "http-status";
+import { MulterError } from "multer";
 import z from "zod";
 import { envVars } from "../config/env";
 import AppError from "../errorHelpers/AppError";
 import { handleZodError } from "../errorHelpers/handleZodError";
 import { TErrorResponse, TErrorSources } from "../interfaces/error.interface";
+
+/** Friendlier text for the multer error codes this API can actually trigger (upload routes use `.single`/`.array` with a numeric cap, no field-size/part-count limits configured). */
+const MULTER_ERROR_MESSAGES: Partial<Record<MulterError["code"], string>> = {
+    LIMIT_FILE_COUNT: "Too many files uploaded",
+    LIMIT_UNEXPECTED_FILE: "Unexpected file field in upload",
+};
 
 
 
@@ -53,6 +60,17 @@ export const globalErrorHandler = async (err: any, req: Request, res: Response, 
         message = simplifiedError.message
         errorSources = [...simplifiedError.errorSources]
         stack = err.stack;
+
+    } else if (err instanceof MulterError) {
+        statusCode = status.BAD_REQUEST;
+        message = MULTER_ERROR_MESSAGES[err.code] ?? err.message;
+        stack = err.stack;
+        errorSources = [
+            {
+                path: err.field ?? '',
+                message,
+            }
+        ]
 
     } else if (err instanceof AppError) {
         statusCode = err.statusCode;

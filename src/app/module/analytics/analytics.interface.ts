@@ -31,3 +31,33 @@ export interface IDashboardSummary {
         lowStockThreshold: number;
     }>;
 }
+
+export interface ITopProduct {
+    productId: string;
+    name: string;
+    quantitySold: number;
+    revenue: number;
+}
+
+export interface ICategorySales {
+    categoryId: string;
+    categoryName: string;
+    revenue: number;
+    orderItemCount: number;
+}
+
+export interface IOrderStatusBreakdown {
+    status: string;
+    count: number;
+}
+
+export interface IPaymentBreakdown {
+    byMethod: Array<{ method: string; count: number; amount: number }>;
+    byStatus: Array<{ status: string; count: number }>;
+}
+
+export interface IReturnsRefundsSummary {
+    returnsByStatus: Array<{ status: string; count: number }>;
+    refundsByStatus: Array<{ status: string; count: number; amount: number }>;
+    refundRate: number;
+}

@@ -1,11 +1,44 @@
 import { Request, Response } from "express";
 import status from "http-status";
+import { uploadFileToCloudinary } from "../../config/cloudinary.config";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
+import { IProductImageInput } from "./product.interface";
 import { ProductService } from "./product.service";
 
+/**
+ * Uploads every file in `req.files` (multipart `images` field) to Cloudinary and merges the
+ * results into `req.body.images`, matched by position to `req.body.imageSlots` (see
+ * add-product-image-upload design.md Decision 1). All uploads resolve — or the whole request
+ * throws — before the caller does anything else (Decision 4), so a mid-batch Cloudinary failure
+ * never reaches ProductService. `imageSlots` is stripped from the payload afterward: it's a
+ * controller-only field, never read by product.service.ts.
+ */
+const mergeUploadedImages = async (req: Request): Promise<void> => {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const imageSlots = (req.body.imageSlots as { altText?: string; sortOrder?: number; isPrimary?: boolean }[] | undefined) ?? [];
+
+    if (files.length > 0) {
+        const uploaded = await Promise.all(
+            files.map((file) => uploadFileToCloudinary(file.buffer, file.originalname)),
+        );
+
+        const newImages: IProductImageInput[] = uploaded.map((result, i) => ({
+            url: result.secure_url,
+            ...imageSlots[i],
+        }));
+
+        const existingImages = (req.body.images as IProductImageInput[] | undefined) ?? [];
+        req.body.images = [...existingImages, ...newImages];
+    }
+
+    delete req.body.imageSlots;
+};
+
 const createProduct = catchAsync(async (req: Request, res: Response) => {
+    await mergeUploadedImages(req);
+
     const result = await ProductService.createProduct(req.user.userId, req.body);
 
     sendResponse(res, {
@@ -67,6 +100,8 @@ const getAdminProductById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateProduct = catchAsync(async (req: Request, res: Response) => {
+    await mergeUploadedImages(req);
+
     const result = await ProductService.updateProduct(req.user.userId, req.params.id as string, req.body);
 
     sendResponse(res, {

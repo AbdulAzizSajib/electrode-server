@@ -28,6 +28,19 @@ export interface IProductAttributeInput {
     value: string;
 }
 
+/**
+ * Describes an uploaded file's metadata by position (the `i`-th slot
+ * matches the `i`-th multipart `images` file) — never persisted itself,
+ * consumed only by the controller to build `IProductImageInput` entries
+ * for freshly-uploaded files. See add-product-image-upload design.md
+ * Decision 1.
+ */
+export interface IImageSlotInput {
+    altText?: string;
+    sortOrder?: number;
+    isPrimary?: boolean;
+}
+
 export interface ICreateProductPayload {
     name: string;
     slug?: string;
@@ -50,6 +63,8 @@ export interface ICreateProductPayload {
     variants?: IProductVariantInput[];
     images?: IProductImageInput[];
     attributes?: IProductAttributeInput[];
+    /** Consumed by the controller only — see `IImageSlotInput`. Never read by product.service.ts. */
+    imageSlots?: IImageSlotInput[];
 }
 
 export type IUpdateProductPayload = Partial<ICreateProductPayload>;

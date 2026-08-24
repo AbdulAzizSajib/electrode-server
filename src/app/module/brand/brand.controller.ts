@@ -16,6 +16,17 @@ const createBrand = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const bulkCreateBrands = catchAsync(async (req: Request, res: Response) => {
+    const result = await BrandService.bulkCreateBrands(req.user.userId, req.body.names);
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: `${result.created.length} brand(s) created, ${result.skipped.length} skipped`,
+        data: result,
+    });
+});
+
 const getPublicBrands = catchAsync(async (req: Request, res: Response) => {
     const { data, meta } = await BrandService.getPublicBrands(
         req.query as unknown as IQueryParams,
@@ -90,6 +101,7 @@ const deleteBrand = catchAsync(async (req: Request, res: Response) => {
 
 export const BrandController = {
     createBrand,
+    bulkCreateBrands,
     getPublicBrands,
     getPublicBrandBySlug,
     getAdminBrands,

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { RoleName } from "../../constants/role.constant";
+import { multerUpload } from "../../config/multer.config";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
 import { ProductController } from "./product.controller";
@@ -22,12 +23,14 @@ router.get(
 router.post(
     "/",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    multerUpload.array("images", 10),
     validateRequest(createProductZodSchema),
     ProductController.createProduct,
 );
 router.patch(
     "/:id",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    multerUpload.array("images", 10),
     validateRequest(updateProductZodSchema),
     ProductController.updateProduct,
 );
