@@ -1,48 +1,195 @@
-[FOLDER] Auth
-  POST Register
-  POST Verify Email (OTP)
-  POST Resend Verification OTP
-  POST Login
-  GET Get Me
-  PATCH Update Own Profile
-  POST Refresh Token
-  POST Change Password
-  POST Forget Password
-  POST Resend Password Reset OTP
-  POST Reset Password
-  POST Logout
-  GET Google Login (open in browser)
-[FOLDER] Users (Admin - OWNER/ADMIN only)
-  GET Get All Users
-  GET Get User By Id
-  PATCH Update User
-  DELETE Delete User (soft delete)
-[FOLDER] Categories
-  POST Admin - Create Category
-  POST Admin - Create Child Category
-  GET Admin - Get All Categories
-  GET Admin - Get Category Tree
-  GET Admin - Get Category By Id
-  PATCH Admin - Update Category
-  DELETE Admin - Delete Category
-  GET Public - Get Category Tree
-  GET Public - Get Category By Slug
-[FOLDER] Brands
-  POST Admin - Create Brand
-  GET Admin - Get All Brands
-  GET Admin - Get Brand By Id
-  PATCH Admin - Update Brand
-  GET Public - Get Brands
-  GET Public - Get Brand By Slug
-  DELETE Admin - Delete Brand
-[FOLDER] Products
-  POST Admin - Create Product (with variants/images/attributes)
-  GET Admin - Get All Products
-  GET Admin - Get Product By Id
-  PATCH Admin - Update Product (scalar fields)
-  PATCH Admin - Update Product Variants/Images/Attributes (sync)
-  POST Admin - Add Product Category Tag
-  DELETE Admin - Remove Product Category Tag
-  GET Public - Get Products
-  GET Public - Get Product By Slug
-  DELETE Admin - Delete Product
+[FOLDER] Public (Storefront)
+  [FOLDER] Auth
+    POST Register
+    POST Verify Email (OTP)
+    POST Resend Verification OTP
+    POST Login
+    GET Get Me
+    PATCH Update Own Profile
+    POST Refresh Token
+    POST Change Password
+    POST Forget Password
+    POST Resend Password Reset OTP
+    POST Reset Password
+    POST Logout
+    GET Google Login (open in browser)
+  [FOLDER] Categories
+    GET Public - Get Category Tree
+    GET Public - Get Category By Slug
+  [FOLDER] Brands
+    GET Public - Get Brands
+    GET Public - Get Brand By Slug
+  [FOLDER] Products
+    GET Public - Get Products
+    GET Public - Get Product By Slug
+  [FOLDER] Cart & Wishlist
+    GET Get Cart
+    POST Add Item to Cart
+    PATCH Update Cart Item Quantity
+    POST Apply Coupon to Cart
+    DELETE Remove Coupon from Cart
+    DELETE Remove Cart Item
+    GET Get Wishlist
+    POST Add Wishlist Item
+    DELETE Remove Wishlist Item
+  [FOLDER] Customer Addresses
+    POST Create Address
+    GET Get My Addresses
+    GET Get Address By Id
+    PATCH Update Address
+    PATCH Set Default Address
+    DELETE Delete Address
+  [FOLDER] Shipping Methods
+    GET Public - Get Shipping Methods
+  [FOLDER] Orders
+    POST Place Order (Checkout)
+    GET Get My Orders
+    GET Get Order By Id
+    PATCH Cancel Order (Customer)
+  [FOLDER] Payments
+    POST Record Payment
+    GET Get Order Payments
+  [FOLDER] Shipments
+    GET Get Order Shipment
+  [FOLDER] Returns
+    POST Create Return Request
+    GET Get My Returns
+    GET Get Return By Id
+  [FOLDER] Reviews
+    POST Create Review
+    GET Public - Get Product Reviews
+  [FOLDER] Support Tickets
+    POST Create Support Ticket
+    GET Get My Support Tickets
+    GET Get Support Ticket By Id
+    POST Send Message
+    GET Get Messages
+  [FOLDER] Banners
+    GET Public - Get Banners
+  [FOLDER] Notifications
+    GET Get My Notifications
+    PATCH Mark Notification as Read
+    PATCH Mark All Notifications as Read
+[FOLDER] Private (Admin Panel)
+  [FOLDER] Users
+    GET Get All Users
+    GET Get User By Id
+    PATCH Update User
+    DELETE Delete User (soft delete)
+  [FOLDER] Categories
+    POST Admin - Create Category
+    POST Admin - Create Child Category
+    GET Admin - Get All Categories
+    GET Admin - Get Category Tree
+    GET Admin - Get Category By Id
+    PATCH Admin - Update Category
+    DELETE Admin - Delete Category
+  [FOLDER] Brands
+    POST Admin - Create Brand
+    POST Admin - Bulk Create Brands
+    GET Admin - Get All Brands
+    GET Admin - Get Brand By Id
+    PATCH Admin - Update Brand
+    DELETE Admin - Delete Brand
+  [FOLDER] Products
+    POST Admin - Create Product (with variants/images/attributes)
+    POST Admin - Create Product (multipart, with uploaded image files)
+    GET Admin - Get All Products
+    GET Admin - Get Product By Id
+    PATCH Admin - Update Product (scalar fields)
+    PATCH Admin - Update Product Variants/Images/Attributes (sync)
+    POST Admin - Add Product Category Tag
+    DELETE Admin - Remove Product Category Tag
+    DELETE Admin - Delete Product
+  [FOLDER] Uploads
+    POST Admin - Upload Image
+  [FOLDER] Shipping Methods
+    POST Admin - Create Shipping Method
+    GET Admin - Get All Shipping Methods
+    GET Admin - Get Shipping Method By Id
+    PATCH Admin - Update Shipping Method
+    DELETE Admin - Delete Shipping Method
+  [FOLDER] Orders
+    PATCH Admin - Update Order Status
+  [FOLDER] Shipments
+    POST Admin - Create Shipment
+    PATCH Admin - Update Shipment
+  [FOLDER] Returns
+    PATCH Admin - Update Return Status
+    PATCH Admin - Complete Return (Restocks Inventory)
+  [FOLDER] Refunds
+    POST Admin - Create Refund
+    GET Admin - Get Refunds
+  [FOLDER] Reviews
+    GET Admin - Get All Reviews
+    PATCH Admin - Update Review Status
+    PATCH Admin - Reply to Review
+  [FOLDER] Warehouses
+    POST Admin - Create Warehouse
+    GET Admin - Get All Warehouses
+    GET Admin - Get Warehouse By Id
+    PATCH Admin - Update Warehouse
+    DELETE Admin - Delete Warehouse
+  [FOLDER] Suppliers
+    POST Admin - Create Supplier
+    GET Admin - Get All Suppliers
+    GET Admin - Get Supplier By Id
+    PATCH Admin - Update Supplier
+    DELETE Admin - Delete Supplier
+  [FOLDER] Purchase Orders
+    POST Admin - Create Purchase Order
+    GET Admin - Get All Purchase Orders
+    GET Admin - Get Purchase Order By Id
+    PATCH Admin - Update Purchase Order
+    POST Admin - Receive Purchase Order
+    DELETE Admin - Delete Purchase Order
+  [FOLDER] Stock
+    GET Admin - Get Stock
+    PATCH Admin - Adjust Stock
+  [FOLDER] Stock Movements
+    GET Admin - Get Stock Movements
+  [FOLDER] Coupons
+    POST Admin - Create Coupon
+    GET Admin - Get All Coupons
+    GET Admin - Get Coupon By Id
+    PATCH Admin - Update Coupon
+    DELETE Admin - Delete Coupon
+  [FOLDER] Campaigns
+    POST Admin - Create Campaign
+    GET Admin - Get All Campaigns
+    GET Admin - Get Campaign By Id
+    PATCH Admin - Update Campaign
+    DELETE Admin - Delete Campaign
+  [FOLDER] Banners
+    POST Admin - Create Banner
+    GET Admin - Get All Banners
+    GET Admin - Get Banner By Id
+    PATCH Admin - Update Banner
+    DELETE Admin - Delete Banner
+  [FOLDER] Support Tickets
+    PATCH Admin - Update Support Ticket
+  [FOLDER] Analytics
+    GET Admin - Dashboard Summary
+    GET Admin - Top Products
+    GET Admin - Sales by Category
+    GET Admin - Order Status Breakdown
+    GET Admin - Payment Breakdown
+    GET Admin - Returns/Refunds Summary
+  [FOLDER] Store Settings
+    GET Admin - Get Store Settings
+    PATCH Admin - Update Store Settings
+  [FOLDER] Roles & Permissions
+    POST Owner - Create Permission
+    GET Owner - Get All Permissions
+    GET Owner - Get Permission By Id
+    PATCH Owner - Update Permission
+    POST Owner - Create Role
+    GET Owner - Get All Roles
+    GET Owner - Get Role By Id
+    PATCH Owner - Update Role
+    POST Owner - Assign Permission to Role
+    DELETE Owner - Revoke Permission from Role
+    DELETE Owner - Delete Role
+    DELETE Owner - Delete Permission
+  [FOLDER] Audit Logs
+    GET Get Audit Logs
