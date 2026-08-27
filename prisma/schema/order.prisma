@@ -3,6 +3,13 @@ model Order {
 
   orderNumber String @unique
 
+  // Client-supplied per-checkout-attempt key. Nullable so orders placed
+  // without one (older clients, direct API callers) still insert — Postgres
+  // treats NULLs as distinct in a unique index, so any number of them
+  // coexist. Ownership is re-checked on the replay path rather than being
+  // encoded here as a compound unique; see order.service.ts.
+  idempotencyKey String? @unique
+
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
 

@@ -36,18 +36,66 @@ const generateOrderNumber = () => {
     return `ORD-${datePart}-${randomPart}`;
 };
 
-const generateUniqueOrderNumber = async (): Promise<string> => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-        const candidate = generateOrderNumber();
-        const existing = await prisma.order.findUnique({
-            where: { orderNumber: candidate },
-            select: { id: true },
-        });
-        if (!existing) {
-            return candidate;
-        }
+/**
+ * Which unique constraint a P2002 actually violated. `Order` has two
+ * (`orderNumber` and `idempotencyKey`) and both are retried differently —
+ * a collision on the first means "generate another number and try again",
+ * on the second it means "someone else already placed this exact order".
+ * Treating them interchangeably would turn a replay into a new order, so
+ * never catch P2002 without checking which target it names.
+ */
+const violatedTarget = (error: unknown, field: string) => {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+        return false;
     }
-    throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to generate a unique order number");
+    const target = error.meta?.target;
+    return Array.isArray(target) ? target.includes(field) : target === field;
+};
+
+/**
+ * The order a given idempotency key already produced, or null if the key is
+ * unused. `idempotencyKey` is globally unique rather than unique-per-customer,
+ * so ownership is enforced here instead: a key that resolves to someone else's
+ * order returns null — the request proceeds as a fresh checkout rather than
+ * disclosing, or handing back, an order belonging to another customer.
+ */
+const findReplayableOrder = async (idempotencyKey: string, customerId: string) => {
+    const existing = await prisma.order.findUnique({
+        where: { idempotencyKey },
+        include: ORDER_DETAIL_INCLUDE,
+    });
+
+    if (!existing || existing.customerId !== customerId) {
+        return null;
+    }
+
+    return existing;
+};
+
+/**
+ * A replay is only meaningful if it's replaying the *same* order. When the
+ * live cart no longer matches what the stored order captured, the client is
+ * most likely reusing one key across genuinely different checkouts — which
+ * silently returns the wrong order. Still safe (nothing is double-charged),
+ * but it means the client is not getting the protection it thinks it is, so
+ * make it visible rather than letting it pass unnoticed.
+ */
+const warnIfReplayDiverges = (
+    idempotencyKey: string,
+    storedItems: { productId: string; variantId: string | null; quantity: number }[],
+    cartItems: { productId: string; variantId: string | null; quantity: number }[],
+) => {
+    const fingerprint = (items: { productId: string; variantId: string | null; quantity: number }[]) =>
+        items
+            .map((i) => `${i.productId}:${i.variantId ?? ""}:${i.quantity}`)
+            .sort()
+            .join("|");
+
+    if (fingerprint(storedItems) !== fingerprint(cartItems)) {
+        console.warn(
+            `Idempotency key ${idempotencyKey} replayed against a cart that no longer matches the stored order — the client is likely reusing one key across different checkouts.`,
+        );
+    }
 };
 
 /**
@@ -118,10 +166,28 @@ const deductStockForOrderItem = async (
 const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
     const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
 
-    const cart = await prisma.cart.findUnique({
-        where: { customerId: customer.id },
-        include: { items: { include: { product: true, variant: true } } },
-    });
+    // Replay check runs before the empty-cart guard below, and that ordering is
+    // the whole fix: a retry of a checkout that already committed arrives at an
+    // emptied cart, and must return the original order instead of "Your cart is
+    // empty" — precisely the failure this change exists to eliminate.
+    const [replayedOrder, cart] = await Promise.all([
+        payload.idempotencyKey
+            ? findReplayableOrder(payload.idempotencyKey, customer.id)
+            : Promise.resolve(null),
+        prisma.cart.findUnique({
+            where: { customerId: customer.id },
+            include: { items: { include: { product: true, variant: true } } },
+        }),
+    ]);
+
+    if (replayedOrder) {
+        warnIfReplayDiverges(
+            payload.idempotencyKey as string,
+            replayedOrder.items,
+            cart?.items ?? [],
+        );
+        return { order: replayedOrder, isReplay: true };
+    }
 
     if (!cart || cart.items.length === 0) {
         throw new AppError(status.BAD_REQUEST, "Your cart is empty");
@@ -147,19 +213,36 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
     const orderItemsData: IOrderItemData[] = [];
     let subtotal = 0;
 
+    // Availability for every cart line in one grouped query rather than one
+    // aggregate per line. Still summed across every warehouse's
+    // Stock.quantity - Stock.reservedQuantity, not the denormalized total —
+    // see deductStockForOrderItem above for the actual deduction, which stays
+    // per-item because each deduction depends on reading its own warehouse rows.
+    const stockRows = await prisma.stock.groupBy({
+        by: ["productId", "variantId"],
+        where: { productId: { in: cart.items.map((item) => item.productId) } },
+        _sum: { quantity: true, reservedQuantity: true },
+    });
+
+    const stockKey = (productId: string, variantId: string | null) =>
+        `${productId}:${variantId ?? ""}`;
+
+    const availableByKey = new Map(
+        stockRows.map((row) => [
+            stockKey(row.productId, row.variantId),
+            (row._sum.quantity ?? 0) - (row._sum.reservedQuantity ?? 0),
+        ]),
+    );
+
     for (const item of cart.items) {
         if (item.product.status !== ProductStatus.ACTIVE) {
             throw new AppError(status.CONFLICT, `"${item.product.name}" is no longer available`);
         }
 
-        // Summed across every warehouse's Stock.quantity - Stock.reservedQuantity, not the
-        // denormalized total alone — see deductStockForOrderItem above for the actual deduction.
-        const stockAggregate = await prisma.stock.aggregate({
-            where: { productId: item.productId, variantId: item.variantId ?? null },
-            _sum: { quantity: true, reservedQuantity: true },
-        });
-        const availableStock =
-            (stockAggregate._sum.quantity ?? 0) - (stockAggregate._sum.reservedQuantity ?? 0);
+        // Absent from the map means no Stock row exists at all for this
+        // product/variant — zero available, same as the old per-item aggregate
+        // returning null sums.
+        const availableStock = availableByKey.get(stockKey(item.productId, item.variantId)) ?? 0;
 
         if (item.quantity > availableStock) {
             throw new AppError(
@@ -217,64 +300,96 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
         );
     }
 
-    const orderNumber = await generateUniqueOrderNumber();
-
-    const created = await prisma.$transaction(async (tx) => {
-        const order = await tx.order.create({
-            data: {
-                orderNumber,
-                customerId: customer.id,
-                subtotal,
-                discountAmount,
-                shippingAmount,
-                taxAmount,
-                totalAmount,
-                couponCode: appliedCoupon?.code,
-                notes: payload.notes,
-                shippingAddressId: payload.shippingAddressId,
-                items: { createMany: { data: orderItemsData } },
-                statusHistory: { create: { toStatus: OrderStatus.PENDING } },
-                ...(payload.shippingMethodId
-                    ? { shipments: { create: { shippingMethodId: payload.shippingMethodId } } }
-                    : {}),
-            },
-        });
-
-        // Coupon redemption is recorded here, not before — it must only count once the order actually commits.
-        if (appliedCoupon) {
-            await tx.coupon.update({
-                where: { id: appliedCoupon.id },
-                data: { usageCount: { increment: 1 } },
+    const runCheckout = (orderNumber: string) =>
+        prisma.$transaction(async (tx) => {
+            const order = await tx.order.create({
+                data: {
+                    orderNumber,
+                    idempotencyKey: payload.idempotencyKey,
+                    customerId: customer.id,
+                    subtotal,
+                    discountAmount,
+                    shippingAmount,
+                    taxAmount,
+                    totalAmount,
+                    couponCode: appliedCoupon?.code,
+                    notes: payload.notes,
+                    shippingAddressId: payload.shippingAddressId,
+                    items: { createMany: { data: orderItemsData } },
+                    statusHistory: { create: { toStatus: OrderStatus.PENDING } },
+                    ...(payload.shippingMethodId
+                        ? { shipments: { create: { shippingMethodId: payload.shippingMethodId } } }
+                        : {}),
+                },
             });
-        }
 
-        for (const item of cart.items) {
-            await deductStockForOrderItem(
-                tx,
-                order.id,
-                item.productId,
-                item.variantId,
-                item.quantity,
-                item.product.name,
-            );
-        }
+            // Coupon redemption is recorded here, not before — it must only count once the order actually commits.
+            if (appliedCoupon) {
+                await tx.coupon.update({
+                    where: { id: appliedCoupon.id },
+                    data: { usageCount: { increment: 1 } },
+                });
+            }
 
-        // Clear the cart on success (the Cart row itself is kept for reuse).
-        await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+            for (const item of cart.items) {
+                await deductStockForOrderItem(
+                    tx,
+                    order.id,
+                    item.productId,
+                    item.variantId,
+                    item.quantity,
+                    item.product.name,
+                );
+            }
 
-        return tx.order.findUniqueOrThrow({
-            where: { id: order.id },
-            include: ORDER_DETAIL_INCLUDE,
+            // Clear the cart on success (the Cart row itself is kept for reuse).
+            await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+
+            return tx.order.findUniqueOrThrow({
+                where: { id: order.id },
+                include: ORDER_DETAIL_INCLUDE,
+            });
         });
-    });
 
-    // Best-effort, outside the transaction (see StockService.notifyIfLowStock) — a checkout
-    // that already committed must not fail just because the low-stock alert had trouble.
-    for (const item of cart.items) {
-        await StockService.notifyIfLowStock(item.productId, item.variantId, item.product.name);
+    // `orderNumber` carries a random suffix, so instead of probing for a free
+    // one before inserting (5 sequential reads on every checkout), just insert
+    // and let the unique constraint arbitrate — collisions are rare enough that
+    // the retry costs nothing in the common case.
+    let created;
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            created = await runCheckout(generateOrderNumber());
+            break;
+        } catch (error) {
+            // Concurrent request with the same key won the race: it created the
+            // order, so return that one instead of failing this retry.
+            if (payload.idempotencyKey && violatedTarget(error, "idempotencyKey")) {
+                const winner = await findReplayableOrder(payload.idempotencyKey, customer.id);
+                if (winner) {
+                    return { order: winner, isReplay: true };
+                }
+            }
+
+            if (violatedTarget(error, "orderNumber") && attempt < 4) {
+                continue;
+            }
+
+            throw error;
+        }
     }
 
-    return created;
+    // Deliberately not awaited: this runs after the order has already committed
+    // and cannot change its outcome, but each call costs a product lookup, a
+    // stock aggregate, a user lookup and a write — enough, across a multi-item
+    // cart, to push the response past the storefront's timeout. Errors are
+    // caught explicitly so an unhandled rejection can't take the process down.
+    void Promise.all(
+        cart.items.map((item) =>
+            StockService.notifyIfLowStock(item.productId, item.variantId, item.product.name),
+        ),
+    ).catch((error) => console.error("Low-stock notification failed after checkout:", error));
+
+    return { order: created, isReplay: false };
 };
 
 const getOrders = async (userId: string, role: RoleName, queryParams: IQueryParams) => {

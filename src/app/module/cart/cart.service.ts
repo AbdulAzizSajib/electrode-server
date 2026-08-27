@@ -68,6 +68,42 @@ const resolveCart = async (userId: string | undefined, guestTokenCookie: string 
 };
 
 /**
+ * The same resolution as `resolveCart`, minus the `CART_INCLUDE` payload.
+ * Mutations only ever need `cart.id` — they call `reloadCart` afterwards for
+ * the full cart anyway — so fetching every item, product, image and variant
+ * up front is work that gets thrown away on every add/update/remove.
+ */
+const resolveCartId = async (userId: string | undefined, guestTokenCookie: string | undefined) => {
+    if (userId) {
+        const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
+        const cart = await prisma.cart.upsert({
+            where: { customerId: customer.id },
+            create: { customerId: customer.id },
+            update: {},
+            select: { id: true },
+        });
+        return { cartId: cart.id, customerId: customer.id };
+    }
+
+    if (guestTokenCookie) {
+        const existing = await prisma.cart.findUnique({
+            where: { guestToken: guestTokenCookie },
+            select: { id: true },
+        });
+        if (existing) {
+            return { cartId: existing.id, customerId: undefined };
+        }
+    }
+
+    const guestToken = generateGuestToken();
+    const cart = await prisma.cart.create({
+        data: { guestToken },
+        select: { id: true },
+    });
+    return { cartId: cart.id, customerId: undefined, newGuestToken: guestToken };
+};
+
+/**
  * `appliedCouponCode` (read from the `appliedCoupon` cookie by
  * cart.controller.ts) is re-validated against the current cart on every
  * fetch so the discount preview never shows a stale/no-longer-applicable
@@ -91,28 +127,58 @@ const getCart = async (
     return { cart, newGuestToken, discount };
 };
 
-const reloadCart = (cartId: string) =>
-    prisma.cart.findUniqueOrThrow({ where: { id: cartId }, include: CART_INCLUDE });
+/**
+ * The post-mutation cart, shaped exactly like `getCart`'s — items *and* the
+ * re-validated `discount`. Clients render a cart straight from a mutation
+ * response rather than following it with a read, so anything `getCart`
+ * returns has to be here too; omitting `discount` would silently drop an
+ * applied coupon from the UI until the next full fetch.
+ *
+ * The one thing this deliberately does not do is `getCart`'s cookie
+ * clearing when a coupon has stopped applying — a mutation has no business
+ * mutating the coupon cookie. The next cart read reconciles it.
+ */
+const reloadCart = async (
+    cartId: string,
+    customerId: string | undefined,
+    appliedCouponCode?: string,
+) => {
+    const cart = await prisma.cart.findUniqueOrThrow({
+        where: { id: cartId },
+        include: CART_INCLUDE,
+    });
+
+    const discount = await CouponService.getAppliedDiscountForCart(
+        cart.items,
+        customerId,
+        appliedCouponCode,
+    );
+
+    return { ...cart, discount };
+};
 
 const addItem = async (
     userId: string | undefined,
     guestTokenCookie: string | undefined,
     payload: IAddCartItemPayload,
+    appliedCouponCode?: string,
 ) => {
-    const { cart, newGuestToken } = await resolveCart(userId, guestTokenCookie);
+    // Independent of each other: which cart this is has no bearing on whether
+    // the product exists, so they resolve concurrently rather than in series.
+    const [{ cartId, customerId, newGuestToken }, product, variant] = await Promise.all([
+        resolveCartId(userId, guestTokenCookie),
+        prisma.product.findUnique({ where: { id: payload.productId } }),
+        payload.variantId
+            ? prisma.productVariant.findUnique({ where: { id: payload.variantId } })
+            : Promise.resolve(null),
+    ]);
 
-    const product = await prisma.product.findUnique({ where: { id: payload.productId } });
     if (!product || product.status !== ProductStatus.ACTIVE) {
         throw new AppError(status.NOT_FOUND, "Product not found");
     }
 
-    if (payload.variantId) {
-        const variant = await prisma.productVariant.findUnique({
-            where: { id: payload.variantId },
-        });
-        if (!variant || variant.productId !== payload.productId) {
-            throw new AppError(status.BAD_REQUEST, "Variant does not belong to this product");
-        }
+    if (payload.variantId && (!variant || variant.productId !== payload.productId)) {
+        throw new AppError(status.BAD_REQUEST, "Variant does not belong to this product");
     }
 
     const quantityToAdd = payload.quantity ?? 1;
@@ -123,7 +189,7 @@ const addItem = async (
     // NULL would NOT collide there (see CartItem.prisma).
     const existingItem = await prisma.cartItem.findFirst({
         where: {
-            cartId: cart.id,
+            cartId,
             productId: payload.productId,
             variantId: payload.variantId ?? null,
         },
@@ -137,7 +203,7 @@ const addItem = async (
     } else {
         await prisma.cartItem.create({
             data: {
-                cartId: cart.id,
+                cartId,
                 productId: payload.productId,
                 variantId: payload.variantId,
                 quantity: quantityToAdd,
@@ -145,7 +211,7 @@ const addItem = async (
         });
     }
 
-    return { cart: await reloadCart(cart.id), newGuestToken };
+    return { cart: await reloadCart(cartId, customerId, appliedCouponCode), newGuestToken };
 };
 
 const updateItemQuantity = async (
@@ -153,34 +219,40 @@ const updateItemQuantity = async (
     guestTokenCookie: string | undefined,
     itemId: string,
     quantity: number,
+    appliedCouponCode?: string,
 ) => {
-    const { cart, newGuestToken } = await resolveCart(userId, guestTokenCookie);
+    const [{ cartId, customerId, newGuestToken }, item] = await Promise.all([
+        resolveCartId(userId, guestTokenCookie),
+        prisma.cartItem.findUnique({ where: { id: itemId } }),
+    ]);
 
-    const item = await prisma.cartItem.findUnique({ where: { id: itemId } });
-    if (!item || item.cartId !== cart.id) {
+    if (!item || item.cartId !== cartId) {
         throw new AppError(status.NOT_FOUND, "Cart item not found");
     }
 
     await prisma.cartItem.update({ where: { id: itemId }, data: { quantity } });
 
-    return { cart: await reloadCart(cart.id), newGuestToken };
+    return { cart: await reloadCart(cartId, customerId, appliedCouponCode), newGuestToken };
 };
 
 const removeItem = async (
     userId: string | undefined,
     guestTokenCookie: string | undefined,
     itemId: string,
+    appliedCouponCode?: string,
 ) => {
-    const { cart, newGuestToken } = await resolveCart(userId, guestTokenCookie);
+    const [{ cartId, customerId, newGuestToken }, item] = await Promise.all([
+        resolveCartId(userId, guestTokenCookie),
+        prisma.cartItem.findUnique({ where: { id: itemId } }),
+    ]);
 
-    const item = await prisma.cartItem.findUnique({ where: { id: itemId } });
-    if (!item || item.cartId !== cart.id) {
+    if (!item || item.cartId !== cartId) {
         throw new AppError(status.NOT_FOUND, "Cart item not found");
     }
 
     await prisma.cartItem.delete({ where: { id: itemId } });
 
-    return { cart: await reloadCart(cart.id), newGuestToken };
+    return { cart: await reloadCart(cartId, customerId, appliedCouponCode), newGuestToken };
 };
 
 /**

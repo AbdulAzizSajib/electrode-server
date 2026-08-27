@@ -1,5 +1,12 @@
 export interface IPurchaseOrderItemInput {
     productId: string;
+    /**
+     * Which variant this line replenishes. Optional for a simple product;
+     * required in practice for a variable one, because stock is held per
+     * (warehouse, product, variant) and customer orders deduct against the
+     * variant actually bought.
+     */
+    variantId?: string;
     quantity: number;
     unitCost: number;
 }

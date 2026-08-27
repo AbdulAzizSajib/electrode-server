@@ -11,6 +11,12 @@ export interface ICreateOrderPayload {
      * to the customer's cart without the client having to resend it.
      */
     couponCode?: string;
+    /**
+     * Not accepted from the request body either — order.controller.ts reads
+     * and validates it from the `Idempotency-Key` header. Absent means this
+     * checkout forgoes replay protection (see order.validation.ts).
+     */
+    idempotencyKey?: string;
 }
 
 export interface IUpdateOrderStatusPayload {

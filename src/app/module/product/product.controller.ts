@@ -113,13 +113,23 @@ const updateProduct = catchAsync(async (req: Request, res: Response) => {
 });
 
 const deleteProduct = catchAsync(async (req: Request, res: Response) => {
-    const result = await ProductService.deleteProduct(req.user.userId, req.params.id as string);
+    const { product, archived, orderItemCount, purchaseOrderItemCount } =
+        await ProductService.deleteProduct(req.user.userId, req.params.id as string);
+
+    const references = [
+        orderItemCount > 0 ? `${orderItemCount} order item(s)` : null,
+        purchaseOrderItemCount > 0 ? `${purchaseOrderItemCount} purchase order item(s)` : null,
+    ]
+        .filter(Boolean)
+        .join(" and ");
 
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
-        message: "Product deleted successfully",
-        data: result,
+        message: archived
+            ? `Product is referenced by ${references}, so it was archived instead of deleted. It is now hidden from the storefront.`
+            : "Product deleted successfully",
+        data: product,
     });
 });
 

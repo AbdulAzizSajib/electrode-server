@@ -181,6 +181,33 @@ const attachCampaignPricing = async <T extends { id: string; price: Prisma.Decim
     });
 };
 
+/**
+ * Returns `categoryId` plus every category beneath it, at any depth, so that
+ * filtering by a parent category also returns the products of its children
+ * (e.g. "Audio & Smart Ecosystems" yields TWS Earbuds products too).
+ *
+ * Walks the tree one level at a time — Prisma cannot `include` a recursive
+ * relation to arbitrary depth, mirroring the approach in
+ * `CategoryService.getAdminCategoryTree`. `visited` guards against a cyclic
+ * hierarchy so the loop always terminates.
+ */
+const collectCategoryIds = async (categoryId: string): Promise<string[]> => {
+    const visited = new Set<string>([categoryId]);
+    let frontier = [categoryId];
+
+    while (frontier.length > 0) {
+        const children = await prisma.category.findMany({
+            where: { parentId: { in: frontier } },
+            select: { id: true },
+        });
+
+        frontier = children.map((child) => child.id).filter((id) => !visited.has(id));
+        frontier.forEach((id) => visited.add(id));
+    }
+
+    return [...visited];
+};
+
 const getPublicProducts = async (queryParams: IQueryParams) => {
     const { category, brand, minPrice, maxPrice } = queryParams;
 
@@ -201,9 +228,16 @@ const getPublicProducts = async (queryParams: IQueryParams) => {
     // clobbering it — QueryBuilder.where() only deep-merges, it doesn't
     // union sibling `OR` arrays.
     if (category) {
+        // Includes descendant categories, so a parent id returns the whole
+        // subtree's products; a leaf id resolves to just itself.
+        const categoryIds = await collectCategoryIds(category);
+
         where.AND = [
             {
-                OR: [{ categoryId: category }, { categories: { some: { categoryId: category } } }],
+                OR: [
+                    { categoryId: { in: categoryIds } },
+                    { categories: { some: { categoryId: { in: categoryIds } } } },
+                ],
             },
         ];
     }
@@ -443,6 +477,16 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
     return updated;
 };
 
+/**
+ * Deletes a product, or archives it when historical records depend on it.
+ *
+ * `OrderItem` and `PurchaseOrderItem` both reference Product with the default
+ * `Restrict`, deliberately: hard-deleting a product that appears on a past
+ * order or purchase order would corrupt the financial history those rows
+ * represent. So when either exists we soft-delete instead — set the status to
+ * ARCHIVED, which already hides the product from every public query — and
+ * report back which path was taken so the caller can phrase its response.
+ */
 const deleteProduct = async (userId: string, id: string) => {
     const existing = await prisma.product.findUnique({ where: { id } });
 
@@ -450,19 +494,35 @@ const deleteProduct = async (userId: string, id: string) => {
         throw new AppError(status.NOT_FOUND, "Product not found");
     }
 
-    try {
-        const deleted = await prisma.product.delete({ where: { id } });
-        await AuditLogService.record(userId, AuditAction.DELETE, "Product", id, { oldData: existing });
-        return deleted;
-    } catch (error) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
-            throw new AppError(
-                status.CONFLICT,
-                "Cannot delete a product that is referenced by orders, cart items, or other records",
-            );
+    const [orderItemCount, purchaseOrderItemCount] = await Promise.all([
+        prisma.orderItem.count({ where: { productId: id } }),
+        prisma.purchaseOrderItem.count({ where: { productId: id } }),
+    ]);
+
+    if (orderItemCount > 0 || purchaseOrderItemCount > 0) {
+        if (existing.status === ProductStatus.ARCHIVED) {
+            return { product: existing, archived: true as const, orderItemCount, purchaseOrderItemCount };
         }
-        throw error;
+
+        const archived = await prisma.product.update({
+            where: { id },
+            data: { status: ProductStatus.ARCHIVED },
+        });
+
+        // Recorded as UPDATE, not DELETE: the row survives. The status change
+        // from oldData -> newData is what makes the archival auditable.
+        await AuditLogService.record(userId, AuditAction.UPDATE, "Product", id, {
+            oldData: existing,
+            newData: archived,
+        });
+
+        return { product: archived, archived: true as const, orderItemCount, purchaseOrderItemCount };
     }
+
+    const deleted = await prisma.product.delete({ where: { id } });
+    await AuditLogService.record(userId, AuditAction.DELETE, "Product", id, { oldData: existing });
+
+    return { product: deleted, archived: false as const, orderItemCount, purchaseOrderItemCount };
 };
 
 const addProductCategory = async (productId: string, categoryId: string) => {

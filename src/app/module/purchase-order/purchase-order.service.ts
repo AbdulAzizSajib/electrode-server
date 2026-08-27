@@ -8,13 +8,19 @@ import { AuditLogService } from "../audit-log/audit-log.service";
 import { StockService } from "../stock/stock.service";
 import {
     ICreatePurchaseOrderPayload,
+    IPurchaseOrderItemInput,
     IReceivePurchaseOrderPayload,
     IUpdatePurchaseOrderPayload,
 } from "./purchase-order.interface";
 
 const PURCHASE_ORDER_INCLUDE = {
     supplier: true,
-    items: { include: { product: { select: { id: true, name: true, sku: true } } } },
+    items: {
+        include: {
+            product: { select: { id: true, name: true, sku: true } },
+            variant: { select: { id: true, name: true, sku: true } },
+        },
+    },
 };
 
 const generatePurchaseNumber = () => {
@@ -48,8 +54,29 @@ const assertSupplierExists = async (supplierId: string) => {
     }
 };
 
+/**
+ * A line may name a variant, but only one belonging to the same product —
+ * otherwise the receipt would create stock under a variant that product does
+ * not own, which customer orders could never match.
+ */
+const assertVariantsBelongToProducts = async (items: IPurchaseOrderItemInput[]) => {
+    for (const item of items) {
+        if (!item.variantId) continue;
+
+        const variant = await prisma.productVariant.findUnique({
+            where: { id: item.variantId },
+            select: { productId: true },
+        });
+
+        if (!variant || variant.productId !== item.productId) {
+            throw new AppError(status.BAD_REQUEST, "Variant does not belong to this product");
+        }
+    }
+};
+
 const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrderPayload) => {
     await assertSupplierExists(payload.supplierId);
+    await assertVariantsBelongToProducts(payload.items);
 
     const subtotal = payload.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0);
     const shippingCost = payload.shippingCost ?? 0;
@@ -71,6 +98,7 @@ const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrder
             items: {
                 create: payload.items.map((item) => ({
                     productId: item.productId,
+                    variantId: item.variantId ?? null,
                     quantity: item.quantity,
                     unitCost: item.unitCost,
                     totalCost: item.quantity * item.unitCost,
@@ -231,8 +259,15 @@ const receivePurchaseOrder = async (
             // `where` of `Stock`'s `@@unique([warehouseId, productId,
             // variantId])` (same gotcha CartItem.prisma documents) — an
             // explicit find-or-create is used instead.
+            // Stock is held per (warehouse, product, variant). Receiving against
+            // the line's own variant is what lets a customer order — which
+            // deducts by the variant bought — actually find this stock.
             const existingStock = await tx.stock.findFirst({
-                where: { warehouseId: payload.warehouseId, productId: item.productId, variantId: null },
+                where: {
+                    warehouseId: payload.warehouseId,
+                    productId: item.productId,
+                    variantId: item.variantId,
+                },
             });
 
             if (existingStock) {
@@ -245,7 +280,7 @@ const receivePurchaseOrder = async (
                     data: {
                         warehouseId: payload.warehouseId,
                         productId: item.productId,
-                        variantId: null,
+                        variantId: item.variantId,
                         quantity: receipt.quantity,
                     },
                 });
@@ -254,6 +289,7 @@ const receivePurchaseOrder = async (
             await tx.stockMovement.create({
                 data: {
                     productId: item.productId,
+                    variantId: item.variantId,
                     warehouseId: payload.warehouseId,
                     type: StockMovementType.PURCHASE,
                     quantity: receipt.quantity,
@@ -262,9 +298,14 @@ const receivePurchaseOrder = async (
                 },
             });
 
-            // PurchaseOrderItem has no variantId (POs are placed at the product level, see
-            // PurchaseOrderItem.prisma) — keep Product.stockQuantity in sync with the ledger.
-            await StockService.applyDenormalizedStockDelta(tx, item.productId, null, receipt.quantity);
+            // Keep Product.stockQuantity (and the variant's, when the line names
+            // one) in sync with the ledger.
+            await StockService.applyDenormalizedStockDelta(
+                tx,
+                item.productId,
+                item.variantId,
+                receipt.quantity,
+            );
         }
 
         const refreshedItems = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id } });

@@ -20,10 +20,11 @@ model ProductVariant {
 
   status Boolean @default(true)
 
-  orderItems     OrderItem[]
-  stockMovements StockMovement[]
-  stocks         Stock[]
-  cartItems      CartItem[]
+  orderItems         OrderItem[]
+  stockMovements     StockMovement[]
+  stocks             Stock[]
+  cartItems          CartItem[]
+  purchaseOrderItems PurchaseOrderItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

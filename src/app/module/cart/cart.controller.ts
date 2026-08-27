@@ -45,11 +45,15 @@ const getCart = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+// Every mutation echoes back the same shape `getCart` returns — items and the
+// re-validated `discount` — because clients render straight from this response
+// instead of following it with a read (see cart.service.ts's reloadCart).
 const addItem = catchAsync(async (req: Request, res: Response) => {
     const { cart, newGuestToken } = await CartService.addItem(
         req.user?.userId,
         CookieUtils.getCookie(req, GUEST_TOKEN_COOKIE),
         req.body,
+        CookieUtils.getCookie(req, APPLIED_COUPON_COOKIE),
     );
     applyGuestTokenCookie(res, newGuestToken);
 
@@ -67,6 +71,7 @@ const updateItemQuantity = catchAsync(async (req: Request, res: Response) => {
         CookieUtils.getCookie(req, GUEST_TOKEN_COOKIE),
         req.params.itemId as string,
         req.body.quantity,
+        CookieUtils.getCookie(req, APPLIED_COUPON_COOKIE),
     );
     applyGuestTokenCookie(res, newGuestToken);
 
@@ -83,6 +88,7 @@ const removeItem = catchAsync(async (req: Request, res: Response) => {
         req.user?.userId,
         CookieUtils.getCookie(req, GUEST_TOKEN_COOKIE),
         req.params.itemId as string,
+        CookieUtils.getCookie(req, APPLIED_COUPON_COOKIE),
     );
     applyGuestTokenCookie(res, newGuestToken);
 

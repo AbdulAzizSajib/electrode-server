@@ -2,6 +2,13 @@ import z from "zod";
 
 const purchaseOrderItemZodSchema = z.object({
     productId: z.string(),
+    /**
+     * Optional, but required in practice for a variable product: stock is held
+     * per (warehouse, product, variant) and customer orders deduct against the
+     * variant bought, so a PO line without one replenishes stock those orders
+     * cannot match.
+     */
+    variantId: z.string().optional(),
     quantity: z.number().int().positive(),
     unitCost: z.number().nonnegative(),
 });
