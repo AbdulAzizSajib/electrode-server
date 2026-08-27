@@ -14,6 +14,8 @@
     "migrate:deploy": "prisma migrate deploy",
     "generate": "prisma generate",
     "studio": "prisma studio",
+    "db:latency": "node scripts/db-latency.mjs",
+    "db:copy": "node scripts/migrate-region.mjs",
     "push": "prisma db push",
     "pull": "prisma db pull",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -23,7 +23,10 @@ app.use(cors({
     origin : [envVars.FRONTEND_URL, envVars.BETTER_AUTH_URL, "http://localhost:3000", "http://localhost:5000", "http://localhost:5173" ],
     credentials : true,
     methods : ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders : ["Content-Type", "Authorization"]
+    // Idempotency-Key rides on checkout (see order.controller.ts). It reaches the
+    // server today only because the storefront proxies through its own origin;
+    // a direct browser call would have it stripped by preflight without this.
+    allowedHeaders : ["Content-Type", "Authorization", "Idempotency-Key"]
 }))
 
 app.use("/api/auth", toNodeHandler(auth))
