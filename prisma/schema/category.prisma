@@ -19,6 +19,9 @@ model Category {
   /// additive to each Product's primary `categoryId`/`category`).
   productCategories ProductCategory[]
 
+  // banner relation
+  banners Banner[]
+
   seoTitle       String?
   seoDescription String?
 

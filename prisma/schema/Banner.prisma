@@ -1,17 +1,57 @@
+// model Banner {
+//   id String @id @default(cuid())
+
+//   title    String
+//   subtitle String?
+
+//   image       String
+//   mobileImage String?
+
+//   link String?
+
+//   status BannerStatus @default(DRAFT)
+
+//   sortOrder Int @default(0)
+
+//   startsAt DateTime?
+//   endsAt   DateTime?
+
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   @@index([status])
+//   @@index([sortOrder])
+// }
+
 model Banner {
   id String @id @default(cuid())
 
-  title    String
-  subtitle String?
+  type      BannerType      @default(IMAGE)
+  placement BannerPlacement
 
+  // ---- IMAGE type er jonno ----
   image       String
   mobileImage String?
 
-  link String?
+  // ---- DYNAMIC type er jonno (type = DYNAMIC hole use hobe) ----
+  title         String?
+  subtitle      String?
+  description   String?
+  price         Decimal? @db.Decimal(10, 2)
+  discountPrice Decimal? @db.Decimal(10, 2)
+  buttonText    String?  @default("Shop Now")
+  bgColor       String? // hex code, e.g. "#FF5733"
+  textColor     String?
 
-  status BannerStatus @default(DRAFT)
+  // ---- Link / target ----
+  link       String? // fallback manual link
+  productId  String?
+  product    Product?  @relation(fields: [productId], references: [id])
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
 
-  sortOrder Int @default(0)
+  status    BannerStatus @default(DRAFT)
+  sortOrder Int          @default(0)
 
   startsAt DateTime?
   endsAt   DateTime?
@@ -20,5 +60,6 @@ model Banner {
   updatedAt DateTime @updatedAt
 
   @@index([status])
-  @@index([sortOrder])
+  @@index([placement])
+  @@index([placement, sortOrder])
 }

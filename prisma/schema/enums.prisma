@@ -208,3 +208,18 @@ enum AuditAction {
   IMPORT
   OTHER
 }
+
+//  29-8-2026 
+
+enum BannerPlacement {
+  HEADER
+  MID
+  FOOTER
+  SIDEBAR
+  POPUP
+}
+
+enum BannerType {
+  IMAGE // full png/jpg, just clickable, no dynamic content
+  DYNAMIC // title, price, discount, button etc dynamically shown on top of bg
+}

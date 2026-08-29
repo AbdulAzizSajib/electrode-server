@@ -57,6 +57,9 @@ model Product {
   /// discoverable via its primary `category`.
   categories ProductCategory[]
 
+  //banner relation
+  banners Banner[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
