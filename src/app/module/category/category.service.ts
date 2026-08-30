@@ -1,6 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
 import { AuditAction } from "../../../generated/prisma/client";
+import { deleteFileFromCloudinary } from "../../config/cloudinary.config";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
@@ -185,6 +186,16 @@ const updateCategory = async (userId: string, id: string, payload: IUpdateCatego
                 .findFirst({ where: { slug: candidate, id: { not: id } }, select: { id: true } })
                 .then((found) => Boolean(found)),
         );
+    }
+
+    // Best-effort cleanup of previously stored images when they're being
+    // replaced, so uploads don't accumulate as orphans in Cloudinary. External
+    // URLs (not on Cloudinary) are skipped by deleteFileFromCloudinary.
+    if (payload.image && payload.image !== existing.image) {
+        await deleteFileFromCloudinary(existing.image);
+    }
+    if (payload.banner && payload.banner !== existing.banner) {
+        await deleteFileFromCloudinary(existing.banner);
     }
 
     const updated = await prisma.category.update({

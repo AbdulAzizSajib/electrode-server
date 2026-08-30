@@ -1,6 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
 import { AuditAction } from "../../../generated/prisma/client";
+import { deleteFileFromCloudinary } from "../../config/cloudinary.config";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
@@ -134,6 +135,13 @@ const updateBrand = async (userId: string, id: string, payload: IUpdateBrandPayl
                 .findFirst({ where: { slug: candidate, id: { not: id } }, select: { id: true } })
                 .then((found) => Boolean(found)),
         );
+    }
+
+    // Best-effort cleanup of the previously stored logo when it's being replaced,
+    // so uploads don't accumulate as orphans in Cloudinary. External URLs (not on
+    // Cloudinary) are skipped by deleteFileFromCloudinary.
+    if (payload.logo && payload.logo !== existing.logo) {
+        await deleteFileFromCloudinary(existing.logo);
     }
 
     const updated = await prisma.brand.update({ where: { id }, data: { ...payload, slug } });

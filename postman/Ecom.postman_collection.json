@@ -2174,9 +2174,69 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Electronics\",\n  \"description\": \"Phones, laptops, gadgets\",\n  \"image\": \"https://example.com/images/electronics.jpg\",\n  \"status\": true,\n  \"sortOrder\": 1\n}"
+                  "raw": "{\n  \"name\": \"Electronics\",\n  \"description\": \"Phones, laptops, gadgets\",\n  \"image\": \"https://example.com/images/electronics.jpg\",\n  \"status\": true,\n  \"sortOrder\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
                 },
-                "description": "OWNER/ADMIN only. `slug` is auto-generated from `name` if omitted. Saves categoryId/categorySlug for the rest of this folder."
+                "description": "OWNER/ADMIN only. Plain-JSON variant: `image`/`banner` are pre-hosted URLs. For file upload instead, use the \"Admin - Create Category (multipart image upload)\" request below. `slug` is auto-generated from `name` if omitted. Both save categoryId/categorySlug for the rest of this folder."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Category (multipart image upload)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('categoryId', data.id);",
+                      "    if (data?.slug) pm.collectionVariables.set('categorySlug', data.slug);",
+                      "    console.log('Saved categoryId =', data?.id, 'categorySlug =', data?.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/categories",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "categories"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"name\":\"Electronics\",\"description\":\"Phones, laptops, gadgets\",\"status\":true,\"sortOrder\":1}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": []
+                    },
+                    {
+                      "key": "banner",
+                      "type": "file",
+                      "src": [],
+                      "disabled": true
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN only. multipart/form-data variant of category create: the `data` field carries the same JSON payload the plain-JSON request uses (WITHOUT `image`/`banner`), and the `image`/`banner` file fields hold the images. The server uploads them to Cloudinary and stores the returned URLs. Select an actual image file for the `image` field before sending — Postman can't pre-fill a file picker. `banner` is optional (left disabled here). A plain-JSON request with `image`/`banner` URLs still works too."
               },
               "response": []
             },
@@ -2327,8 +2387,47 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"description\": \"Phones, laptops, gadgets and accessories\",\n  \"sortOrder\": 2\n}"
+                  "raw": "{\n  \"description\": \"Phones, laptops, gadgets and accessories\",\n  \"sortOrder\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
                 }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Category (multipart image upload)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/categories/{{categoryId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "categories",
+                    "{{categoryId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"description\":\"Phones, laptops, gadgets and accessories\",\"sortOrder\":2}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN only. multipart/form-data variant of category update: `data` carries the JSON patch (WITHOUT `image`/`banner`), and the `image`/`banner` file fields upload new images. Old images are deleted from Cloudinary when replaced. Select an actual image file for the `image` field before sending."
               },
               "response": []
             },
@@ -2393,9 +2492,63 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Samsung\",\n  \"description\": \"South Korean electronics manufacturer\",\n  \"logo\": \"https://example.com/images/samsung-logo.png\",\n  \"status\": true\n}"
+                  "raw": "{\n  \"name\": \"Samsung\",\n  \"description\": \"South Korean electronics manufacturer\",\n  \"logo\": \"https://example.com/images/samsung-logo.png\",\n  \"status\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
                 },
-                "description": "OWNER/ADMIN only. Saves brandId/brandSlug for the rest of this folder."
+                "description": "OWNER/ADMIN only. Plain-JSON variant: `logo` is a pre-hosted URL. For file upload instead, use the \"Admin - Create Brand (multipart logo upload)\" request below. Both save brandId/brandSlug for the rest of this folder."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Brand (multipart logo upload)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('brandId', data.id);",
+                      "    if (data?.slug) pm.collectionVariables.set('brandSlug', data.slug);",
+                      "    console.log('Saved brandId =', data?.id, 'brandSlug =', data?.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/brands",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "brands"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"name\":\"Samsung\",\"description\":\"South Korean electronics manufacturer\",\"status\":true}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "logo",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN only. multipart/form-data variant of brand create: the `data` field carries the same JSON payload the plain-JSON request uses (WITHOUT `logo`), and the `logo` file field holds the image. The server uploads it to Cloudinary and stores the returned URL as `logo`. Select an actual image file for the `logo` file field before sending — Postman can't pre-fill a file picker. A plain-JSON request with a `logo` URL still works too."
               },
               "response": []
             },
@@ -2515,8 +2668,48 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"description\": \"South Korean multinational electronics manufacturer\"\n}"
-                }
+                  "raw": "{\n  \"description\": \"South Korean multinational electronics manufacturer\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "OWNER/ADMIN only. Plain-JSON variant. To replace the logo with an uploaded image, use \"Admin - Update Brand (multipart logo upload)\" below."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Brand (multipart logo upload)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/brands/{{brandId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "brands",
+                    "{{brandId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"description\":\"South Korean multinational electronics manufacturer\"}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "logo",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN only. multipart/form-data variant of brand update: `data` carries the JSON patch (WITHOUT `logo`), and the `logo` file field uploads a new logo. The old logo is deleted from Cloudinary when replaced. Select an actual image file for the `logo` field before sending."
               },
               "response": []
             },

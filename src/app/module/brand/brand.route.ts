@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { multerUpload } from "../../config/multer.config";
 import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
@@ -6,6 +7,10 @@ import { BrandController } from "./brand.controller";
 import { bulkCreateBrandsZodSchema, createBrandZodSchema, updateBrandZodSchema } from "./brand.validation";
 
 const router = Router();
+
+// Brand logo is uploaded directly (multipart) rather than passed as a pre-hosted
+// URL. A plain application/json request with a `logo` URL string still works.
+const brandLogoUpload = multerUpload.single("logo");
 
 // Admin (any status)
 router.get(
@@ -22,6 +27,8 @@ router.get(
 router.post(
     "/",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    brandLogoUpload,
+    BrandController.mergeUploadedBrandLogo,
     validateRequest(createBrandZodSchema),
     BrandController.createBrand,
 );
@@ -34,6 +41,8 @@ router.post(
 router.patch(
     "/:id",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    brandLogoUpload,
+    BrandController.mergeUploadedBrandLogo,
     validateRequest(updateBrandZodSchema),
     BrandController.updateBrand,
 );
