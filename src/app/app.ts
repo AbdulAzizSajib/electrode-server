@@ -16,6 +16,16 @@ import { IndexRoutes } from "./routes";
 const app: Application = express();
 app.set("query parser", (str : string) => qs.parse(str));
 
+// This deployment sits behind a proxy, so without this `req.ip` is the
+// proxy's address and every visitor looks like the same client. Guest
+// checkout rate-limits per IP (see order.service.ts), which would then
+// throttle all guests collectively instead of one abuser.
+//
+// Set to 1, not `true`: trusting the whole chain lets a client forge
+// X-Forwarded-For and pick its own apparent IP, which defeats the limit.
+// One hop trusts only the platform's own proxy.
+app.set("trust proxy", 1);
+
 app.set("view engine", "ejs");
 app.set("views",path.resolve(process.cwd(), `src/app/templates`) )
 

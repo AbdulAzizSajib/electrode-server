@@ -11,8 +11,15 @@ model Customer {
   firstName String
   lastName  String?
   email     String?
-  phone     String?
-  avatar    String?
+
+  /// Unique because guest checkout merges on it: a guest order resolves to
+  /// the customer holding this number, so a repeat buyer accumulates one
+  /// record rather than one per order. Stored normalized to E.164
+  /// (+8801XXXXXXXXX) by src/app/utils/phone.ts - two format variants of the
+  /// same number must never occupy two rows or the merge silently fails.
+  /// Still nullable: customers created from a User account may have none.
+  phone  String? @unique
+  avatar String?
 
   status CustomerStatus @default(ACTIVE)
 

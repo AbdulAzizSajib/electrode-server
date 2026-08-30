@@ -723,6 +723,32 @@
                 "description": "No auth. Full detail incl. variants/images/attributes. 404 if not ACTIVE."
               },
               "response": []
+            },
+            {
+              "name": "Public - Get Related Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productSlug}}/related?limit=6",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productSlug}}",
+                    "related"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "6"
+                    }
+                  ]
+                },
+                "description": "No auth. Catalog-structure scoring: same category (+3), same brand (+2), shared supplementary category (+1), price within +/-40% (+1). Excludes the source product and non-ACTIVE products; backfills with featured/newest so the list is never empty. limit defaults to 6, clamped to 24."
+              },
+              "response": []
             }
           ]
         },
@@ -962,6 +988,87 @@
                     "{{wishlistItemId}}"
                   ]
                 }
+              },
+              "response": []
+            },
+            {
+              "name": "Wishlist - Get Count",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/wishlist/count",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "wishlist",
+                    "count"
+                  ]
+                },
+                "description": "Auth required. Number of wishlist entries referencing an ACTIVE product - for the header badge, without transferring the items."
+              },
+              "response": []
+            },
+            {
+              "name": "Wishlist - Contains Product",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/wishlist/contains/{{productId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "wishlist",
+                    "contains",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Auth required. Returns { inWishlist, itemId }. Always 200 - 'not saved' is an answer, not a 404. Lets a product card render its heart state without fetching the whole list."
+              },
+              "response": []
+            },
+            {
+              "name": "Wishlist - Remove By Product",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/wishlist/items/product/{{productId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "wishlist",
+                    "items",
+                    "product",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Auth required. Removes by productId so a heart toggle needs no itemId lookup first. 404 if the product is not in the caller's wishlist."
+              },
+              "response": []
+            },
+            {
+              "name": "Wishlist - Move Item To Cart",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/wishlist/items/{{wishlistItemId}}/move-to-cart",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "wishlist",
+                    "items",
+                    "{{wishlistItemId}}",
+                    "move-to-cart"
+                  ]
+                },
+                "description": "Auth required, ownership enforced (404 otherwise). Adds to cart then removes from the wishlist. If the cart add fails the wishlist entry is left in place. An existing cart item is incremented, not duplicated."
               },
               "response": []
             }
@@ -1491,6 +1598,84 @@
                 "description": "No auth. APPROVED only."
               },
               "response": []
+            },
+            {
+              "name": "Get My Reviews",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reviews/me?page=1&limit=10",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reviews",
+                    "me"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "Auth required. The caller's own reviews in EVERY status, including PENDING and REJECTED which the public list hides. Supports page/limit/sortBy and filters on status, rating, productId."
+              },
+              "response": []
+            },
+            {
+              "name": "Update My Review",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/reviews/me/{{reviewId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reviews",
+                    "me",
+                    "{{reviewId}}"
+                  ]
+                },
+                "description": "Auth required, author only (404 otherwise). Editing an APPROVED review resets it to PENDING for re-moderation and removes it from the product's rating aggregate until re-approved. At least one field required.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rating\": 4,\n  \"title\": \"Updated title\",\n  \"comment\": \"Updated comment.\"\n}"
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete My Review",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reviews/me/{{reviewId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reviews",
+                    "me",
+                    "{{reviewId}}"
+                  ]
+                },
+                "description": "Auth required, author only (404 otherwise). Recalculates the product's rating aggregate."
+              },
+              "response": []
             }
           ]
         },
@@ -1641,7 +1826,103 @@
                     "banners"
                   ]
                 },
-                "description": "No auth. ACTIVE + within its startsAt/endsAt window only."
+                "description": "No auth. Returns ACTIVE banners currently inside their startsAt/endsAt window, ordered by sortOrder ascending. With no placement filter, every region is returned. Valid placements: HEADER, MID, FOOTER, SIDEBAR, POPUP, HERO_SLIDER, HERO_SIDE, HERO_PROMO."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Banners by Placement",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners?placement=HEADER",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "HEADER"
+                    }
+                  ]
+                },
+                "description": "No auth. Narrows the listing to one storefront region. The status and scheduling rules are unchanged by the filter. Valid placements: HEADER, MID, FOOTER, SIDEBAR, POPUP, HERO_SLIDER, HERO_SIDE, HERO_PROMO."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Banners (HERO_SLIDER)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners?placement=HERO_SLIDER",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "HERO_SLIDER"
+                    }
+                  ]
+                },
+                "description": "No auth. Homepage hero region: the large left carousel (multiple banners rotate as slides). Returns every ACTIVE, in-window banner for this region ordered by sortOrder — there is NO per-region cap, so how many are displayed is the storefront's decision."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Banners (HERO_SIDE)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners?placement=HERO_SIDE",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "HERO_SIDE"
+                    }
+                  ]
+                },
+                "description": "No auth. Homepage hero region: the square tiles at the top right. Returns every ACTIVE, in-window banner for this region ordered by sortOrder — there is NO per-region cap, so how many are displayed is the storefront's decision."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Banners (HERO_PROMO)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners?placement=HERO_PROMO",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "HERO_PROMO"
+                    }
+                  ]
+                },
+                "description": "No auth. Homepage hero region: the wide tile beneath the square tiles. Returns every ACTIVE, in-window banner for this region ordered by sortOrder — there is NO per-region cap, so how many are displayed is the storefront's decision."
               },
               "response": []
             }
@@ -1732,6 +2013,30 @@
                     "read-all"
                   ]
                 }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Store Settings",
+          "item": [
+            {
+              "name": "Public - Get Store Settings",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/settings/public",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "settings",
+                    "public"
+                  ]
+                },
+                "description": "NO AUTH. Storefront presentation payload for the header and footer: branding, mainNav, footerColumns, socialLinks, announcementBar, newsletter, contact, currency. Explicit allow-list - defaultTaxRatePercent and freeShippingThreshold are NOT exposed. Read-only: never creates or mutates the settings row."
               },
               "response": []
             }
@@ -3035,6 +3340,25 @@
                 }
               },
               "response": []
+            },
+            {
+              "name": "Admin - Delete Review",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reviews/{{reviewId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reviews",
+                    "{{reviewId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN only - STAFF gets 403 (STAFF may moderate status but not destroy content). Hard delete: recalculates the product's rating aggregate and writes an audit log entry."
+              },
+              "response": []
             }
           ]
         },
@@ -3890,15 +4214,10 @@
           "name": "Banners",
           "item": [
             {
-              "name": "Admin - Create Banner",
+              "name": "Admin - Create IMAGE Banner",
               "request": {
                 "method": "POST",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                  }
-                ],
+                "header": [],
                 "url": {
                   "raw": "{{base_url}}/banners",
                   "host": [
@@ -3908,9 +4227,127 @@
                     "banners"
                   ]
                 },
+                "description": "OWNER/ADMIN. An IMAGE banner is a single clickable artwork with no overlaid content.\n\n`type` defaults to IMAGE. `placement` is REQUIRED.\nAn image is required for this type — upload a file in the `image` field (or send a URL via JSON). The DYNAMIC-only fields (title, subtitle, description, price, discountPrice, buttonText, bgColor, textColor) are REJECTED with 400.\n\n**Images are uploaded as files, not URLs.** Send as `multipart/form-data`: the non-file payload goes in the `data` field as JSON, and the artwork goes in the `image` / `mobileImage` file fields (pick a file in Postman's Body tab — `src` is intentionally left blank). The server uploads each file to Cloudinary and stores the resulting URL. A plain `application/json` request with `image` as an already-hosted URL is still accepted.",
                 "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"title\": \"Winter Sale\",\n  \"subtitle\": \"Up to 15% off\",\n  \"image\": \"https://example.com/images/winter-sale-banner.jpg\",\n  \"status\": \"ACTIVE\",\n  \"sortOrder\": 1,\n  \"startsAt\": \"2026-01-01T00:00:00.000Z\",\n  \"endsAt\": \"2026-02-01T00:00:00.000Z\"\n}"
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"type\":\"IMAGE\",\"placement\":\"HEADER\",\"link\":\"https://example.com/winter-sale\",\"status\":\"ACTIVE\",\"sortOrder\":1,\"startsAt\":\"2026-01-01T00:00:00.000Z\",\"endsAt\":\"2026-02-01T00:00:00.000Z\"}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": ""
+                    },
+                    {
+                      "key": "mobileImage",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('bannerId', data.id);",
+                      "    console.log('Saved bannerId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create DYNAMIC Banner (product-linked)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ]
+                },
+                "description": "OWNER/ADMIN. A DYNAMIC banner renders text/pricing/styling over a background.\n\n`title` is required for this type. The image is OPTIONAL here — leave both file fields empty to render over `bgColor` alone, or upload a background image.\n\nWith `productId` set, the public listing serves the PRODUCT's live price and links to `/products/<slug>`; a banner's own `price`/`discountPrice` are ignored in that case (they exist for product-less banners). A `productId` that does not exist is rejected with 404.\n\nSet the `productId` collection variable first — run 'Public - Get Products'.\n\n**Images are uploaded as files, not URLs.** Send as `multipart/form-data`: the non-file payload goes in the `data` field as JSON, and the artwork goes in the `image` / `mobileImage` file fields (pick a file in Postman's Body tab — `src` is intentionally left blank). The server uploads each file to Cloudinary and stores the resulting URL. A plain `application/json` request with `image` as an already-hosted URL is still accepted.",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"type\":\"DYNAMIC\",\"placement\":\"HEADER\",\"title\":\"Winter Sale\",\"subtitle\":\"Up to 15% off\",\"description\":\"Limited time offer on selected audio gear\",\"buttonText\":\"Shop Now\",\"bgColor\":\"#FF5733\",\"textColor\":\"#FFFFFF\",\"productId\":\"{{productId}}\",\"status\":\"ACTIVE\",\"sortOrder\":2}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": ""
+                    },
+                    {
+                      "key": "mobileImage",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('bannerId', data.id);",
+                      "    console.log('Saved bannerId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create DYNAMIC Banner (no product, own price)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners"
+                  ]
+                },
+                "description": "A product-less DYNAMIC banner — e.g. a bundle or category-wide sale with no single product to link.\n\nHere the banner's OWN `price`/`discountPrice` ARE served (nothing to resolve from), and `resolvedLink` is the manual `link`.\n\nThis example uploads no file at all: valid for DYNAMIC, which renders over `bgColor`.\n\n**Images are uploaded as files, not URLs.** Send as `multipart/form-data`: the non-file payload goes in the `data` field as JSON, and the artwork goes in the `image` / `mobileImage` file fields (pick a file in Postman's Body tab — `src` is intentionally left blank). The server uploads each file to Cloudinary and stores the resulting URL. A plain `application/json` request with `image` as an already-hosted URL is still accepted.",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"type\":\"DYNAMIC\",\"placement\":\"FOOTER\",\"title\":\"Bundle Deal\",\"subtitle\":\"Buy 2, save more\",\"price\":500,\"discountPrice\":450,\"buttonText\":\"Grab it\",\"bgColor\":\"#101828\",\"textColor\":\"#FFFFFF\",\"link\":\"https://example.com/promo/bundle\",\"status\":\"ACTIVE\",\"sortOrder\":5}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
                 }
               },
               "response": [],
@@ -3954,7 +4391,45 @@
                       "value": "10"
                     }
                   ]
-                }
+                },
+                "description": "OWNER/ADMIN. Returns banners of ANY status, including ones outside their scheduling window.\nSearchable: title, subtitle. Filterable: status, type, placement."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Filter by Placement and Type",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/banners/admin?placement=HEADER&type=DYNAMIC&page=1&limit=10",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "banners",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "HEADER"
+                    },
+                    {
+                      "key": "type",
+                      "value": "DYNAMIC"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN. Filterable on status, type, placement (any status, unlike the public listing). Valid placements: HEADER, MID, FOOTER, SIDEBAR, POPUP, HERO_SLIDER, HERO_SIDE, HERO_PROMO."
               },
               "response": []
             },
@@ -3973,7 +4448,8 @@
                     "admin",
                     "{{bannerId}}"
                   ]
-                }
+                },
+                "description": "OWNER/ADMIN. Any status."
               },
               "response": []
             },
@@ -3981,12 +4457,7 @@
               "name": "Admin - Update Banner",
               "request": {
                 "method": "PATCH",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                  }
-                ],
+                "header": [],
                 "url": {
                   "raw": "{{base_url}}/banners/{{bannerId}}",
                   "host": [
@@ -3997,9 +4468,26 @@
                     "{{bannerId}}"
                   ]
                 },
+                "description": "OWNER/ADMIN. All fields optional — send only what changes, inside the `data` JSON field.\n\nAttach a file to `image`/`mobileImage` to REPLACE that artwork; leave the file fields empty and the stored image is untouched.\n\nThe per-type contract is re-checked against the MERGED result, so an update that would leave the banner invalid for its type is rejected with 400 (e.g. clearing a DYNAMIC banner's `title`). Omitting `type` keeps the stored type.\n\n**Images are uploaded as files, not URLs.** Send as `multipart/form-data`: the non-file payload goes in the `data` field as JSON, and the artwork goes in the `image` / `mobileImage` file fields (pick a file in Postman's Body tab — `src` is intentionally left blank). The server uploads each file to Cloudinary and stores the resulting URL. A plain `application/json` request with `image` as an already-hosted URL is still accepted.",
                 "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"sortOrder\": 2\n}"
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "data",
+                      "value": "{\"sortOrder\":3,\"placement\":\"MID\"}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": ""
+                    },
+                    {
+                      "key": "mobileImage",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
                 }
               },
               "response": []
@@ -4018,7 +4506,8 @@
                     "banners",
                     "{{bannerId}}"
                   ]
-                }
+                },
+                "description": "OWNER/ADMIN."
               },
               "response": []
             }

@@ -1,28 +1,3 @@
-// model Banner {
-//   id String @id @default(cuid())
-
-//   title    String
-//   subtitle String?
-
-//   image       String
-//   mobileImage String?
-
-//   link String?
-
-//   status BannerStatus @default(DRAFT)
-
-//   sortOrder Int @default(0)
-
-//   startsAt DateTime?
-//   endsAt   DateTime?
-
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@index([status])
-//   @@index([sortOrder])
-// }
-
 model Banner {
   id String @id @default(cuid())
 
@@ -30,25 +5,31 @@ model Banner {
   placement BannerPlacement
 
   // ---- IMAGE type er jonno ----
-  image       String
+  /// Required for an IMAGE banner (enforced in banner.validation.ts). Nullable
+  /// because a DYNAMIC banner can render over a bgColor with no artwork at all.
+  image       String?
   mobileImage String?
 
   // ---- DYNAMIC type er jonno (type = DYNAMIC hole use hobe) ----
-  title         String?
-  subtitle      String?
-  description   String?
+  title       String?
+  subtitle    String?
+  description String?
+
+  /// Only meaningful when `productId` is null. A product-linked banner always
+  /// serves the linked Product's live price/compareAtPrice, so these columns
+  /// are ignored for it. Kept for product-less banners (bundles, category-wide
+  /// sales) that still need a price to display.
   price         Decimal? @db.Decimal(10, 2)
   discountPrice Decimal? @db.Decimal(10, 2)
-  buttonText    String?  @default("Shop Now")
-  bgColor       String? // hex code, e.g. "#FF5733"
-  textColor     String?
+
+  buttonText String? @default("Shop Now")
+  bgColor    String? // hex code, e.g. "#FF5733"
+  textColor  String?
 
   // ---- Link / target ----
-  link       String? // fallback manual link
-  productId  String?
-  product    Product?  @relation(fields: [productId], references: [id])
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
+  link      String? // fallback manual link
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
 
   status    BannerStatus @default(DRAFT)
   sortOrder Int          @default(0)

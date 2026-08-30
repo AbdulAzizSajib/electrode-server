@@ -6,6 +6,7 @@ import { ReviewController } from "./review.controller";
 import {
     adminReplyZodSchema,
     createReviewZodSchema,
+    updateMyReviewZodSchema,
     updateReviewStatusZodSchema,
 } from "./review.validation";
 
@@ -33,10 +34,27 @@ router.patch(
     validateRequest(updateReviewStatusZodSchema),
     ReviewController.updateReviewStatus,
 );
+// Author-scoped self-service. Kept under a distinct /me prefix rather than
+// overloading /:id: PATCH /:id is already the admin reply, and folding two
+// different authorization models into one handler is how ownership checks get
+// missed. Mirrors the existing /customers/me/addresses convention.
+// Registered before /:id so "me" is never captured as a review id.
+router.get("/me", checkAuth(...ALL_ROLES), ReviewController.getMyReviews);
+router.patch(
+    "/me/:id",
+    checkAuth(...ALL_ROLES),
+    validateRequest(updateMyReviewZodSchema),
+    ReviewController.updateMyReview,
+);
+router.delete("/me/:id", checkAuth(...ALL_ROLES), ReviewController.deleteMyReview);
+
 router.patch(
     "/:id",
     checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
     validateRequest(adminReplyZodSchema),
     ReviewController.replyToReview,
 );
+// Hard delete is OWNER/ADMIN only — STAFF can moderate status but not destroy
+// content, consistent with the role gradient used elsewhere.
+router.delete("/:id", checkAuth(RoleName.OWNER, RoleName.ADMIN), ReviewController.deleteReview);
 export const ReviewRoutes = router;

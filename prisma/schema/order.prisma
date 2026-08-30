@@ -26,6 +26,16 @@ model Order {
 
   notes String?
 
+  /// Recorded at checkout rather than derived from `customer.userId`: a guest
+  /// checking out with a phone that belongs to a registered customer resolves
+  /// onto that customer, so a derived flag would misreport such an order as
+  /// authenticated. Drives the COD abuse limits and staff tooling.
+  isGuestOrder Boolean @default(false)
+
+  /// Client address of a guest checkout, backing the per-IP rate limit
+  /// (see order.service.ts). Null for authenticated orders.
+  guestIp String?
+
   shippingAddressId String?
   shippingAddress   CustomerAddress? @relation(fields: [shippingAddressId], references: [id], onDelete: SetNull)
 
@@ -46,4 +56,7 @@ model Order {
   @@index([customerId])
   @@index([status])
   @@index([createdAt])
+  /// Serves the per-IP guest-order rate limit: count guest orders from one
+  /// address inside a rolling window (order.service.ts).
+  @@index([guestIp, createdAt])
 }

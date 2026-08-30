@@ -54,6 +54,8 @@ router.delete(
 
 // Public (ACTIVE-only)
 router.get("/", ProductController.getPublicProducts);
+// Two segments, so it cannot be shadowed by the single-segment "/:slug" below.
+router.get("/:slug/related", ProductController.getRelatedProducts);
 router.get("/:slug", ProductController.getPublicProductBySlug);
 
 export const ProductRoutes = router;

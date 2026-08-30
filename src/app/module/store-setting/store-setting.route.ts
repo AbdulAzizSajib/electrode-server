@@ -7,6 +7,11 @@ import { updateStoreSettingZodSchema } from "./store-setting.validation";
 
 const router = Router();
 
+// Public storefront projection — no auth. Registered before "/" so the literal
+// segment is matched first. Read-only by construction: the service uses
+// findUnique, never the upsert the admin read relies on.
+router.get("/public", StoreSettingController.getPublicStoreSetting);
+
 router.get("/", checkAuth(RoleName.OWNER, RoleName.ADMIN), StoreSettingController.getStoreSetting);
 router.patch(
     "/",

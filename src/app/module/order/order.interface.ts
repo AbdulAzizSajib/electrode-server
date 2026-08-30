@@ -1,7 +1,55 @@
+/**
+ * Who is checking out. A discriminated union rather than an optional
+ * `userId`, so "neither a session nor a guest identity" is unconstructible
+ * instead of being a runtime guard buried in the middle of checkout — and so
+ * TypeScript flags any branch that forgets one of the two cases.
+ */
+export type ICheckoutActor =
+    | { kind: "user"; userId: string }
+    | {
+          kind: "guest";
+          /** From the `guestToken` cookie; absent when the guest never touched the cart. */
+          guestToken?: string;
+          /** Client address, recorded on the order to back the per-IP rate limit. */
+          ip: string;
+      };
+
+/** A shipping address supplied inline, as a guest has none saved to reference. */
+export interface IGuestAddressPayload {
+    addressLine1: string;
+    addressLine2?: string;
+    city: string;
+    state?: string;
+    postalCode?: string;
+    country?: string;
+}
+
+/** One line of a cart-less checkout. Price and name are resolved server-side. */
+export interface ICheckoutItemPayload {
+    productId: string;
+    variantId?: string;
+    quantity: number;
+}
+
 export interface ICreateOrderPayload {
     shippingAddressId?: string;
     shippingMethodId?: string;
     notes?: string;
+
+    /** Guest checkout only: contact details, since a guest has no account to read them from. */
+    fullName?: string;
+    phone?: string;
+    /** Guest checkout only: the delivery address, supplied inline. */
+    shippingAddress?: IGuestAddressPayload;
+    /**
+     * Optional cart bypass. When present these lines are ordered directly and
+     * the cart is left untouched — a campaign landing page can turn one
+     * product into an order without a prior add-to-cart round trip. Prices and
+     * stock are still resolved from the database; nothing here is trusted.
+     */
+    items?: ICheckoutItemPayload[];
+    /** Guest checkout is cash-on-delivery only; anything else is rejected. */
+    paymentMethod?: string;
     /** Client's expected total, used as an optimistic price-agreement check against the server-computed total. */
     expectedTotal?: number;
     /**

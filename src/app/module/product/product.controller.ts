@@ -74,6 +74,20 @@ const getPublicProductBySlug = catchAsync(async (req: Request, res: Response) =>
     });
 });
 
+const getRelatedProducts = catchAsync(async (req: Request, res: Response) => {
+    const result = await ProductService.getRelatedProducts(
+        req.params.slug as string,
+        req.query.limit ? Number(req.query.limit) : undefined,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Related products fetched successfully",
+        data: result,
+    });
+});
+
 const getAdminProducts = catchAsync(async (req: Request, res: Response) => {
     const { data, meta } = await ProductService.getAdminProducts(
         req.query as unknown as IQueryParams,
@@ -165,6 +179,7 @@ export const ProductController = {
     createProduct,
     getPublicProducts,
     getPublicProductBySlug,
+    getRelatedProducts,
     getAdminProducts,
     getAdminProductById,
     updateProduct,

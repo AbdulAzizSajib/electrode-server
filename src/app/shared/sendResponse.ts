@@ -10,6 +10,15 @@ interface IResponseData<T> {
         limit: number;
         total: number;
         totalPages: number;
+        /**
+         * Rating summary for a product's public review listing. Additive and
+         * optional — every existing paginated response is unaffected.
+         */
+        ratingBreakdown?: {
+            average: number;
+            total: number;
+            counts: Record<number, number>;
+        };
     }
 }
 

@@ -1,0 +1,33 @@
+## Why
+
+The `Banner` Prisma model was reworked in commit `51fba5e` (2026-08-29) — it gained `type` (`IMAGE` | `DYNAMIC`), a required `placement` (`HEADER`/`MID`/`FOOTER`/`SIDEBAR`/`POPUP`), presentation fields (`description`, `price`, `discountPrice`, `buttonText`, `bgColor`, `textColor`), and a `product` relation — but nothing outside the schema file moved with it. There is no migration for the new columns, the Prisma client has not been regenerated, and the entire `banner` module (`banner.validation.ts`, `banner.interface.ts`, `banner.service.ts`, `banner.controller.ts`, `banner.route.ts`) still speaks the old shape: it validates `title` as a required string, has no concept of `type`/`placement`/`product`, and its public listing returns raw rows ordered by `sortOrder` alone. As a result the new columns are unreachable through the API, and `POST /banners` would fail at the database layer today because `placement` is required with no default and the validation layer never supplies it.
+
+A banner also currently duplicates product data by hand: an admin retypes the price into the banner and it silently goes stale the moment the product's price changes. The new `productId` relation exists to remove that duplication, but only if the API actually resolves the live product at read time.
+
+## What Changes
+
+- **Prisma schema is finalized and migrated.** A new migration adds `BannerType`/`BannerPlacement` enums and the new `Banner` columns, drops the now-unused `@@index([sortOrder])` in favor of `@@index([placement])` and `@@index([placement, sortOrder])`, and makes `title` nullable.
+  - `image` also becomes nullable. It was `NOT NULL`, but a `DYNAMIC` banner renders text over a `bgColor` and may have no artwork at all — leaving the column required would reject a request the validation layer accepts. `image` is instead required for `type: IMAGE` at the validation layer.
+  - `placement` is added as `NOT NULL DEFAULT 'HEADER'` so existing banner rows backfill to `HEADER` without data loss or a failed migration.
+  - The commented-out legacy `Banner` model block left at the top of `Banner.prisma` is deleted — the new model is authoritative and the dead comment is a maintenance trap.
+- **The `category` relation added to `Banner` in `51fba5e` is removed before it ships.** `Banner.categoryId`, `Banner.category`, and the reciprocal `Category.banners` back-relation are deleted from the schema, so the migration never creates a `categoryId` column. A banner targets a product or a manual link; category targeting is not a capability this change introduces.
+- **A banner's displayed price resolves from the linked product at read time, not from stored columns.** When `productId` is set, the public listing serves the product's current `price`/`compareAtPrice`; the banner's own `price`/`discountPrice` columns are used only as a fallback when no product is linked. This makes a product-linked banner's price impossible to leave stale.
+- **The public listing gains placement filtering and a resolved click-through target.** `GET /banners` accepts an optional `placement` query parameter, and each returned banner carries a `resolvedLink` — `/products/<product.slug>` when a product is linked, otherwise the banner's manual `link`. A slim product summary (`id`, `name`, `slug`, `price`, `compareAtPrice`, primary image) is nested so the storefront needs no follow-up request.
+- **Banner artwork is uploaded as a file, not passed as a pre-hosted URL.** `POST /banners` and `PATCH /banners/:id` accept `multipart/form-data` with `image` and `mobileImage` file fields (plus the rest of the payload as a `data` JSON field, the convention `validateRequest` already unwraps and `POST /products` already uses). Each file is uploaded to Cloudinary server-side and the resulting URL is stored, so nothing downstream of the controller knows the difference. Plain `application/json` with URL strings keeps working unchanged — this is additive.
+- **Validation becomes type-aware.** `type: IMAGE` requires `image` and rejects the DYNAMIC-only presentation fields; `type: DYNAMIC` requires `title`. `placement` is required on create. `bgColor`/`textColor` are validated as hex colors, and a `productId` that does not exist is rejected with 404 rather than surfacing a raw Prisma foreign-key error.
+- **BREAKING (admin/API clients)**: `POST /banners` now requires `placement`, and `title` is no longer accepted as a bare required field on every banner — it is required only for `type: DYNAMIC`. Existing stored banners are unaffected (they backfill to `placement: HEADER`, `type: IMAGE`), but an admin client that posts the old body shape without `placement` will get a 400.
+
+## Capabilities
+
+### New Capabilities
+<!-- None. Banner behavior already lives in the existing `api/marketing` capability. -->
+
+### Modified Capabilities
+- `api/marketing`: The existing requirement "Only active, in-window banners are publicly served" is extended — the public listing additionally filters by `placement`, resolves a product-linked banner's price and click-through target from the live `Product` row, and orders within a placement. A new requirement covers type-aware banner validation (`IMAGE` vs `DYNAMIC` field requirements).
+
+## Impact
+
+- **Schema / database**: `prisma/schema/Banner.prisma` (remove the dead commented model and the `category` relation), `prisma/schema/category.prisma` (remove the `banners Banner[]` back-relation added in `51fba5e`), `prisma/schema/enums.prisma` (`BannerType`, `BannerPlacement` — already present, unchanged). One new migration under `prisma/migrations/`. Requires `prisma generate` — `src/generated/prisma/client` currently has no `BannerType`/`BannerPlacement`, so the module cannot compile against the new fields until it is regenerated.
+- **Affected code**: the whole `src/app/module/banner/` module — `banner.validation.ts` (type-discriminated create/update schemas), `banner.interface.ts` (payload types + the resolved public response shape), `banner.service.ts` (placement filter, product include, price/link resolution, `productId` existence check), `banner.controller.ts` (pass the `placement` query through), `banner.route.ts` (unchanged route table; auth and validation wiring stay as-is).
+- **Unaffected**: no change to `POST /upload/image` (banners keep using the shared upload endpoint for their image URLs), no change to any other module, and no change to the admin listing's `QueryBuilder` pagination contract beyond adding `type`/`placement` as filterable fields.
+- **Existing data**: banners already in the database keep working — they become `type: IMAGE`, `placement: HEADER`, with their existing `image`, `link`, `status`, and scheduling window intact.

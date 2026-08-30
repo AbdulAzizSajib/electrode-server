@@ -6,6 +6,8 @@ import { IQueryParams } from "../../interfaces/query.interface";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { CookieUtils } from "../../utils/cookie";
+import { GUEST_TOKEN_COOKIE } from "../cart/cart.constant";
+import { ICheckoutActor } from "./order.interface";
 import { OrderService } from "./order.service";
 import { idempotencyKeyZodSchema } from "./order.validation";
 
@@ -21,7 +23,19 @@ const placeOrder = catchAsync(async (req: Request, res: Response) => {
         throw new AppError(status.BAD_REQUEST, "Idempotency-Key must be a UUID");
     }
 
-    const { order, isReplay } = await OrderService.placeOrder(req.user.userId, {
+    // `optionalAuth` leaves `req.user` unset for a guest rather than throwing,
+    // so which flow this is comes down to whether a session resolved. A guest
+    // is identified by their cart cookie (if they have one) and their IP, which
+    // the order records to back the per-IP rate limit.
+    const actor: ICheckoutActor = req.user
+        ? { kind: "user", userId: req.user.userId }
+        : {
+              kind: "guest",
+              guestToken: CookieUtils.getCookie(req, GUEST_TOKEN_COOKIE),
+              ip: req.ip ?? "unknown",
+          };
+
+    const { order, isReplay } = await OrderService.placeOrder(actor, {
         ...req.body,
         couponCode: appliedCouponCode,
         idempotencyKey: parsedKey.data,
@@ -74,6 +88,25 @@ const getOrderById = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+/**
+ * Guest order tracking. POST rather than GET so the phone number travels in
+ * the body — a query string lands in access logs, browser history and
+ * referrer headers, and here it is half the credential.
+ */
+const getGuestOrder = catchAsync(async (req: Request, res: Response) => {
+    const result = await OrderService.getGuestOrderByNumberAndPhone(
+        req.body.orderNumber,
+        req.body.phone,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Order fetched successfully",
+        data: result,
+    });
+});
+
 const cancelOrder = catchAsync(async (req: Request, res: Response) => {
     const result = await OrderService.cancelOwnOrder(req.user.userId, req.params.id as string);
 
@@ -104,6 +137,7 @@ export const OrderController = {
     placeOrder,
     getOrders,
     getOrderById,
+    getGuestOrder,
     cancelOrder,
     updateOrderStatus,
 };

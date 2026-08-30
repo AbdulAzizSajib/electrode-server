@@ -258,6 +258,95 @@ const getPublicProducts = async (queryParams: IQueryParams) => {
     return { data: await attachCampaignPricing(data), meta };
 };
 
+/**
+ * Relatedness weights. Tuned so a rival brand's product in the SAME category
+ * (3 + maybe 1 for price = 3-4) outranks the SAME brand's product from a
+ * different category (2) — on a headphone page a shopper wants other
+ * headphones, not that brand's charger.
+ *
+ * These are guesses until there is traffic to tune them against; they are
+ * deliberately constants in one place so tuning never touches the endpoint
+ * contract.
+ */
+const RELATED_SCORE_SAME_CATEGORY = 3;
+const RELATED_SCORE_SAME_BRAND = 2;
+const RELATED_SCORE_SHARED_CATEGORY = 1;
+const RELATED_SCORE_PRICE_BAND = 1;
+/** Wide enough to relate a mid-range and a premium headphone, narrow enough to exclude a cheap cable. */
+const RELATED_PRICE_BAND = 0.4;
+const RELATED_DEFAULT_LIMIT = 6;
+const RELATED_MAX_LIMIT = 24;
+
+/**
+ * Products related to `slug`, ranked by catalog structure alone (no order
+ * history, no admin curation — see design.md Non-Goals).
+ *
+ * Scored in SQL rather than as several OR'ed Prisma queries merged in JS,
+ * because the merge would lose the ranking. Only the source product's own
+ * columns and a clamped integer limit are interpolated, all as bound
+ * parameters.
+ */
+const getRelatedProducts = async (slug: string, limit?: number) => {
+    const source = await prisma.product.findFirst({
+        where: { slug, status: ProductStatus.ACTIVE },
+        select: { id: true, categoryId: true, brandId: true, price: true },
+    });
+
+    if (!source) {
+        throw new AppError(status.NOT_FOUND, "Product not found");
+    }
+
+    const take = Math.min(Math.max(Number(limit) || RELATED_DEFAULT_LIMIT, 1), RELATED_MAX_LIMIT);
+
+    const basePrice = Number(source.price);
+    const minPrice = basePrice * (1 - RELATED_PRICE_BAND);
+    const maxPrice = basePrice * (1 + RELATED_PRICE_BAND);
+
+    const scored = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT p."id"
+        FROM "Product" p
+        WHERE p."status" = 'ACTIVE'
+          AND p."id" <> ${source.id}
+        ORDER BY (
+            CASE WHEN ${source.categoryId}::text IS NOT NULL AND p."categoryId" = ${source.categoryId}
+                 THEN ${RELATED_SCORE_SAME_CATEGORY} ELSE 0 END
+          + CASE WHEN ${source.brandId}::text IS NOT NULL AND p."brandId" = ${source.brandId}
+                 THEN ${RELATED_SCORE_SAME_BRAND} ELSE 0 END
+          + CASE WHEN EXISTS (
+                    SELECT 1 FROM "ProductCategory" pc
+                    JOIN "ProductCategory" spc ON spc."categoryId" = pc."categoryId"
+                    WHERE pc."productId" = p."id" AND spc."productId" = ${source.id}
+                 ) THEN ${RELATED_SCORE_SHARED_CATEGORY} ELSE 0 END
+          + CASE WHEN p."price" BETWEEN ${minPrice} AND ${maxPrice}
+                 THEN ${RELATED_SCORE_PRICE_BAND} ELSE 0 END
+        ) DESC,
+        p."isFeatured" DESC,
+        p."createdAt" DESC
+        LIMIT ${take}
+    `;
+
+    // The scoring query is ordered but always returns `take` rows, including
+    // zero-scoring ones — that IS the backfill: an isolated product still gets
+    // a useful list drawn from the wider catalog (featured, then newest),
+    // rather than an empty one.
+    const ids = scored.map((row) => row.id);
+
+    if (ids.length === 0) {
+        return [];
+    }
+
+    const products = await prisma.product.findMany({
+        where: { id: { in: ids } },
+        include: PRODUCT_LIST_INCLUDE,
+    });
+
+    // findMany ignores the order of `in`, so restore the scored ranking.
+    const byId = new Map(products.map((product) => [product.id, product]));
+    const ordered = ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
+
+    return attachCampaignPricing(ordered);
+};
+
 const getPublicProductBySlug = async (slug: string) => {
     const product = await prisma.product.findFirst({
         where: { slug, status: ProductStatus.ACTIVE },
@@ -567,6 +656,7 @@ export const ProductService = {
     createProduct,
     getPublicProducts,
     getPublicProductBySlug,
+    getRelatedProducts,
     getAdminProducts,
     getAdminProductById,
     updateProduct,

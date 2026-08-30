@@ -1,10 +1,47 @@
 import z from "zod";
+import { isValidPhone } from "../../utils/phone";
 
+/** Inline shipping address for a guest, who has none saved to reference. */
+const guestAddressZodSchema = z.object({
+    addressLine1: z.string().min(1).max(255),
+    addressLine2: z.string().max(255).optional(),
+    city: z.string().min(1).max(100),
+    state: z.string().max(100).optional(),
+    postalCode: z.string().max(20).optional(),
+    country: z.string().max(100).optional(),
+});
+
+const checkoutItemZodSchema = z.object({
+    productId: z.string().min(1),
+    variantId: z.string().min(1).optional(),
+    quantity: z.number().int().positive().max(100),
+});
+
+/**
+ * Shape-level validation only. Whether the *guest* fields are required
+ * depends on the session, which `validateRequest` cannot see — it runs before
+ * the actor is resolved and only ever parses `req.body`. The guest/authenticated
+ * distinction is therefore enforced in order.service.ts, where the actor is
+ * known; this schema's job is to guarantee that whatever IS present is
+ * well-formed.
+ */
 export const createOrderZodSchema = z.object({
     shippingAddressId: z.string().optional(),
     shippingMethodId: z.string().optional(),
     notes: z.string().max(1000).optional(),
     expectedTotal: z.number().nonnegative().optional(),
+
+    fullName: z.string().trim().min(1).max(200).optional(),
+    phone: z
+        .string()
+        .refine(isValidPhone, "Please enter a valid Bangladeshi mobile number")
+        .optional(),
+    shippingAddress: guestAddressZodSchema.optional(),
+    items: z.array(checkoutItemZodSchema).min(1).max(50).optional(),
+    // Guests are COD-only (enforced in the service). Accepting the full enum
+    // here would let an authenticated flow pass a method this endpoint does
+    // not yet act on, so only COD is spellable.
+    paymentMethod: z.literal("COD").optional(),
 });
 
 /**
@@ -19,6 +56,17 @@ export const createOrderZodSchema = z.object({
  * sending garbage here isn't getting the protection it thinks it is.
  */
 export const idempotencyKeyZodSchema = z.uuid().optional();
+
+/**
+ * Guest order tracking. A guest has no session to authorize a read, so the
+ * order number alone must not be enough — it is guessable and would expose
+ * one customer's order to anyone. Requiring the phone the order was placed
+ * with makes the pair the credential.
+ */
+export const guestOrderLookupZodSchema = z.object({
+    orderNumber: z.string().min(1).max(64),
+    phone: z.string().refine(isValidPhone, "Please enter a valid Bangladeshi mobile number"),
+});
 
 export const updateOrderStatusZodSchema = z.object({
     status: z.enum([

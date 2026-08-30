@@ -1,16 +1,32 @@
 import status from "http-status";
 import { RoleName } from "../../constants/role.constant";
 import AppError from "../../errorHelpers/AppError";
-import { NotificationType, OrderStatus, Prisma, ProductStatus, StockMovementType } from "../../../generated/prisma/client";
+import {
+    AddressType,
+    NotificationType,
+    OrderStatus,
+    PaymentMethod,
+    PaymentStatus,
+    Prisma,
+    ProductStatus,
+    StockMovementType,
+} from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
+import { normalizePhone } from "../../utils/phone";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
 import { StoreSettingService } from "../store-setting/store-setting.service";
-import { ICreateOrderPayload, IOrderItemData, IUpdateOrderStatusPayload } from "./order.interface";
+import {
+    ICheckoutActor,
+    ICheckoutItemPayload,
+    ICreateOrderPayload,
+    IOrderItemData,
+    IUpdateOrderStatusPayload,
+} from "./order.interface";
 
 const ORDER_DETAIL_INCLUDE = {
     items: true,
@@ -252,12 +268,234 @@ const deductStockForOrderLines = async (
     }
 };
 
+/** Order states that still tie up stock and courier capacity, for the guest COD cap. */
+const UNFULFILLED_COD_STATUSES: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
+
 /**
- * Checkout: snapshots the customer's cart into an immutable Order, per
- * `api/checkout` spec.
+ * Guest checkout has neither a session nor a payment step, so nothing
+ * intrinsic stops one visitor placing COD orders until the warehouse is
+ * drained — every one of them deducting real stock and costing a real courier
+ * run. Two limits, both read from `StoreSetting` so they can be retuned
+ * without a deploy:
+ *
+ *   - per phone: how many unfulfilled COD orders one number may hold at once
+ *   - per IP: how many guest orders one address may place per hour
+ *
+ * Counted from `Order` rows rather than an in-memory counter, which would be
+ * wrong the moment there are two instances and lost on every restart. The
+ * trade-off is that only *successful* orders count, so this throttles abuse
+ * rather than a flood of failing attempts — that is a reverse-proxy concern.
+ *
+ * Called before the checkout transaction opens so a rejection never touches
+ * stock.
  */
-const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
-    const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
+const enforceGuestOrderLimits = async (customerId: string, ip: string) => {
+    const setting = await StoreSettingService.getStoreSetting();
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+    const [pendingForPhone, recentForIp] = await Promise.all([
+        prisma.order.count({
+            where: {
+                customerId,
+                isGuestOrder: true,
+                status: { in: UNFULFILLED_COD_STATUSES },
+            },
+        }),
+        prisma.order.count({
+            where: { guestIp: ip, isGuestOrder: true, createdAt: { gte: oneHourAgo } },
+        }),
+    ]);
+
+    if (pendingForPhone >= setting.maxPendingCodOrdersPerPhone) {
+        throw new AppError(
+            status.TOO_MANY_REQUESTS,
+            `This number already has ${pendingForPhone} order(s) awaiting delivery. Please receive them before placing another.`,
+        );
+    }
+
+    if (recentForIp >= setting.maxGuestOrdersPerIpPerHour) {
+        throw new AppError(
+            status.TOO_MANY_REQUESTS,
+            "Too many orders placed from this connection. Please try again later.",
+        );
+    }
+};
+
+/** A cart-shaped view of checkout lines, so both sources feed one pricing path. */
+type ICheckoutLine = {
+    productId: string;
+    variantId: string | null;
+    quantity: number;
+    product: Awaited<ReturnType<typeof prisma.product.findUniqueOrThrow>>;
+    variant: Awaited<ReturnType<typeof prisma.productVariant.findUnique>>;
+};
+
+/**
+ * Loads payload-supplied checkout lines into the same shape the cart yields,
+ * so everything downstream — stock checks, pricing, coupon validation — runs
+ * on one representation regardless of where the lines came from.
+ *
+ * The client sends only ids and quantities. Names, SKUs and prices are read
+ * from the database here; a price arriving in the request body is never
+ * trusted, or a landing page could order anything for anything.
+ */
+const loadPayloadLines = async (items: ICheckoutItemPayload[]): Promise<ICheckoutLine[]> => {
+    // Merge duplicate lines for the same product/variant, so ordering the same
+    // item twice in one payload checks stock against the combined quantity
+    // rather than each half separately.
+    const merged = new Map<string, ICheckoutItemPayload>();
+    for (const item of items) {
+        const key = `${item.productId}:${item.variantId ?? ""}`;
+        const existing = merged.get(key);
+        if (existing) existing.quantity += item.quantity;
+        else merged.set(key, { ...item });
+    }
+    const deduped = [...merged.values()];
+
+    const [products, variants] = await Promise.all([
+        prisma.product.findMany({
+            where: { id: { in: deduped.map((i) => i.productId) } },
+        }),
+        prisma.productVariant.findMany({
+            where: {
+                id: { in: deduped.map((i) => i.variantId).filter((id): id is string => !!id) },
+            },
+        }),
+    ]);
+
+    const productById = new Map(products.map((p) => [p.id, p]));
+    const variantById = new Map(variants.map((v) => [v.id, v]));
+
+    return deduped.map((item) => {
+        const product = productById.get(item.productId);
+        if (!product) {
+            throw new AppError(status.NOT_FOUND, "Product not found");
+        }
+
+        const variant = item.variantId ? variantById.get(item.variantId) : null;
+        if (item.variantId && (!variant || variant.productId !== item.productId)) {
+            throw new AppError(status.BAD_REQUEST, "Variant does not belong to this product");
+        }
+
+        return {
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            quantity: item.quantity,
+            product,
+            variant: variant ?? null,
+        };
+    });
+};
+
+/**
+ * The single point where an authenticated checkout and a guest checkout
+ * differ. Both resolve to a `Customer`, a set of lines to order, and a
+ * shipping address id — after this, checkout is one code path, so pricing,
+ * stock safety, coupon handling and idempotency have exactly one
+ * implementation and cannot drift between the two flows.
+ */
+const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrderPayload) => {
+    if (actor.kind === "user") {
+        const customer = await CustomerService.getOrCreateCustomerByUserId(actor.userId);
+
+        if (payload.shippingAddressId) {
+            const address = await prisma.customerAddress.findUnique({
+                where: { id: payload.shippingAddressId },
+            });
+            if (!address || address.customerId !== customer.id) {
+                throw new AppError(status.BAD_REQUEST, "Shipping address not found");
+            }
+        }
+
+        return { customer, shippingAddressId: payload.shippingAddressId, cartId: undefined };
+    }
+
+    // --- Guest ---
+
+    if (payload.shippingAddressId) {
+        // A guest cannot prove ownership of a stored address, and honouring the
+        // id would let anyone ship an order to an address they merely guessed.
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Please provide your full delivery address to place this order",
+        );
+    }
+
+    if (payload.paymentMethod && payload.paymentMethod !== PaymentMethod.COD) {
+        throw new AppError(status.BAD_REQUEST, "Only cash on delivery is available at checkout");
+    }
+
+    if (!payload.fullName || !payload.phone || !payload.shippingAddress) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Your name, phone number and delivery address are required",
+        );
+    }
+
+    const customer = await CustomerService.getOrCreateCustomerByPhone(
+        payload.phone,
+        payload.fullName,
+    );
+
+    // Before anything is created, and well before the transaction opens.
+    await enforceGuestOrderLimits(customer.id, actor.ip);
+
+    const address = await prisma.customerAddress.create({
+        data: {
+            customerId: customer.id,
+            type: AddressType.SHIPPING,
+            fullName: payload.fullName,
+            phone: payload.phone,
+            addressLine1: payload.shippingAddress.addressLine1,
+            addressLine2: payload.shippingAddress.addressLine2,
+            city: payload.shippingAddress.city,
+            state: payload.shippingAddress.state,
+            postalCode: payload.shippingAddress.postalCode,
+            ...(payload.shippingAddress.country
+                ? { country: payload.shippingAddress.country }
+                : {}),
+        },
+    });
+
+    return { customer, shippingAddressId: address.id, cartId: undefined };
+};
+
+/**
+ * Checkout: snapshots the buyer's cart into an immutable Order, per
+ * `api/checkout` spec. Serves both an authenticated customer and a guest —
+ * `resolveCheckoutContext` absorbs the difference, and everything from the
+ * stock check onward is identical for both.
+ */
+const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) => {
+    const isGuest = actor.kind === "guest";
+
+    const { customer, shippingAddressId } = await resolveCheckoutContext(actor, payload);
+
+    // Lines come either from the payload (a landing page ordering a product
+    // directly) or from the buyer's cart. The cart is only loaded when it is
+    // actually the source — and a guest who never touched the cart has no
+    // token, hence nothing to load.
+    const usePayloadItems = !!payload.items?.length;
+
+    const loadCart = () => {
+        if (usePayloadItems) return Promise.resolve(null);
+
+        if (actor.kind === "guest") {
+            // No token means this guest never touched the cart, so there is
+            // nothing to look up.
+            if (!actor.guestToken) return Promise.resolve(null);
+            return prisma.cart.findUnique({
+                where: { guestToken: actor.guestToken },
+                include: { items: { include: { product: true, variant: true } } },
+            });
+        }
+
+        return prisma.cart.findUnique({
+            where: { customerId: customer.id },
+            include: { items: { include: { product: true, variant: true } } },
+        });
+    };
 
     // Replay check runs before the empty-cart guard below, and that ordering is
     // the whole fix: a retry of a checkout that already committed arrives at an
@@ -267,32 +505,36 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
         payload.idempotencyKey
             ? findReplayableOrder(payload.idempotencyKey, customer.id)
             : Promise.resolve(null),
-        prisma.cart.findUnique({
-            where: { customerId: customer.id },
-            include: { items: { include: { product: true, variant: true } } },
-        }),
+        loadCart(),
     ]);
 
     if (replayedOrder) {
         warnIfReplayDiverges(
             payload.idempotencyKey as string,
             replayedOrder.items,
-            cart?.items ?? [],
+            usePayloadItems
+                ? (payload.items as ICheckoutItemPayload[]).map((i) => ({
+                      productId: i.productId,
+                      variantId: i.variantId ?? null,
+                      quantity: i.quantity,
+                  }))
+                : (cart?.items ?? []),
         );
         return { order: replayedOrder, isReplay: true };
     }
 
-    if (!cart || cart.items.length === 0) {
-        throw new AppError(status.BAD_REQUEST, "Your cart is empty");
-    }
+    const lines: ICheckoutLine[] = usePayloadItems
+        ? await loadPayloadLines(payload.items as ICheckoutItemPayload[])
+        : (cart?.items ?? []).map((item) => ({
+              productId: item.productId,
+              variantId: item.variantId,
+              quantity: item.quantity,
+              product: item.product,
+              variant: item.variant,
+          }));
 
-    if (payload.shippingAddressId) {
-        const address = await prisma.customerAddress.findUnique({
-            where: { id: payload.shippingAddressId },
-        });
-        if (!address || address.customerId !== customer.id) {
-            throw new AppError(status.BAD_REQUEST, "Shipping address not found");
-        }
+    if (lines.length === 0) {
+        throw new AppError(status.BAD_REQUEST, "Your cart is empty");
     }
 
     const shippingMethod = payload.shippingMethodId
@@ -306,14 +548,14 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
     const orderItemsData: IOrderItemData[] = [];
     let subtotal = 0;
 
-    // Availability for every cart line in one grouped query rather than one
+    // Availability for every checkout line in one grouped query rather than one
     // aggregate per line. Still summed across every warehouse's
     // Stock.quantity - Stock.reservedQuantity, not the denormalized total —
     // see deductStockForOrderItem above for the actual deduction, which stays
     // per-item because each deduction depends on reading its own warehouse rows.
     const stockRows = await prisma.stock.groupBy({
         by: ["productId", "variantId"],
-        where: { productId: { in: cart.items.map((item) => item.productId) } },
+        where: { productId: { in: lines.map((line) => line.productId) } },
         _sum: { quantity: true, reservedQuantity: true },
     });
 
@@ -327,7 +569,7 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
         ]),
     );
 
-    for (const item of cart.items) {
+    for (const item of lines) {
         if (item.product.status !== ProductStatus.ACTIVE) {
             throw new AppError(status.CONFLICT, `"${item.product.name}" is no longer available`);
         }
@@ -360,13 +602,13 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
     }
 
     // Coupon (Phase 6): re-validates whatever coupon is applied to the cart
-    // (see coupon.constant.ts) against these same cart items, one last time,
-    // right before the order is committed.
+    // (see coupon.constant.ts) against these same checkout lines, one last
+    // time, right before the order is committed.
     const appliedCoupon = payload.couponCode
         ? await CouponService.getActiveCouponByCode(payload.couponCode)
         : null;
     const couponResult = appliedCoupon
-        ? await CouponService.validateCouponForCart(appliedCoupon, cart.items, customer.id)
+        ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
         : null;
     const discountAmount = couponResult?.discountAmount ?? 0;
 
@@ -407,9 +649,28 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
                     totalAmount,
                     couponCode: appliedCoupon?.code,
                     notes: payload.notes,
-                    shippingAddressId: payload.shippingAddressId,
+                    // The resolved id, not payload.shippingAddressId: a guest's
+                    // address was just created from the payload and is the only
+                    // one they have.
+                    shippingAddressId,
+                    isGuestOrder: isGuest,
+                    guestIp: isGuest ? actor.ip : undefined,
                     items: { createMany: { data: orderItemsData } },
                     statusHistory: { create: { toStatus: OrderStatus.PENDING } },
+                    // Guest checkout is cash-on-delivery only. The Payment row
+                    // is created inside this transaction so a COD order can
+                    // never commit without one and go missing from reconciliation.
+                    ...(isGuest
+                        ? {
+                              payments: {
+                                  create: {
+                                      amount: totalAmount,
+                                      method: PaymentMethod.COD,
+                                      status: PaymentStatus.PENDING,
+                                  },
+                              },
+                          }
+                        : {}),
                     ...(payload.shippingMethodId
                         ? { shipments: { create: { shippingMethodId: payload.shippingMethodId } } }
                         : {}),
@@ -427,16 +688,21 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
             await deductStockForOrderLines(
                 tx,
                 order.id,
-                cart.items.map((item) => ({
-                    productId: item.productId,
-                    variantId: item.variantId,
-                    quantity: item.quantity,
-                    productName: item.product.name,
+                lines.map((line) => ({
+                    productId: line.productId,
+                    variantId: line.variantId,
+                    quantity: line.quantity,
+                    productName: line.product.name,
                 })),
             );
 
             // Clear the cart on success (the Cart row itself is kept for reuse).
-            await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+            // Skipped for a payload-items checkout, which never consumed a cart
+            // — clearing one there would silently discard items the buyer is
+            // still shopping for.
+            if (cart) {
+                await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+            }
 
             return tx.order.findUniqueOrThrow({
                 where: { id: order.id },
@@ -477,8 +743,8 @@ const placeOrder = async (userId: string, payload: ICreateOrderPayload) => {
     // cart, to push the response past the storefront's timeout. Errors are
     // caught explicitly so an unhandled rejection can't take the process down.
     void Promise.all(
-        cart.items.map((item) =>
-            StockService.notifyIfLowStock(item.productId, item.variantId, item.product.name),
+        lines.map((line) =>
+            StockService.notifyIfLowStock(line.productId, line.variantId, line.product.name),
         ),
     ).catch((error) => console.error("Low-stock notification failed after checkout:", error));
 
@@ -517,6 +783,37 @@ const getOrderById = async (userId: string, role: RoleName, orderId: string) => 
             // 404, not 403 — avoids confirming the order's existence to a non-owner (per api/checkout spec).
             throw new AppError(status.NOT_FOUND, "Order not found");
         }
+    }
+
+    return order;
+};
+
+/**
+ * Guest order tracking. A guest holds no session, so the order number alone
+ * cannot authorize this read — order numbers are enumerable, and honouring
+ * one on its own would expose any customer's order to anyone who asked.
+ * Requiring the phone the order was placed with makes the *pair* the
+ * credential.
+ *
+ * A wrong phone yields 404 rather than 403, matching `getOrderById`: the
+ * response must not confirm that an order number exists.
+ */
+const getGuestOrderByNumberAndPhone = async (orderNumber: string, phone: string) => {
+    const normalizedPhone = normalizePhone(phone);
+
+    if (!normalizedPhone) {
+        throw new AppError(status.NOT_FOUND, "Order not found");
+    }
+
+    const order = await prisma.order.findUnique({
+        where: { orderNumber },
+        include: ORDER_DETAIL_INCLUDE,
+    });
+
+    // One 404 for "no such order", "wrong phone", and "not a guest order"
+    // alike — distinguishing them would leak exactly what this guards.
+    if (!order || !order.isGuestOrder || order.customer.phone !== normalizedPhone) {
+        throw new AppError(status.NOT_FOUND, "Order not found");
     }
 
     return order;
@@ -628,6 +925,7 @@ export const OrderService = {
     placeOrder,
     getOrders,
     getOrderById,
+    getGuestOrderByNumberAndPhone,
     cancelOwnOrder,
     updateOrderStatus,
 };

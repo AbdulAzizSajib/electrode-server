@@ -4,16 +4,8 @@ import { APPLIED_COUPON_COOKIE, APPLIED_COUPON_COOKIE_OPTIONS } from "../coupon/
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { CookieUtils } from "../../utils/cookie";
+import { GUEST_TOKEN_COOKIE, GUEST_TOKEN_COOKIE_OPTIONS } from "./cart.constant";
 import { CartService } from "./cart.service";
-
-const GUEST_TOKEN_COOKIE = "guestToken";
-const GUEST_TOKEN_COOKIE_OPTIONS = {
-    httpOnly: true,
-    secure: true,
-    sameSite: "none" as const,
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30 * 1000, // 30 days
-};
 
 const applyGuestTokenCookie = (res: Response, newGuestToken: string | undefined) => {
     if (newGuestToken) {

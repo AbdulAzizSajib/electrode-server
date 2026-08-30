@@ -33,6 +33,14 @@ model Product {
 
   isFeatured Boolean @default(false)
 
+  /// Denormalized aggregate of this product's APPROVED reviews, maintained by
+  /// ReviewService.recalculateProductRating on every moderation event. Stored
+  /// rather than computed because Prisma cannot orderBy a relation aggregate,
+  /// so "sort by rating" would otherwise be impossible. A product with no
+  /// approved reviews reads 0/0 - never null.
+  averageRating Decimal @default(0) @db.Decimal(3, 2)
+  reviewCount   Int     @default(0)
+
   seoTitle       String?
   seoDescription String?
 
@@ -68,4 +76,5 @@ model Product {
   @@index([status])
   @@index([isFeatured])
   @@index([createdAt])
+  @@index([averageRating])
 }

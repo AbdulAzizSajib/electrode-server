@@ -211,12 +211,22 @@ enum AuditAction {
 
 //  29-8-2026 
 
+/// Which region of the storefront a banner renders in. The three HERO_* values
+/// address the homepage hero's visually distinct slots, which have different
+/// aspect ratios and so cannot share one bucket:
+///   HERO_SLIDER - the large left carousel (multiple banners rotate as slides)
+///   HERO_SIDE   - the square tiles at the top right
+///   HERO_PROMO  - the wide tile beneath them
+/// Kept in sync by hand with `bannerPlacementEnum` in banner.validation.ts.
 enum BannerPlacement {
   HEADER
   MID
   FOOTER
   SIDEBAR
   POPUP
+  HERO_SLIDER
+  HERO_SIDE
+  HERO_PROMO
 }
 
 enum BannerType {

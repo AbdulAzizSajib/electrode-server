@@ -4,6 +4,13 @@
 /// single-tax-rate model - no per-region/per-category tax rules and no
 /// multi-currency support (see design.md Non-Goals in
 /// openspec/changes/add-cart-wishlist-store-config).
+///
+/// The Json columns below carry the storefront's header/footer presentation
+/// content. Postgres does not constrain their shape, so the Zod schemas in
+/// store-setting.validation.ts are the ONLY gate - every write must go
+/// through them and no code path may persist an unvalidated value. Reads
+/// are correspondingly trusted, and merge over DEFAULT_PUBLIC_SETTINGS so a
+/// cleared column still renders a usable header/footer.
 model StoreSetting {
   id String @id @default("singleton")
 
@@ -16,9 +23,36 @@ model StoreSetting {
 
   freeShippingThreshold Decimal? @db.Decimal(12, 2)
 
+  /// Guest COD abuse limits. Guest checkout has neither a session nor a
+  /// payment step, so nothing else stops one visitor placing unlimited COD
+  /// orders that deduct real stock. Tunable here rather than hardcoded
+  /// because the right values only emerge from real order data - start
+  /// conservative and loosen. See openspec/changes/add-guest-cod-checkout.
+  maxPendingCodOrdersPerPhone Int @default(3)
+  maxGuestOrdersPerIpPerHour  Int @default(10)
+
   contactEmail String?
   contactPhone String?
   address      String?
+
+  /// Branding. `siteNameAccent` is the second, accent-coloured half of the
+  /// wordmark (the storefront renders `storeName` + `siteNameAccent`).
+  logoUrl        String?
+  siteNameAccent String?
+  aboutText      String?
+  copyrightText  String?
+
+  /// Zod-validated on write - see the model doc-comment above.
+  /// mainNav:         [{ label, href, children?: [{ label, href }] }] (one level deep)
+  /// footerColumns:   [{ title, links: [{ label, href }] }]
+  /// socialLinks:     [{ platform, url }]
+  /// announcementBar: { enabled, text, links: [{ icon, label, href }] }
+  /// newsletter:      { heading, subtext, placeholder, buttonLabel }
+  mainNav         Json?
+  footerColumns   Json?
+  socialLinks     Json?
+  announcementBar Json?
+  newsletter      Json?
 
   updatedAt DateTime @updatedAt
 }

@@ -1,5 +1,5 @@
 {
-  "name": "Backend-Project-Property-Management-SaaS-Platform",
+  "name": "Gadgets Ecommerce Backend - Node.js, Express, PostgreSQL, Prisma",
   "version": "1.0.0",
   "description": "",
   "main": "dist/app/server.js",

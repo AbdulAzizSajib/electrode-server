@@ -158,8 +158,14 @@ const computeCartSubtotal = (items: ICartItemForDiscount[]) =>
  *
  * `perCustomerLimit` is checked against `Order.couponCode` usage for
  * `customerId` — the only place a coupon redemption is recorded (see
- * order.service.ts's `placeOrder`). It can't be checked for guests (no
- * `customerId`), so it is skipped for guest carts.
+ * order.service.ts's `placeOrder`). It is skipped when no `customerId` is
+ * known, which is the case for a guest *cart preview* (before checkout).
+ *
+ * At guest checkout the limit does apply: the guest has been resolved to a
+ * `Customer` by phone before this runs. Note the residual gap — a guest who
+ * supplies a different phone each time resolves to a different customer and
+ * so gets a fresh allowance. Closing that needs verified phone numbers, not
+ * a change here.
  */
 const validateCouponForCart = async (
     coupon: ICouponForValidation,

@@ -22,6 +22,7 @@
   [FOLDER] Products
     GET Public - Get Products
     GET Public - Get Product By Slug
+    GET Public - Get Related Products
   [FOLDER] Cart & Wishlist
     GET Get Cart
     POST Add Item to Cart
@@ -32,6 +33,10 @@
     GET Get Wishlist
     POST Add Wishlist Item
     DELETE Remove Wishlist Item
+    GET Wishlist - Get Count
+    GET Wishlist - Contains Product
+    DELETE Wishlist - Remove By Product
+    POST Wishlist - Move Item To Cart
   [FOLDER] Customer Addresses
     POST Create Address
     GET Get My Addresses
@@ -58,6 +63,9 @@
   [FOLDER] Reviews
     POST Create Review
     GET Public - Get Product Reviews
+    GET Get My Reviews
+    PATCH Update My Review
+    DELETE Delete My Review
   [FOLDER] Support Tickets
     POST Create Support Ticket
     GET Get My Support Tickets
@@ -66,10 +74,16 @@
     GET Get Messages
   [FOLDER] Banners
     GET Public - Get Banners
+    GET Public - Get Banners by Placement
+    GET Public - Get Banners (HERO_SLIDER)
+    GET Public - Get Banners (HERO_SIDE)
+    GET Public - Get Banners (HERO_PROMO)
   [FOLDER] Notifications
     GET Get My Notifications
     PATCH Mark Notification as Read
     PATCH Mark All Notifications as Read
+  [FOLDER] Store Settings
+    GET Public - Get Store Settings
 [FOLDER] Private (Admin Panel)
   [FOLDER] Users
     GET Get All Users
@@ -124,6 +138,7 @@
     GET Admin - Get All Reviews
     PATCH Admin - Update Review Status
     PATCH Admin - Reply to Review
+    DELETE Admin - Delete Review
   [FOLDER] Warehouses
     POST Admin - Create Warehouse
     GET Admin - Get All Warehouses
@@ -161,8 +176,11 @@
     PATCH Admin - Update Campaign
     DELETE Admin - Delete Campaign
   [FOLDER] Banners
-    POST Admin - Create Banner
+    POST Admin - Create IMAGE Banner
+    POST Admin - Create DYNAMIC Banner (product-linked)
+    POST Admin - Create DYNAMIC Banner (no product, own price)
     GET Admin - Get All Banners
+    GET Admin - Filter by Placement and Type
     GET Admin - Get Banner By Id
     PATCH Admin - Update Banner
     DELETE Admin - Delete Banner

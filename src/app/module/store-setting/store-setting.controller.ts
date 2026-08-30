@@ -15,8 +15,19 @@ const getStoreSetting = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const getPublicStoreSetting = catchAsync(async (req: Request, res: Response) => {
+    const result = await StoreSettingService.getPublicStoreSetting();
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Store settings fetched successfully",
+        data: result,
+    });
+});
+
 const updateStoreSetting = catchAsync(async (req: Request, res: Response) => {
-    const result = await StoreSettingService.updateStoreSetting(req.body);
+    const result = await StoreSettingService.updateStoreSetting(req.user.userId, req.body);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -28,5 +39,6 @@ const updateStoreSetting = catchAsync(async (req: Request, res: Response) => {
 
 export const StoreSettingController = {
     getStoreSetting,
+    getPublicStoreSetting,
     updateStoreSetting,
 };

@@ -71,10 +71,64 @@ const replyToReview = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const getMyReviews = catchAsync(async (req: Request, res: Response) => {
+    const { data, meta } = await ReviewService.getMyReviews(
+        req.user.userId,
+        req.query as unknown as IQueryParams,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Your reviews fetched successfully",
+        data,
+        meta,
+    });
+});
+
+const updateMyReview = catchAsync(async (req: Request, res: Response) => {
+    const result = await ReviewService.updateMyReview(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Review updated successfully — it will be visible after moderation",
+        data: result,
+    });
+});
+
+const deleteMyReview = catchAsync(async (req: Request, res: Response) => {
+    await ReviewService.deleteMyReview(req.user.userId, req.params.id as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Review deleted successfully",
+    });
+});
+
+const deleteReview = catchAsync(async (req: Request, res: Response) => {
+    await ReviewService.deleteReview(req.user.userId, req.params.id as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Review deleted successfully",
+    });
+});
+
 export const ReviewController = {
     createReview,
     getPublicProductReviews,
     getAdminReviews,
+    getMyReviews,
+    updateMyReview,
+    deleteMyReview,
     updateReviewStatus,
     replyToReview,
+    deleteReview,
 };
