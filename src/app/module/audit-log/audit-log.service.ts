@@ -40,7 +40,12 @@ const record = async (
 /** Read-only — audit logs are an immutable trail written by other endpoints, never user-authored content; there is deliberately no create/update/delete here. */
 const getAuditLogs = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.auditLog, queryParams, {
-        filterableFields: ["entity", "entityId", "action", "userId"],
+        // `createdAt` is here so the admin's date-range filter actually applies: QueryBuilder
+        // silently DROPS any param outside this list, so without it a `createdAt[gte]=...` query
+        // returned the full, unfiltered trail while looking like it had filtered — a wrong answer
+        // rather than an error. Range syntax (`createdAt[gte]`/`[lte]`) is parsed by
+        // QueryBuilder.parseRangeFilter, which passes ISO date strings through for Prisma to coerce.
+        filterableFields: ["entity", "entityId", "action", "userId", "createdAt"],
     });
 
     return queryBuilder

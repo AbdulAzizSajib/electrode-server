@@ -1,17 +1,21 @@
 import { Request, Response } from "express";
 import status from "http-status";
+import { IQueryParams } from "../../interfaces/query.interface";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { UserService } from "./user.service";
 
 const getAllUsers = catchAsync(async (req: Request, res: Response) => {
-    const result = await UserService.getAllUsers();
+    const { data, meta } = await UserService.getAllUsers(
+        req.query as unknown as IQueryParams,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
         message: "Users fetched successfully",
-        data: result,
+        data,
+        meta,
     });
 });
 
@@ -30,6 +34,7 @@ const updateUser = catchAsync(async (req: Request, res: Response) => {
     const result = await UserService.updateUser(
         req.params.id as string,
         req.body,
+        req.user.role,
     );
 
     sendResponse(res, {

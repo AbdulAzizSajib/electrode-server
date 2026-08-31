@@ -1,7 +1,9 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { AddressType, Prisma } from "../../../generated/prisma/client";
+import { AddressType, OrderStatus, Prisma } from "../../../generated/prisma/client";
+import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
+import { QueryBuilder } from "../../utils/QueryBuilder";
 import { normalizePhone } from "../../utils/phone";
 import { ICreateAddressPayload, IUpdateAddressPayload } from "./customer.interface";
 
@@ -192,9 +194,57 @@ const deleteAddress = async (customerId: string, addressId: string) => {
     return prisma.customerAddress.delete({ where: { id: addressId } });
 };
 
+// ---- Admin ----
+
+/**
+ * Admin customer directory. Distinct from every other export here, which is
+ * self-service ("me") scoped — this one is mounted behind an OWNER/ADMIN guard.
+ */
+const getCustomers = async (queryParams: IQueryParams) => {
+    const queryBuilder = new QueryBuilder(prisma.customer, queryParams, {
+        searchableFields: ["firstName", "lastName", "email", "phone"],
+        filterableFields: ["status"],
+    });
+
+    return queryBuilder.search().filter().sort().paginate().execute();
+};
+
+/**
+ * Customer detail with addresses and purchase totals.
+ *
+ * Totals are aggregated in the database rather than returned as an order list for the admin to sum:
+ * a client-side sum over a paginated list is silently wrong the moment a customer has more orders
+ * than one page. CANCELLED orders are excluded, matching how analytics.service.ts defines revenue.
+ */
+const getCustomerById = async (id: string) => {
+    const customer = await prisma.customer.findUnique({
+        where: { id },
+        include: { addresses: { orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] } },
+    });
+
+    if (!customer) {
+        throw new AppError(status.NOT_FOUND, "Customer not found");
+    }
+
+    const aggregate = await prisma.order.aggregate({
+        where: { customerId: id, status: { not: OrderStatus.CANCELLED } },
+        _count: { _all: true },
+        _sum: { totalAmount: true },
+    });
+
+    return {
+        ...customer,
+        orderCount: aggregate._count._all,
+        // `_sum` is null when the customer has no matching orders — report 0, not null.
+        totalSpent: Number(aggregate._sum.totalAmount ?? 0),
+    };
+};
+
 export const CustomerService = {
     getOrCreateCustomerByUserId,
     getOrCreateCustomerByPhone,
+    getCustomers,
+    getCustomerById,
     getMyAddresses,
     getMyAddressById,
     createAddress,

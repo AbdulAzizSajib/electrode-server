@@ -8,7 +8,7 @@ import { CampaignRoutes } from "../module/campaign/campaign.route";
 import { CartRoutes } from "../module/cart/cart.route";
 import { CategoryRoutes } from "../module/category/category.route";
 import { CartCouponRoutes, CouponRoutes } from "../module/coupon/coupon.route";
-import { CustomerAddressRoutes } from "../module/customer/customer.route";
+import { CustomerAddressRoutes, CustomerRoutes } from "../module/customer/customer.route";
 import { NotificationRoutes } from "../module/notification/notification.route";
 import { OrderRoutes } from "../module/order/order.route";
 import { PaymentRoutes } from "../module/payment/payment.route";
@@ -41,6 +41,9 @@ router.use("/cart", CartCouponRoutes);
 router.use("/cart", CartRoutes);
 router.use("/wishlist", WishlistRoutes);
 router.use("/customers/me/addresses", CustomerAddressRoutes);
+// MUST stay below the "me" mount above: "/customers/:id" would otherwise capture
+// the literal "me" segment and 404 every self-service address request.
+router.use("/customers", CustomerRoutes);
 router.use("/shipping-methods", ShippingMethodRoutes);
 router.use("/orders/:id/payments", PaymentRoutes);
 router.use("/orders/:id/shipment", ShipmentRoutes);
