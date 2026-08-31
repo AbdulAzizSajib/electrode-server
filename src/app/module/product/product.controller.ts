@@ -1,11 +1,13 @@
 import { Request, Response } from "express";
 import status from "http-status";
 import { uploadFileToCloudinary } from "../../config/cloudinary.config";
+import AppError from "../../errorHelpers/AppError";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { IProductImageInput } from "./product.interface";
 import { ProductService } from "./product.service";
+import { publicProductQueryZodSchema, searchProductsZodSchema } from "./product.validation";
 
 /**
  * Uploads every file in `req.files` (multipart `images` field) to Cloudinary and merges the
@@ -49,9 +51,30 @@ const createProduct = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+/**
+ * Public product listing.
+ *
+ * Validated here rather than by the `validateRequest` middleware, which only
+ * parses `req.body` and so never sees a GET's query string — same reason as
+ * `searchProducts` below.
+ *
+ * The `sortBy` allowlist is the point: `QueryBuilder.sort()` has no whitelist,
+ * so an unvalidated `sortBy` lets an anonymous caller order the catalog by a
+ * column that appears in no public response (`costPrice`).
+ */
 const getPublicProducts = catchAsync(async (req: Request, res: Response) => {
+    const parsed = publicProductQueryZodSchema.safeParse(req.query);
+
+    if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        throw new AppError(
+            status.BAD_REQUEST,
+            issue?.message ?? "Invalid product query",
+        );
+    }
+
     const { data, meta } = await ProductService.getPublicProducts(
-        req.query as unknown as IQueryParams,
+        parsed.data as IQueryParams & { isFeatured?: boolean },
     );
 
     sendResponse(res, {
@@ -60,6 +83,32 @@ const getPublicProducts = catchAsync(async (req: Request, res: Response) => {
         message: "Products fetched successfully",
         data,
         meta,
+    });
+});
+
+/**
+ * Search-as-you-type suggestions.
+ *
+ * Validated here rather than by the `validateRequest` middleware, which only
+ * parses `req.body` and so never sees a GET's query string.
+ */
+const searchProducts = catchAsync(async (req: Request, res: Response) => {
+    const parsed = searchProductsZodSchema.safeParse(req.query);
+
+    if (!parsed.success) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            parsed.error.issues[0]?.message ?? "Invalid search request",
+        );
+    }
+
+    const result = await ProductService.searchProducts(parsed.data.q, parsed.data.limit);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Products fetched successfully",
+        data: result,
     });
 });
 
@@ -178,6 +227,7 @@ const removeProductCategory = catchAsync(async (req: Request, res: Response) => 
 export const ProductController = {
     createProduct,
     getPublicProducts,
+    searchProducts,
     getPublicProductBySlug,
     getRelatedProducts,
     getAdminProducts,

@@ -6,6 +6,15 @@ model Campaign {
 
   status CampaignStatus @default(DRAFT)
 
+  /// Which storefront slot this campaign occupies, if any. Nullable because a
+  /// placement is opt-in: most campaigns are ordinary discounts belonging to no
+  /// slot, and they keep applying their discounts regardless.
+  ///
+  /// Deliberately not @unique — a successor campaign must be schedulable while
+  /// the current one still runs. When two eligible campaigns share a placement
+  /// the most recently started wins (campaign.service.ts).
+  placement CampaignPlacement?
+
   startsAt DateTime?
   endsAt   DateTime?
 
@@ -17,4 +26,5 @@ model Campaign {
   @@index([status])
   @@index([startsAt])
   @@index([endsAt])
+  @@index([placement])
 }

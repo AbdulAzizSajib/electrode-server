@@ -1,10 +1,11 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { NotificationType, ReturnStatus } from "../../../generated/prisma/client";
+import { NotificationType, PaymentStatus, ReturnStatus } from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { NotificationService } from "../notification/notification.service";
+import { PaymentService } from "../payment/payment.service";
 import { ICreateRefundPayload } from "./refund.interface";
 
 const createRefund = async (orderId: string, payload: ICreateRefundPayload) => {
@@ -16,11 +17,13 @@ const createRefund = async (orderId: string, payload: ICreateRefundPayload) => {
         throw new AppError(status.NOT_FOUND, "Order not found");
     }
 
+    let refundedPayment = null;
     if (payload.paymentId) {
         const payment = await prisma.payment.findUnique({ where: { id: payload.paymentId } });
         if (!payment || payment.orderId !== orderId) {
             throw new AppError(status.BAD_REQUEST, "Payment not found for this order");
         }
+        refundedPayment = payment;
     }
 
     let returnRequest = null;
@@ -51,6 +54,31 @@ const createRefund = async (orderId: string, payload: ICreateRefundPayload) => {
                 where: { id: returnRequest.id },
                 data: { status: ReturnStatus.COMPLETED },
             });
+        }
+
+        // Settle the payment the refund came out of. Before
+        // add-homepage-merchandising-sections a refund left Payment.status
+        // untouched, so a fully refunded order still read as PAID.
+        //
+        // Full vs partial is decided by amount: a partial refund leaves the
+        // sale standing (the customer kept the goods), so it must not undo the
+        // product's sales count — only a full refund does.
+        if (refundedPayment) {
+            const isFullRefund = Number(payload.amount) >= Number(refundedPayment.amount);
+            const nextStatus = isFullRefund
+                ? PaymentStatus.REFUNDED
+                : PaymentStatus.PARTIALLY_REFUNDED;
+
+            await tx.payment.update({
+                where: { id: refundedPayment.id },
+                data: { status: nextStatus },
+            });
+
+            // Only a payment that had actually been PAID decrements: one
+            // refunded from PENDING never incremented the counter.
+            if (refundedPayment.status === PaymentStatus.PAID && isFullRefund) {
+                await PaymentService.applyTotalSoldDelta(tx, orderId, -1);
+            }
         }
 
         return created;

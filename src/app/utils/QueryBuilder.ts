@@ -296,6 +296,32 @@ TInclude = Record<string, unknown>
         return this;
     }
 
+    /**
+     * Applies a fixed projection, for a caller that must return specific
+     * columns rather than every scalar the model has.
+     *
+     * `include()` below returns all scalars plus the named relations, which is
+     * right for an admin listing and wrong for a public one: it hands over
+     * whatever private columns the model happens to carry. A caller that needs
+     * to constrain that passes a projection here instead.
+     *
+     * Takes precedence over a caller-supplied `?fields=` (`fields()` above),
+     * which would otherwise let a request re-select a column this projection
+     * deliberately omits.
+     */
+    select(projection : Record<string, unknown>) : this{
+        // Replaces rather than merges. A merge would let a caller-supplied
+        // `?fields=costPrice` (see `fields()` above) union itself back in and
+        // re-expose exactly what the projection exists to withhold.
+        this.query.select = projection as Record<string, boolean | Record<string, unknown>>;
+        this.selectFields = undefined;
+
+        // Prisma rejects `select` and `include` on the same query.
+        delete this.query.include;
+
+        return this;
+    }
+
     include(relation : TInclude) : this{
         if(this.selectFields){
             return this

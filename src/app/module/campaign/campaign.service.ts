@@ -1,6 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { CampaignStatus } from "../../../generated/prisma/client";
+import { CampaignPlacement, CampaignStatus } from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
@@ -9,6 +9,24 @@ import { IActiveCampaignDiscount, ICreateCampaignPayload, IUpdateCampaignPayload
 const CAMPAIGN_INCLUDE = {
     products: { include: { product: { select: { id: true, name: true, slug: true } } } },
 };
+
+/**
+ * What makes a campaign live right now: `ACTIVE`, and the present moment inside
+ * its `startsAt`/`endsAt` window. A null bound means "unbounded on that side".
+ *
+ * Deliberately one definition shared by every reader. The public placement
+ * lookup and the automatic product-discount resolution MUST agree: if the
+ * lookup were laxer, a campaign could be served into a homepage slot — with a
+ * countdown running — while its discounts were not being applied, so the
+ * shopper would see a deal on undiscounted prices (design.md Decision 4).
+ */
+const activeCampaignWhere = (now: Date) => ({
+    status: CampaignStatus.ACTIVE,
+    AND: [
+        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+        { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+    ],
+});
 
 const createCampaign = async (payload: ICreateCampaignPayload) => {
     const { products, startsAt, endsAt, ...rest } = payload;
@@ -98,13 +116,7 @@ const getActiveDiscountsForProducts = async (
     const eligible = await prisma.campaignProduct.findMany({
         where: {
             productId: { in: productIds },
-            campaign: {
-                status: CampaignStatus.ACTIVE,
-                AND: [
-                    { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-                    { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-                ],
-            },
+            campaign: activeCampaignWhere(now),
         },
         include: { campaign: { select: { id: true, name: true } } },
     });
@@ -142,10 +154,37 @@ const getActiveDiscountsForProducts = async (
     return bestByProductId;
 };
 
+/**
+ * The campaign currently occupying a storefront slot, or null when none does.
+ *
+ * Returns the campaign row plus the ids of the products it discounts — not the
+ * priced products. Pricing is applied by `ProductService.getActiveCampaign`,
+ * which owns `attachCampaignPricing`; putting it here would make this module
+ * import product.service, which already imports this one.
+ *
+ * At most one campaign is served per slot. `placement` is deliberately not
+ * unique in the schema — a successor campaign must be schedulable while the
+ * current one still runs — so when two eligible campaigns claim the same slot
+ * the most recently started wins (design.md Decision 4). `startsAt: null` means
+ * "running since forever", so it sorts last behind any explicit start; `nulls:
+ * "last"` states that rather than leaving it to the database's default.
+ */
+const getActiveCampaignByPlacement = async (placement: CampaignPlacement) => {
+    return prisma.campaign.findFirst({
+        where: {
+            ...activeCampaignWhere(new Date()),
+            placement,
+        },
+        orderBy: { startsAt: { sort: "desc", nulls: "last" } },
+        include: { products: { select: { productId: true } } },
+    });
+};
+
 export const CampaignService = {
     createCampaign,
     getAdminCampaigns,
     getCampaignOrThrow,
+    getActiveCampaignByPlacement,
     updateCampaign,
     deleteCampaign,
     getActiveDiscountsForProducts,

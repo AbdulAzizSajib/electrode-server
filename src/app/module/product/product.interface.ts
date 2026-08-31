@@ -68,3 +68,24 @@ export interface ICreateProductPayload {
 }
 
 export type IUpdateProductPayload = Partial<ICreateProductPayload>;
+
+/**
+ * One suggestion from `GET /products/search`.
+ *
+ * Deliberately narrow: a search-as-you-type dropdown needs a label, a link
+ * target, a price and a thumbnail — nothing else. The category object, brand
+ * object and campaign pricing that `GET /products` returns are what make that
+ * endpoint slow, and none of them are rendered in a suggestion list. What this
+ * type leaves out is the point of the endpoint.
+ */
+export interface ISearchedProduct {
+    id: string;
+    name: string;
+    slug: string;
+    /** Prisma returns Decimal columns as strings; kept as-is, like every other product payload. */
+    price: string;
+    /** Primary image url, or null when the product has no images. */
+    image: string | null;
+    /** Brand name only — not the brand record. Null when the product has no brand. */
+    brandName: string | null;
+}

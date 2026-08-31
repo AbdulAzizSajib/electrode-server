@@ -41,6 +41,18 @@ model Product {
   averageRating Decimal @default(0) @db.Decimal(3, 2)
   reviewCount   Int     @default(0)
 
+  /// Denormalized lifetime units sold, maintained by PaymentService on payment
+  /// state transitions. Stored for the same reason as averageRating above:
+  /// Prisma cannot orderBy a relation aggregate, so "sort by best selling"
+  /// (a sum over OrderItem.quantity) would otherwise be impossible.
+  ///
+  /// Counts only sales whose payment reached PAID — never order placement.
+  /// Guest checkout is COD and creates its Payment as PENDING at placement
+  /// (order.service.ts), so counting at placement would credit every
+  /// uncollected parcel as a sale. Decremented when a PAID payment is later
+  /// refunded or cancelled, floored at 0.
+  totalSold Int @default(0)
+
   seoTitle       String?
   seoDescription String?
 
@@ -77,4 +89,5 @@ model Product {
   @@index([isFeatured])
   @@index([createdAt])
   @@index([averageRating])
+  @@index([totalSold])
 }

@@ -106,6 +106,10 @@
       "type": "string"
     },
     {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
       "key": "returnId",
       "value": "",
       "type": "string"
@@ -701,7 +705,37 @@
                     }
                   ]
                 },
-                "description": "No auth. ACTIVE-only, paginated. `category` matches the product's primary category OR a supplementary ProductCategory tag."
+                "description": "No auth. ACTIVE-only, paginated. `category` matches the product's primary category OR a supplementary ProductCategory tag.\n\nThe search param here is `searchTerm` (not `search`) — an unrecognised filter key is ignored, so `?search=jbl` silently returns every product instead of erroring. Use this endpoint for a full search RESULTS PAGE; for a search-as-you-type dropdown use `GET /products/search?q=` instead, which is roughly 10x faster."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Search Products (suggestions)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products/search?q=anker",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "anker"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "8",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "description": "No auth. Fast search-as-you-type suggestions — a DIFFERENT endpoint from `GET /products?searchTerm=`.\n\n**Note the path and the param:** it is `/products/search` with `q`, not `/products` with `search`. Sending `search=` to the listing endpoint is an unknown filter and returns every product unfiltered.\n\nReturns only `{ id, name, slug, price, brandName, image }` — no category, brand object, or campaign pricing. That is what makes it fast: one database round trip (~77ms) against the listing endpoint's ~0.3-1.5s.\n\nMatches product name, SKU, description AND brand name, case-insensitively. Misspellings still resolve (`ankar` finds Anker) via trigram similarity, but exact matches always rank above approximate ones. Results are ordered by relevance, not recency.\n\n`q` is required and must be non-empty (400 otherwise). `limit` is optional and capped server-side at 8 regardless of what is requested."
               },
               "response": []
             },
@@ -749,6 +783,122 @@
                 "description": "No auth. Catalog-structure scoring: same category (+3), same brand (+2), shared supplementary category (+1), price within +/-40% (+1). Excludes the source product and non-ACTIVE products; backfills with featured/newest so the list is never empty. limit defaults to 6, clamped to 24."
               },
               "response": []
+            },
+            {
+              "name": "Public - Featured Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products?isFeatured=true&limit=6",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "isFeatured",
+                      "value": "true"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "6"
+                    }
+                  ]
+                },
+                "description": "Homepage 'Featured Products' row. isFeatured is parsed as a real boolean: 'false' filters to NON-featured products, it is not treated as falsy-and-ignored. ACTIVE-only, so a featured DRAFT/ARCHIVED product stays invisible."
+              }
+            },
+            {
+              "name": "Public - Best Selling Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products?sortBy=totalSold&sortOrder=desc&limit=6",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "sortBy",
+                      "value": "totalSold"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "desc"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "6"
+                    }
+                  ]
+                },
+                "description": "Homepage 'Best Selling Products' row, ordered by Product.totalSold — a denormalized count of units sold, maintained only when a payment reaches PAID. A placed-but-unpaid COD order does not count. Never-sold products read 0 and sort last."
+              }
+            },
+            {
+              "name": "Public - New Arrivals",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products?sortBy=createdAt&sortOrder=desc&limit=6",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "sortBy",
+                      "value": "createdAt"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "desc"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "6"
+                    }
+                  ]
+                },
+                "description": "Homepage 'New Arrivals' row — the newest ACTIVE products by createdAt."
+              }
+            },
+            {
+              "name": "Public - Rejected sortBy (expect 400)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products?sortBy=costPrice&sortOrder=desc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "sortBy",
+                      "value": "costPrice"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "desc"
+                    }
+                  ]
+                },
+                "description": "NEGATIVE TEST — expects HTTP 400.\n\nsortBy on the PUBLIC listing is restricted to: createdAt, price, name, averageRating, totalSold. A field is sortable only if its value already appears in the public product payload.\n\nWithout this, ?sortBy=costPrice ordered the whole catalog by supplier cost and leaked every product's margin ranking to an anonymous caller. The request is rejected rather than silently falling back to the default order, which would return 200 in an order the caller never asked for and cannot detect.\n\nThe ADMIN listing (/products/admin) is deliberately unaffected."
+              }
             }
           ]
         },
@@ -1420,6 +1570,36 @@
                 }
               },
               "response": []
+            },
+            {
+              "name": "Update Payment Status",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/orders/{{orderId}}/payments/{{paymentId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "{{orderId}}",
+                    "payments",
+                    "{{paymentId}}"
+                  ],
+                  "query": []
+                },
+                "description": "Staff-only (OWNER/ADMIN/STAFF). Moves an existing payment to a new status — this is the transition that maintains Product.totalSold.\n\nBefore this existed, a COD payment created as PENDING at checkout had no way to become PAID, so the store could not tell a collected parcel from an uncollected one.\n\nThe counter moves on TRANSITIONS, not on calls: marking an already-PAID payment PAID again is a no-op, so a retry cannot double-count. Only a payment that had actually been PAID decrements when refunded/cancelled.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"PAID\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
             }
           ]
         },
@@ -1806,6 +1986,59 @@
                 }
               },
               "response": []
+            }
+          ]
+        },
+        {
+          "name": "Campaigns",
+          "item": [
+            {
+              "name": "Public - Active Campaign By Placement",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/campaigns/active?placement=DEAL_OF_WEEK",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "campaigns",
+                    "active"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "DEAL_OF_WEEK"
+                    }
+                  ]
+                },
+                "description": "The campaign occupying a storefront slot, with its products already priced.\n\nAn empty slot is 200 with data:null, not a 404 — 'no deal running' is an ordinary state the storefront handles by omitting the section.\n\nendsAt is what drives the countdown, and is passed through exactly as stored: null means no deadline and must render no countdown, never a computed one.\n\nEligibility matches the automatic product-discount rule exactly: ACTIVE, and now inside startsAt/endsAt. When two eligible campaigns claim the same slot, the most recently started wins.\n\ndiscountType/discountValue are deliberately withheld — only the resulting campaignPrice is public."
+              }
+            },
+            {
+              "name": "Public - Active Campaign, unknown placement (expect 400)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/campaigns/active?placement=NOT_A_SLOT",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "campaigns",
+                    "active"
+                  ],
+                  "query": [
+                    {
+                      "key": "placement",
+                      "value": "NOT_A_SLOT"
+                    }
+                  ]
+                },
+                "description": "NEGATIVE TEST — expects HTTP 400. placement is validated against the CampaignPlacement enum (DEAL_OF_WEEK, FLASH_SALE); an unrecognised slot is rejected rather than silently returning empty."
+              }
             }
           ]
         },
@@ -4290,9 +4523,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Winter Sale\",\n  \"status\": \"ACTIVE\",\n  \"startsAt\": \"2026-01-01T00:00:00.000Z\",\n  \"endsAt\": \"2026-02-01T00:00:00.000Z\",\n  \"products\": [\n    { \"productId\": \"{{productId}}\", \"discountType\": \"PERCENTAGE\", \"discountValue\": 15 }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"Winter Sale\",\n  \"status\": \"ACTIVE\",\n  \"placement\": \"DEAL_OF_WEEK\",\n  \"startsAt\": \"2026-01-01T00:00:00.000Z\",\n  \"endsAt\": \"2026-02-01T00:00:00.000Z\",\n  \"products\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"discountType\": \"PERCENTAGE\",\n      \"discountValue\": 15\n    }\n  ]\n}"
                 },
-                "description": "No separate customer-facing endpoint — check Public - Get Products / Get Product By Slug (Products folder) afterward to see campaignPrice/activeCampaign reflected automatically."
+                "description": "Creates a campaign. Its discounts apply automatically to the tagged products on every public product read once the campaign is ACTIVE and inside its startsAt/endsAt window — customers need no code.\n\n`placement` is optional and opt-in: it puts the campaign into a storefront slot (DEAL_OF_WEEK, FLASH_SALE) so `GET /campaigns/active?placement=` can find it. This is what fills the homepage 'Deal of the Week' row and gives its countdown a real deadline — set `endsAt` for that. Omit `placement` and the campaign still discounts its products, it just occupies no slot.\n\nPlacement is NOT unique: a successor campaign can be scheduled while the current one runs. When two eligible campaigns share a slot, the one with the most recent startsAt is served."
               },
               "response": [],
               "event": [
@@ -4378,8 +4611,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"status\": \"PAUSED\"\n}"
-                }
+                  "raw": "{\n  \"status\": \"PAUSED\",\n  \"placement\": \"DEAL_OF_WEEK\"\n}"
+                },
+                "description": "Partial update. Setting `placement` moves the campaign into a storefront slot; an unrecognised value is rejected with 400."
               },
               "response": []
             },

@@ -20,6 +20,23 @@ const recordPayment = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const updatePaymentStatus = catchAsync(async (req: Request, res: Response) => {
+    const result = await PaymentService.updatePaymentStatus(
+        req.user.userId,
+        req.user.role,
+        req.params.id as string,
+        req.params.paymentId as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment status updated successfully",
+        data: result,
+    });
+});
+
 const getOrderPayments = catchAsync(async (req: Request, res: Response) => {
     const result = await PaymentService.getOrderPayments(
         req.user.userId,
@@ -37,5 +54,6 @@ const getOrderPayments = catchAsync(async (req: Request, res: Response) => {
 
 export const PaymentController = {
     recordPayment,
+    updatePaymentStatus,
     getOrderPayments,
 };

@@ -218,6 +218,17 @@ enum AuditAction {
 ///   HERO_SIDE   - the square tiles at the top right
 ///   HERO_PROMO  - the wide tile beneath them
 /// Kept in sync by hand with `bannerPlacementEnum` in banner.validation.ts.
+/// Addressable storefront slot a Campaign can occupy, so the storefront can ask
+/// "which campaign is in this slot?" without hardcoding a campaign id. Mirrors
+/// how BannerPlacement below addresses hero regions.
+///
+/// FLASH_SALE is defined but rendered by no storefront section yet — it exists
+/// so adding the second slot does not require another migration.
+enum CampaignPlacement {
+  DEAL_OF_WEEK
+  FLASH_SALE
+}
+
 enum BannerPlacement {
   HEADER
   MID

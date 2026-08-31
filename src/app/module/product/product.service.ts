@@ -1,6 +1,11 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { AuditAction, Prisma, ProductStatus } from "../../../generated/prisma/client";
+import {
+    AuditAction,
+    CampaignPlacement,
+    Prisma,
+    ProductStatus,
+} from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
@@ -12,6 +17,7 @@ import {
     IProductAttributeInput,
     IProductImageInput,
     IProductVariantInput,
+    ISearchedProduct,
     IUpdateProductPayload,
 } from "./product.interface";
 
@@ -29,6 +35,79 @@ const PRODUCT_LIST_INCLUDE = {
     brand: true,
     images: { where: { isPrimary: true }, take: 1 },
 };
+
+/**
+ * Every product scalar a PUBLIC response may carry.
+ *
+ * Spelled out as a `select` because `include` returns every scalar column, and
+ * one of them — `costPrice` — is the supplier cost. It has never been rendered
+ * by the storefront, but it was being sent to every anonymous caller: the same
+ * column the public `sortBy` allowlist exists to protect, handed over directly.
+ * Closing the ordering channel while leaving the field in the payload would
+ * have been a lock beside an open window.
+ *
+ * This is an allowlist, so a column added to `Product` later is private until
+ * someone deliberately adds it here. The admin reads keep using the `include`
+ * forms above — an admin is entitled to every column.
+ */
+const PUBLIC_PRODUCT_SCALARS = {
+    id: true,
+    name: true,
+    slug: true,
+    sku: true,
+    description: true,
+    shortDescription: true,
+    type: true,
+    status: true,
+    categoryId: true,
+    brandId: true,
+    price: true,
+    compareAtPrice: true,
+    stockQuantity: true,
+    lowStockThreshold: true,
+    weight: true,
+    isFeatured: true,
+    averageRating: true,
+    reviewCount: true,
+    totalSold: true,
+    seoTitle: true,
+    seoDescription: true,
+    createdAt: true,
+    updatedAt: true,
+} as const;
+
+/** Public list projection: the safe scalars plus the relations a card renders. */
+const PUBLIC_PRODUCT_LIST_SELECT = {
+    ...PUBLIC_PRODUCT_SCALARS,
+    category: true,
+    brand: true,
+    images: { where: { isPrimary: true }, take: 1 },
+} as const;
+
+/** Public detail projection: as above, plus what a product page renders. */
+const PUBLIC_PRODUCT_DETAIL_SELECT = {
+    ...PUBLIC_PRODUCT_SCALARS,
+    category: true,
+    brand: true,
+    images: { orderBy: { sortOrder: "asc" as const } },
+    // Variants carry their own costPrice, so they are projected too rather
+    // than selected wholesale.
+    variants: {
+        select: {
+            id: true,
+            name: true,
+            sku: true,
+            price: true,
+            compareAtPrice: true,
+            stockQuantity: true,
+            attributes: true,
+            image: true,
+            status: true,
+        },
+    },
+    attributes: true,
+    categories: { include: { category: true } },
+} as const;
 
 const assertCategoryExists = async (categoryId: string) => {
     const category = await prisma.category.findUnique({
@@ -208,8 +287,17 @@ const collectCategoryIds = async (categoryId: string): Promise<string[]> => {
     return [...visited];
 };
 
-const getPublicProducts = async (queryParams: IQueryParams) => {
-    const { category, brand, minPrice, maxPrice } = queryParams;
+/**
+ * `isFeatured` reaches here as a real boolean, not the query string's
+ * "true"/"false" — `publicProductQueryZodSchema` in the controller has already
+ * coerced it. Stated explicitly rather than relying on `IQueryParams`'s
+ * `[key: string]: string | undefined` index signature, which would silently
+ * type it as a string.
+ */
+type IPublicProductQuery = IQueryParams & { isFeatured?: boolean };
+
+const getPublicProducts = async (queryParams: IPublicProductQuery) => {
+    const { category, brand, minPrice, maxPrice, isFeatured } = queryParams;
 
     const queryBuilder = new QueryBuilder<
         Prisma.ProductGetPayload<{
@@ -246,6 +334,14 @@ const getPublicProducts = async (queryParams: IQueryParams) => {
         where.brandId = brand;
     }
 
+    // The controller's Zod schema has already turned the query string's
+    // "true"/"false" into a real boolean, so this compares against `undefined`
+    // rather than testing truthiness — `isFeatured=false` must filter to
+    // non-featured products, not be discarded as falsy.
+    if (isFeatured !== undefined) {
+        where.isFeatured = isFeatured;
+    }
+
     if (minPrice || maxPrice) {
         where.price = {
             ...(minPrice ? { gte: Number(minPrice) } : {}),
@@ -253,9 +349,156 @@ const getPublicProducts = async (queryParams: IQueryParams) => {
         };
     }
 
-    const { data, meta } = await queryBuilder.where(where).include(PRODUCT_LIST_INCLUDE).execute();
+    const { data, meta } = await queryBuilder.where(where).select(PUBLIC_PRODUCT_LIST_SELECT).execute();
 
     return { data: await attachCampaignPricing(data), meta };
+};
+
+/**
+ * How many suggestions a search may return, whatever the client asks for.
+ *
+ * Enforced server-side rather than trusted from the query string: this is a
+ * public unauthenticated endpoint, so an uncapped limit turns it into a way to
+ * dump the catalog and to make the database sort unbounded work per request.
+ */
+export const SEARCH_RESULT_CAP = 8;
+
+/**
+ * Relevance weights for product search, graded so ranking is explainable and
+ * retunable without touching the endpoint's contract.
+ *
+ * The gap between the exact tiers (0.5–1.0) and the similarity tiers (≤0.4) is
+ * load-bearing, not cosmetic: it is what guarantees an approximate match can
+ * never outrank an exact one, satisfying the spec's "exact matches are
+ * preferred" through arithmetic rather than through a second query.
+ */
+const SEARCH_WEIGHTS = {
+    exactName: 1.0,
+    namePrefix: 0.9,
+    nameSubstring: 0.8,
+    sku: 0.75,
+    brand: 0.7,
+    description: 0.5,
+    /** Multipliers on pg_trgm's 0–1 similarity, keeping fuzzy hits below every exact tier. */
+    nameSimilarity: 0.4,
+    brandSimilarity: 0.35,
+} as const;
+
+/**
+ * Renders a weight as a typed SQL literal.
+ *
+ * These cannot be passed as query parameters: Postgres infers the type of an
+ * untyped parameter from its context, and inside a `CASE` arm it settles on
+ * `integer`, then rejects `0.9` outright ("invalid input syntax for type
+ * integer"). Casting to `numeric` at the call site settles the type instead.
+ *
+ * Safe to inline because every value is a hard-coded number from the constant
+ * above — never user input. `Number.isFinite` is a guard against a future edit
+ * introducing something that is not, since string-building SQL is exactly the
+ * shape that becomes an injection when the input stops being trusted.
+ */
+const weight = (value: number): Prisma.Sql => {
+    if (!Number.isFinite(value)) {
+        throw new Error(`Invalid search weight: ${value}`);
+    }
+    return Prisma.raw(`${value}::numeric`);
+};
+
+/**
+ * Product suggestions for search-as-you-type.
+ *
+ * One database round trip by design. The listing endpoint spends ~1.5s on this
+ * job (count + findMany with category/brand/image joins, then a separate
+ * campaign-pricing query, all against a Singapore-hosted database where each
+ * trip costs ~75ms); this returns the same answer in roughly one trip because
+ * it makes exactly one, and carries back only what a dropdown renders.
+ *
+ * Raw SQL because Prisma cannot express any of what makes this work: the
+ * trigram operators, a computed relevance score, or ordering by that score.
+ * Approximating it through the query builder would mean several queries plus
+ * in-process sorting — precisely the sequential round trips being removed here.
+ *
+ * `term` is interpolated through Prisma's tagged template, which parameterises
+ * rather than concatenates, so a search term cannot become SQL.
+ */
+const searchProducts = async (term: string, limit?: number): Promise<ISearchedProduct[]> => {
+    const trimmed = term.trim();
+    if (trimmed.length === 0) {
+        return [];
+    }
+
+    const take = Math.min(
+        Math.max(1, Math.trunc(limit ?? SEARCH_RESULT_CAP)),
+        SEARCH_RESULT_CAP,
+    );
+
+    const w = SEARCH_WEIGHTS;
+
+    // `score` is selected because ORDER BY needs it, but it is an internal
+    // ranking detail rather than part of the endpoint's contract — so it is
+    // typed here and stripped before returning.
+    // COALESCE on every nullable column (`sku`, `brand.name`, `description`):
+    // NULL is not false, and an un-coalesced NULL inside GREATEST would drag
+    // the whole score to NULL, silently dropping the row from the ordering.
+    const rows = await prisma.$queryRaw<(ISearchedProduct & { score: number })[]>`
+        SELECT
+            p.id,
+            p.name,
+            p.slug,
+            p.price::text AS price,
+            b.name AS "brandName",
+            (
+                SELECT i.url
+                FROM "ProductImage" i
+                WHERE i."productId" = p.id
+                ORDER BY i."isPrimary" DESC, i."sortOrder" ASC
+                LIMIT 1
+            ) AS image,
+            GREATEST(
+                CASE
+                    WHEN lower(p.name) = lower(${trimmed}) THEN ${weight(w.exactName)}
+                    WHEN lower(p.name) LIKE lower(${trimmed}) || '%' THEN ${weight(w.namePrefix)}
+                    WHEN lower(p.name) LIKE '%' || lower(${trimmed}) || '%' THEN ${weight(w.nameSubstring)}
+                    ELSE 0::numeric
+                END,
+                CASE WHEN lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
+                     THEN ${weight(w.sku)} ELSE 0::numeric END,
+                CASE WHEN lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
+                     THEN ${weight(w.brand)} ELSE 0::numeric END,
+                CASE WHEN lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
+                     THEN ${weight(w.description)} ELSE 0::numeric END,
+                similarity(p.name, ${trimmed})::numeric * ${weight(w.nameSimilarity)},
+                similarity(COALESCE(b.name, ''), ${trimmed})::numeric * ${weight(w.brandSimilarity)}
+            ) AS score
+        FROM "Product" p
+        LEFT JOIN "Brand" b ON b.id = p."brandId"
+        WHERE p.status = ${ProductStatus.ACTIVE}::"ProductStatus"
+          AND (
+                lower(p.name) LIKE '%' || lower(${trimmed}) || '%'
+             OR lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
+             OR lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
+             OR lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
+             -- Trigram fallback, in the same clause rather than a second query:
+             -- one round trip covers both exact and approximate matching.
+             OR p.name % ${trimmed}
+             OR COALESCE(b.name, '') % ${trimmed}
+          )
+        -- The name tiebreak is what makes repeated identical requests return
+        -- the same order; score alone would not guarantee it.
+        ORDER BY score DESC, p.name ASC
+        LIMIT ${take}
+    `;
+
+    // `score` drives ORDER BY but is an internal ranking detail, not part of
+    // the endpoint's contract — so it is dropped before the rows are returned.
+    return rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        price: row.price,
+        image: row.image,
+        brandName: row.brandName,
+    }));
 };
 
 /**
@@ -337,7 +580,7 @@ const getRelatedProducts = async (slug: string, limit?: number) => {
 
     const products = await prisma.product.findMany({
         where: { id: { in: ids } },
-        include: PRODUCT_LIST_INCLUDE,
+        select: PUBLIC_PRODUCT_LIST_SELECT,
     });
 
     // findMany ignores the order of `in`, so restore the scored ranking.
@@ -350,7 +593,7 @@ const getRelatedProducts = async (slug: string, limit?: number) => {
 const getPublicProductBySlug = async (slug: string) => {
     const product = await prisma.product.findFirst({
         where: { slug, status: ProductStatus.ACTIVE },
-        include: PRODUCT_DETAIL_INCLUDE,
+        select: PUBLIC_PRODUCT_DETAIL_SELECT,
     });
 
     if (!product) {
@@ -359,6 +602,70 @@ const getPublicProductBySlug = async (slug: string) => {
 
     const [withCampaignPricing] = await attachCampaignPricing([product]);
     return withCampaignPricing;
+};
+
+/**
+ * The campaign occupying a storefront slot, with its products already priced —
+ * what `GET /campaigns/active?placement=` serves.
+ *
+ * Lives here rather than in campaign.service because it needs
+ * `attachCampaignPricing`; campaign.service cannot import this module, which
+ * already imports it.
+ *
+ * Returns null for an unoccupied slot rather than throwing: an empty slot is an
+ * ordinary state the storefront handles by omitting the section, not an error.
+ *
+ * The response is deliberately narrow. `discountType`/`discountValue` and the
+ * campaign's administrative fields are withheld — a shopper needs the resulting
+ * price, which `campaignPrice` on each product already carries, not the rule
+ * that produced it. Note that `attachCampaignPricing` attaches the discount
+ * rule to every product as `activeCampaign`, so it is stripped below rather
+ * than merely not selected. `endsAt` is passed through exactly as stored,
+ * including null: a campaign with no deadline must not be given a fabricated
+ * one, which is precisely the fiction the old client-side seven-day timer
+ * invented.
+ */
+const getActiveCampaign = async (placement: CampaignPlacement) => {
+    const campaign = await CampaignService.getActiveCampaignByPlacement(placement);
+
+    if (!campaign) {
+        return null;
+    }
+
+    const productIds = campaign.products.map((entry) => entry.productId);
+
+    // A campaign with no products, or whose products have since been archived,
+    // is still a campaign — it just has nothing to show. Skip the query rather
+    // than issuing `id: { in: [] }`.
+    const products =
+        productIds.length > 0
+            ? await prisma.product.findMany({
+                  where: { id: { in: productIds }, status: ProductStatus.ACTIVE },
+                  select: PUBLIC_PRODUCT_LIST_SELECT,
+              })
+            : [];
+
+    const priced = await attachCampaignPricing(products);
+
+    // Drop the discount rule each product carries. `campaignPrice` — the price
+    // the shopper actually pays — stays; how it was derived does not need to
+    // reach a storefront, and the campaign's identity is already on the
+    // envelope above.
+    const withoutDiscountConfig = priced.map((product) => {
+        const { activeCampaign, ...rest } = product;
+        void activeCampaign;
+        return rest;
+    });
+
+    return {
+        id: campaign.id,
+        name: campaign.name,
+        description: campaign.description,
+        placement: campaign.placement,
+        startsAt: campaign.startsAt,
+        endsAt: campaign.endsAt,
+        products: withoutDiscountConfig,
+    };
 };
 
 const getAdminProducts = async (queryParams: IQueryParams) => {
@@ -655,6 +962,8 @@ const removeProductCategory = async (productId: string, categoryId: string) => {
 export const ProductService = {
     createProduct,
     getPublicProducts,
+    getActiveCampaign,
+    searchProducts,
     getPublicProductBySlug,
     getRelatedProducts,
     getAdminProducts,

@@ -21,8 +21,13 @@
     GET Public - Get Brand By Slug
   [FOLDER] Products
     GET Public - Get Products
+    GET Public - Search Products (suggestions)
     GET Public - Get Product By Slug
     GET Public - Get Related Products
+    GET Public - Featured Products
+    GET Public - Best Selling Products
+    GET Public - New Arrivals
+    GET Public - Rejected sortBy (expect 400)
   [FOLDER] Cart & Wishlist
     GET Get Cart
     POST Add Item to Cart
@@ -54,6 +59,7 @@
   [FOLDER] Payments
     POST Record Payment
     GET Get Order Payments
+    PATCH Update Payment Status
   [FOLDER] Shipments
     GET Get Order Shipment
   [FOLDER] Returns
@@ -72,6 +78,9 @@
     GET Get Support Ticket By Id
     POST Send Message
     GET Get Messages
+  [FOLDER] Campaigns
+    GET Public - Active Campaign By Placement
+    GET Public - Active Campaign, unknown placement (expect 400)
   [FOLDER] Banners
     GET Public - Get Banners
     GET Public - Get Banners by Placement
@@ -92,18 +101,22 @@
     DELETE Delete User (soft delete)
   [FOLDER] Categories
     POST Admin - Create Category
+    POST Admin - Create Category (multipart image upload)
     POST Admin - Create Child Category
     GET Admin - Get All Categories
     GET Admin - Get Category Tree
     GET Admin - Get Category By Id
     PATCH Admin - Update Category
+    PATCH Admin - Update Category (multipart image upload)
     DELETE Admin - Delete Category
   [FOLDER] Brands
     POST Admin - Create Brand
+    POST Admin - Create Brand (multipart logo upload)
     POST Admin - Bulk Create Brands
     GET Admin - Get All Brands
     GET Admin - Get Brand By Id
     PATCH Admin - Update Brand
+    PATCH Admin - Update Brand (multipart logo upload)
     DELETE Admin - Delete Brand
   [FOLDER] Products
     POST Admin - Create Product (with variants/images/attributes)
