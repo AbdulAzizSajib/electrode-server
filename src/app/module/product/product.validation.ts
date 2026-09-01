@@ -13,12 +13,21 @@ const productVariantZodSchema = z.object({
     status: z.boolean().optional(),
 });
 
+/**
+ * `variantId` / `variantIndex` name the variant an image depicts; omitting both
+ * means the image is shared across every variant. `variantId` wins when both
+ * are present. `variantIndex` refers to a position in the same request's
+ * `variants` array — the only way to name a variant that has no id yet.
+ * See link-product-images-to-variants design.md Decision 3.
+ */
 const productImageZodSchema = z.object({
     id: z.string().optional(),
     url: z.url("Image must be a valid URL"),
     altText: z.string().max(200).optional(),
     sortOrder: z.number().int().optional(),
     isPrimary: z.boolean().optional(),
+    variantId: z.string().optional(),
+    variantIndex: z.number().int().nonnegative().optional(),
 });
 
 /**
@@ -30,6 +39,10 @@ const imageSlotZodSchema = z.object({
     altText: z.string().max(200).optional(),
     sortOrder: z.number().int().optional(),
     isPrimary: z.boolean().optional(),
+    // Same meaning as on productImageZodSchema above — the controller copies
+    // these onto the image input it builds for the matching file.
+    variantId: z.string().optional(),
+    variantIndex: z.number().int().nonnegative().optional(),
 });
 
 const productAttributeZodSchema = z.object({

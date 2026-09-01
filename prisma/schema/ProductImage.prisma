@@ -4,6 +4,19 @@ model ProductImage {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
+  /// Which variant this image depicts. NULL means the image is shared by the
+  /// whole product (packaging, size chart) and shows for every variant — a
+  /// meaningful state, not "unassigned".
+  ///
+  /// SetNull, NOT Cascade, and deliberately the opposite of `productId` above:
+  /// deleting a variant is a routine catalog edit, and the admin doing it is
+  /// not asking to destroy that variant's photography. Its images fall back to
+  /// shared, which is visible and recoverable. Deleting a *product* cascades
+  /// because nothing is left for its images to belong to.
+  /// See link-product-images-to-variants design.md Decision 2.
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
   url     String
   altText String?
 
@@ -13,4 +26,5 @@ model ProductImage {
   createdAt DateTime @default(now())
 
   @@index([productId])
+  @@index([variantId])
 }

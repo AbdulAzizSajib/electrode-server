@@ -20,6 +20,19 @@ export interface IProductImageInput {
     altText?: string;
     sortOrder?: number;
     isPrimary?: boolean;
+    /**
+     * The variant this image depicts, by id. Omitting both this and
+     * `variantIndex` means the image is shared across every variant.
+     * Takes precedence when both are present.
+     */
+    variantId?: string;
+    /**
+     * The variant this image depicts, by position in the SAME request's
+     * `variants` array — the only way to name a variant that does not exist
+     * yet, which on create is every variant. Ignored when `variantId` is set.
+     * See link-product-images-to-variants design.md Decision 3.
+     */
+    variantIndex?: number;
 }
 
 export interface IProductAttributeInput {
@@ -39,6 +52,10 @@ export interface IImageSlotInput {
     altText?: string;
     sortOrder?: number;
     isPrimary?: boolean;
+    /** See `IProductImageInput.variantId` — carried onto the built image input. */
+    variantId?: string;
+    /** See `IProductImageInput.variantIndex` — carried onto the built image input. */
+    variantIndex?: number;
 }
 
 export interface ICreateProductPayload {

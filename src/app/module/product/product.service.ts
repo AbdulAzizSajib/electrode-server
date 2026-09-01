@@ -76,7 +76,15 @@ const PUBLIC_PRODUCT_SCALARS = {
     updatedAt: true,
 } as const;
 
-/** Public list projection: the safe scalars plus the relations a card renders. */
+/**
+ * Public list projection: the safe scalars plus the relations a card renders.
+ *
+ * Deliberately does NOT carry each image's `variantId`: a card shows one
+ * primary image and has no variant selector, so the association would be dead
+ * weight on every row of every listing. Same for `PRODUCT_LIST_INCLUDE` and
+ * `searchProducts`' raw-SQL image subquery.
+ * See link-product-images-to-variants design.md Decision 8.
+ */
 const PUBLIC_PRODUCT_LIST_SELECT = {
     ...PUBLIC_PRODUCT_SCALARS,
     category: true,
@@ -158,6 +166,49 @@ const ensureUniqueVariantSkus = async (variants: IProductVariantInput[], ownVari
     }
 };
 
+/**
+ * Rejects an image whose variant reference cannot be honored: a `variantIndex`
+ * with no entry at that position in this request's own `variants` array, or a
+ * `variantId` that is not one of this product's variants — including one
+ * belonging to somebody else's product.
+ *
+ * Runs alongside the other precondition checks and therefore OUTSIDE the
+ * transaction, which is what makes the spec's "the request is rejected and no
+ * data is created or modified" true by construction rather than by unwinding.
+ * See link-product-images-to-variants design.md Decision 5.
+ *
+ * `ownVariantIds` is the set of variant ids already belonging to this product
+ * — empty on create, where no variant has an id yet.
+ */
+const ensureVariantReferencesResolve = (
+    images: IProductImageInput[],
+    variants: IProductVariantInput[] | undefined,
+    ownVariantIds: Set<string>,
+) => {
+    const variantCount = variants?.length ?? 0;
+
+    images.forEach((image, position) => {
+        // `variantId` wins when both are present, so it is checked first and
+        // `variantIndex` is not consulted at all in that case (Decision 3).
+        if (image.variantId !== undefined) {
+            if (!ownVariantIds.has(image.variantId)) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Image at position ${position} references variant ${image.variantId}, which does not belong to this product`,
+                );
+            }
+            return;
+        }
+
+        if (image.variantIndex !== undefined && image.variantIndex >= variantCount) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Image at position ${position} references variant index ${image.variantIndex}, but only ${variantCount} variant(s) were submitted`,
+            );
+        }
+    });
+};
+
 const toVariantData = (variant: IProductVariantInput) => ({
     name: variant.name,
     sku: variant.sku,
@@ -170,12 +221,77 @@ const toVariantData = (variant: IProductVariantInput) => ({
     status: variant.status,
 });
 
-const toImageData = (image: IProductImageInput) => ({
+/**
+ * `variantId` is passed in already resolved rather than read off the image,
+ * because resolving a `variantIndex` needs the generated variant ids, which
+ * only the caller has. Passing `null` clears an existing association — which
+ * is what an image resubmitted with no variant named must do.
+ */
+const toImageData = (image: IProductImageInput, variantId: string | null = null) => ({
     url: image.url,
     altText: image.altText,
     sortOrder: image.sortOrder,
     isPrimary: image.isPrimary,
+    variantId,
 });
+
+/**
+ * Resolves an image's variant reference to a concrete id, given the variant ids
+ * created or kept by this request in submission order. `variantId` wins over
+ * `variantIndex` (Decision 3); neither present means shared, i.e. `null`.
+ *
+ * Both forms have already been validated by `ensureVariantReferencesResolve`,
+ * so an unresolvable index here would be a bug rather than bad input; it
+ * degrades to `null` (shared) rather than throwing mid-transaction.
+ */
+const resolveImageVariantId = (
+    image: IProductImageInput,
+    variantIdsByIndex: (string | undefined)[],
+): string | null => {
+    if (image.variantId !== undefined) {
+        return image.variantId;
+    }
+
+    if (image.variantIndex !== undefined) {
+        return variantIdsByIndex[image.variantIndex] ?? null;
+    }
+
+    return null;
+};
+
+/**
+ * Sets each variant's `image` to its lowest-`sortOrder` linked image, keeping
+ * the field the cart and wishlist read in step with the gallery rather than
+ * letting the two drift apart. A variant with no linked images is left alone,
+ * so an `image` supplied directly by an existing client survives.
+ * See link-product-images-to-variants design.md Decision 7.
+ */
+const syncDerivedVariantImages = async (tx: Prisma.TransactionClient, productId: string) => {
+    const variants = await tx.productVariant.findMany({
+        where: { productId },
+        select: {
+            id: true,
+            image: true,
+            images: {
+                orderBy: { sortOrder: "asc" as const },
+                take: 1,
+                select: { url: true },
+            },
+        },
+    });
+
+    for (const variant of variants) {
+        const derived = variant.images[0]?.url;
+
+        // No linked images: leave whatever the payload set. Only a variant that
+        // HAS linked images has its `image` overridden by them.
+        if (derived === undefined || derived === variant.image) {
+            continue;
+        }
+
+        await tx.productVariant.update({ where: { id: variant.id }, data: { image: derived } });
+    }
+};
 
 const toAttributeData = (attribute: IProductAttributeInput) => ({
     name: attribute.name,
@@ -199,6 +315,13 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
         await ensureUniqueVariantSkus(payload.variants, new Set());
     }
 
+    if (payload.images && payload.images.length > 0) {
+        // No variant has an id yet, so only `variantIndex` can resolve here —
+        // an explicit `variantId` on create can never name a variant of a
+        // product that is about to be created, hence the empty id set.
+        ensureVariantReferencesResolve(payload.images, payload.variants, new Set());
+    }
+
     const slug = await generateUniqueSlug(payload.slug || payload.name, (candidate) =>
         prisma.product
             .findUnique({ where: { slug: candidate }, select: { id: true } })
@@ -207,19 +330,62 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
 
     const { variants, images, attributes, ...rest } = payload;
 
-    const product = await prisma.product.create({
-        data: {
-            ...rest,
-            slug,
-            ...(variants && variants.length > 0
-                ? { variants: { create: variants.map(toVariantData) } }
-                : {}),
-            ...(images && images.length > 0 ? { images: { create: images.map(toImageData) } } : {}),
-            ...(attributes && attributes.length > 0
-                ? { attributes: { create: attributes.map(toAttributeData) } }
-                : {}),
-        },
-        include: PRODUCT_DETAIL_INCLUDE,
+    /*
+     * Two phases, in a transaction: images can only be written once the
+     * variants they name exist and have ids, and a failure between the two
+     * would otherwise leave a product with variants but no images.
+     * See link-product-images-to-variants design.md Decision 4.
+     */
+    const product = await prisma.$transaction(async (tx) => {
+        const created = await tx.product.create({
+            data: {
+                ...rest,
+                slug,
+                ...(attributes && attributes.length > 0
+                    ? { attributes: { create: attributes.map(toAttributeData) } }
+                    : {}),
+            },
+            select: { id: true },
+        });
+
+        /*
+         * Variants are created one at a time rather than as a nested `create`
+         * so each generated id can be captured at its submitted position.
+         * Reading them back afterwards would not work: `createdAt` defaults to
+         * now() and rows written inside one transaction can share a timestamp,
+         * leaving the order — and therefore every `variantIndex` — undefined.
+         */
+        const variantIdsByIndex: string[] = [];
+        if (variants && variants.length > 0) {
+            for (const variant of variants) {
+                const createdVariant = await tx.productVariant.create({
+                    data: { ...toVariantData(variant), productId: created.id },
+                    select: { id: true },
+                });
+                variantIdsByIndex.push(createdVariant.id);
+            }
+        }
+
+        if (images && images.length > 0) {
+            for (const image of images) {
+                await tx.productImage.create({
+                    data: {
+                        ...toImageData(image, resolveImageVariantId(image, variantIdsByIndex)),
+                        productId: created.id,
+                    },
+                });
+            }
+
+            await syncDerivedVariantImages(tx, created.id);
+        }
+
+        // OrThrow, not findUnique: the row was created in this transaction, so
+        // its absence is impossible rather than a case to handle — and this
+        // keeps createProduct's return type non-nullable, as it was before.
+        return tx.product.findUniqueOrThrow({
+            where: { id: created.id },
+            include: PRODUCT_DETAIL_INCLUDE,
+        });
     });
 
     await AuditLogService.record(userId, AuditAction.CREATE, "Product", product.id, {
@@ -711,11 +877,16 @@ const getAdminProductById = async (id: string) => {
  * tasks.md 1.3. Kept as three concrete functions (rather than one generic
  * one) so each stays type-safe against its own Prisma delegate.
  */
+/**
+ * Returns the variant id at each submitted position, so an image naming a
+ * `variantIndex` can be resolved — including one naming a variant this very
+ * call just created. See link-product-images-to-variants design.md Decision 6.
+ */
 const syncProductVariants = async (
     tx: Prisma.TransactionClient,
     productId: string,
     variants: IProductVariantInput[],
-) => {
+): Promise<string[]> => {
     const existing = await tx.productVariant.findMany({
         where: { productId },
         select: { id: true },
@@ -725,8 +896,22 @@ const syncProductVariants = async (
 
     const toDelete = [...existingIds].filter((id) => !keepIds.has(id));
     if (toDelete.length > 0) {
+        /*
+         * Release this variant's images before deleting it, so removing a
+         * variant never destroys photography — the images become shared across
+         * the product instead. The FK is ON DELETE SET NULL and would do this
+         * anyway; it is spelled out here so the intent survives a future
+         * schema edit that changes the FK.
+         * See link-product-images-to-variants design.md Decision 2.
+         */
+        await tx.productImage.updateMany({
+            where: { variantId: { in: toDelete } },
+            data: { variantId: null },
+        });
         await tx.productVariant.deleteMany({ where: { id: { in: toDelete } } });
     }
+
+    const variantIdsByIndex: string[] = [];
 
     for (const variant of variants) {
         if (variant.id) {
@@ -737,16 +922,32 @@ const syncProductVariants = async (
                 );
             }
             await tx.productVariant.update({ where: { id: variant.id }, data: toVariantData(variant) });
+            variantIdsByIndex.push(variant.id);
         } else {
-            await tx.productVariant.create({ data: { ...toVariantData(variant), productId } });
+            const created = await tx.productVariant.create({
+                data: { ...toVariantData(variant), productId },
+                select: { id: true },
+            });
+            variantIdsByIndex.push(created.id);
         }
     }
+
+    return variantIdsByIndex;
 };
 
+/**
+ * `variantIdsByIndex` comes from `syncProductVariants` and MUST reflect the
+ * post-sync variant set — which is why variants are synced first in
+ * `updateProduct`'s transaction (design.md Decision 6).
+ *
+ * Each image's association is rewritten on every sync, so resubmitting an
+ * image with no variant named clears it rather than leaving the old value.
+ */
 const syncProductImages = async (
     tx: Prisma.TransactionClient,
     productId: string,
     images: IProductImageInput[],
+    variantIdsByIndex: string[] = [],
 ) => {
     const existing = await tx.productImage.findMany({
         where: { productId },
@@ -768,9 +969,17 @@ const syncProductImages = async (
                     `Image ${image.id} does not belong to this product`,
                 );
             }
-            await tx.productImage.update({ where: { id: image.id }, data: toImageData(image) });
+            await tx.productImage.update({
+                where: { id: image.id },
+                data: toImageData(image, resolveImageVariantId(image, variantIdsByIndex)),
+            });
         } else {
-            await tx.productImage.create({ data: { ...toImageData(image), productId } });
+            await tx.productImage.create({
+                data: {
+                    ...toImageData(image, resolveImageVariantId(image, variantIdsByIndex)),
+                    productId,
+                },
+            });
         }
     }
 };
@@ -836,6 +1045,28 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         await ensureUniqueVariantSkus(payload.variants, ownVariantIds);
     }
 
+    if (payload.images && payload.images.length > 0) {
+        /*
+         * A `variantId` is valid if it names a variant this product actually
+         * has. Variants surviving this update are the ones resubmitted with an
+         * id; a variant the payload drops is being deleted, so an image may not
+         * point at it. When the payload omits `variants` entirely the existing
+         * variants are untouched, so all of them remain referenceable.
+         */
+        const survivingVariantIds = payload.variants
+            ? new Set(payload.variants.filter((v) => v.id).map((v) => v.id as string))
+            : new Set(
+                  (
+                      await prisma.productVariant.findMany({
+                          where: { productId: id },
+                          select: { id: true },
+                      })
+                  ).map((variant) => variant.id),
+              );
+
+        ensureVariantReferencesResolve(payload.images, payload.variants, survivingVariantIds);
+    }
+
     let slug = existing.slug;
     if (payload.slug || (payload.name && payload.name !== existing.name)) {
         slug = await generateUniqueSlug(payload.slug || payload.name || existing.name, (candidate) =>
@@ -850,12 +1081,31 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
     const updated = await prisma.$transaction(async (tx) => {
         await tx.product.update({ where: { id }, data: { ...rest, slug } });
 
+        /*
+         * Variants MUST be synced before images: an image may name a variant by
+         * the position it occupies in this request, including one created by
+         * the very call above. Reordering these two silently mis-assigns those
+         * images. See link-product-images-to-variants design.md Decision 6.
+         */
+        let variantIdsByIndex: string[] = [];
         if (variants) {
-            await syncProductVariants(tx, id, variants);
+            variantIdsByIndex = await syncProductVariants(tx, id, variants);
         }
 
         if (images) {
-            await syncProductImages(tx, id, images);
+            if (!variants) {
+                // No `variants` submitted means the existing set is untouched,
+                // so a `variantIndex` refers to a position within that set.
+                const current = await tx.productVariant.findMany({
+                    where: { productId: id },
+                    orderBy: { createdAt: "asc" as const },
+                    select: { id: true },
+                });
+                variantIdsByIndex = current.map((variant) => variant.id);
+            }
+
+            await syncProductImages(tx, id, images, variantIdsByIndex);
+            await syncDerivedVariantImages(tx, id);
         }
 
         if (attributes) {

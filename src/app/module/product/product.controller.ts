@@ -5,7 +5,7 @@ import AppError from "../../errorHelpers/AppError";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
-import { IProductImageInput } from "./product.interface";
+import { IImageSlotInput, IProductImageInput } from "./product.interface";
 import { ProductService } from "./product.service";
 import { publicProductQueryZodSchema, searchProductsZodSchema } from "./product.validation";
 
@@ -16,19 +16,28 @@ import { publicProductQueryZodSchema, searchProductsZodSchema } from "./product.
  * throws — before the caller does anything else (Decision 4), so a mid-batch Cloudinary failure
  * never reaches ProductService. `imageSlots` is stripped from the payload afterward: it's a
  * controller-only field, never read by product.service.ts.
+ *
+ * A slot's `variantId`/`variantIndex` ride along with the rest of its metadata,
+ * so a file uploaded and assigned to a variant in one request lands on that
+ * variant without a follow-up edit (link-product-images-to-variants Decision 3).
+ * The slot is typed as `IImageSlotInput` rather than an inline shape so a field
+ * added there is carried here automatically instead of being silently dropped
+ * by the spread below.
  */
 const mergeUploadedImages = async (req: Request): Promise<void> => {
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-    const imageSlots = (req.body.imageSlots as { altText?: string; sortOrder?: number; isPrimary?: boolean }[] | undefined) ?? [];
+    const imageSlots = (req.body.imageSlots as IImageSlotInput[] | undefined) ?? [];
 
     if (files.length > 0) {
         const uploaded = await Promise.all(
             files.map((file) => uploadFileToCloudinary(file.buffer, file.originalname)),
         );
 
+        // `url` is spread first so a slot can never override it. Slots are
+        // zod-stripped to their declared fields, so this is defense in depth.
         const newImages: IProductImageInput[] = uploaded.map((result, i) => ({
-            url: result.secure_url,
             ...imageSlots[i],
+            url: result.secure_url,
         }));
 
         const existingImages = (req.body.images as IProductImageInput[] | undefined) ?? [];

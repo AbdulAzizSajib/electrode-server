@@ -16,9 +16,20 @@ model ProductVariant {
 
   attributes Json?
 
+  /// Derived, not authored: set to the url of this variant's lowest-sortOrder
+  /// linked image whenever the variant has any, so `cart.service.ts` and
+  /// `wishlist.service.ts` — which read this field and were not moved to the
+  /// `images` relation — never disagree with what the product page shows.
+  /// A value supplied directly is still honored for a variant with no linked
+  /// images, so existing clients keep working.
+  /// See link-product-images-to-variants design.md Decision 7.
   image String?
 
   status Boolean @default(true)
+
+  /// Images depicting this variant. An image with no variant is shared across
+  /// the whole product rather than belonging here — see ProductImage.variantId.
+  images ProductImage[]
 
   orderItems         OrderItem[]
   stockMovements     StockMovement[]
