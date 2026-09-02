@@ -754,7 +754,7 @@
                     "{{productSlug}}"
                   ]
                 },
-                "description": "No auth. Full detail incl. variants/images/attributes. 404 if not ACTIVE."
+                "description": "No auth. Full detail incl. variants/images/attributes. Each image now includes `variantId` (string or null) indicating which variant it belongs to, so the storefront can render a variant-aware gallery. 404 if not ACTIVE."
               },
               "response": []
             },
@@ -3010,7 +3010,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Galaxy S24\",\n  \"sku\": \"GALAXY-S24\",\n  \"description\": \"Samsung's latest flagship smartphone\",\n  \"shortDescription\": \"Flagship smartphone\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 999.99,\n  \"compareAtPrice\": 1099.99,\n  \"stockQuantity\": 50,\n  \"lowStockThreshold\": 5,\n  \"isFeatured\": true,\n  \"variants\": [\n    {\n      \"name\": \"128GB / Black\",\n      \"sku\": \"GALAXY-S24-128-BLK\",\n      \"price\": 999.99,\n      \"stockQuantity\": 20,\n      \"attributes\": { \"storage\": \"128GB\", \"color\": \"Black\" }\n    },\n    {\n      \"name\": \"256GB / Silver\",\n      \"sku\": \"GALAXY-S24-256-SLV\",\n      \"price\": 1099.99,\n      \"stockQuantity\": 30,\n      \"attributes\": { \"storage\": \"256GB\", \"color\": \"Silver\" }\n    }\n  ],\n  \"images\": [\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-front.jpg\",\n      \"altText\": \"Galaxy S24 front view\",\n      \"sortOrder\": 0,\n      \"isPrimary\": true\n    }\n  ],\n  \"attributes\": [\n    { \"name\": \"Brand\", \"value\": \"Samsung\" },\n    { \"name\": \"Warranty\", \"value\": \"1 year\" }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"Galaxy S24\",\n  \"sku\": \"GALAXY-S24\",\n  \"description\": \"Samsung's latest flagship smartphone\",\n  \"shortDescription\": \"Flagship smartphone\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 999.99,\n  \"compareAtPrice\": 1099.99,\n  \"stockQuantity\": 50,\n  \"lowStockThreshold\": 5,\n  \"isFeatured\": true,\n  \"variants\": [\n    {\n      \"name\": \"128GB / Black\",\n      \"sku\": \"GALAXY-S24-128-BLK\",\n      \"price\": 999.99,\n      \"stockQuantity\": 20,\n      \"attributes\": { \"storage\": \"128GB\", \"color\": \"Black\" }\n    },\n    {\n      \"name\": \"256GB / Silver\",\n      \"sku\": \"GALAXY-S24-256-SLV\",\n      \"price\": 1099.99,\n      \"stockQuantity\": 30,\n      \"attributes\": { \"storage\": \"256GB\", \"color\": \"Silver\" }\n    }\n  ],\n  \"images\": [\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-128-black-front.jpg\",\n      \"altText\": \"Galaxy S24 128GB Black front view\",\n      \"sortOrder\": 0,\n      \"isPrimary\": true,\n      \"variantIndex\": 0\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-256-silver-front.jpg\",\n      \"altText\": \"Galaxy S24 256GB Silver front view\",\n      \"sortOrder\": 1,\n      \"isPrimary\": false,\n      \"variantIndex\": 1\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-box.jpg\",\n      \"altText\": \"Galaxy S24 box / shared product image\",\n      \"sortOrder\": 2,\n      \"isPrimary\": false\n    }\n  ],\n  \"attributes\": [\n    { \"name\": \"Brand\", \"value\": \"Samsung\" },\n    { \"name\": \"Warranty\", \"value\": \"1 year\" }\n  ]\n}"
                 },
                 "description": "OWNER/ADMIN only. Creates the Product together with its nested variants/images/attributes in one call. Saves productId/productSlug/variantId/imageId/attributeId for the rest of this folder."
               },
@@ -3051,7 +3051,7 @@
                   "formdata": [
                     {
                       "key": "data",
-                      "value": "{\"name\":\"Galaxy S24 (multipart upload)\",\"sku\":\"GALAXY-S24-MP\",\"price\":999.99,\"categoryId\":\"{{categoryId}}\",\"brandId\":\"{{brandId}}\",\"images\":[],\"imageSlots\":[{\"altText\":\"Front view\",\"isPrimary\":true},{\"altText\":\"Back view\"}]}",
+                      "value": "{\"name\":\"Galaxy S24 (multipart upload)\",\"sku\":\"GALAXY-S24-MP\",\"price\":999.99,\"categoryId\":\"{{categoryId}}\",\"brandId\":\"{{brandId}}\",\"images\":[],\"imageSlots\":[{\"altText\":\"Front view\",\"isPrimary\":true,\"variantIndex\":0},{\"altText\":\"Back view\",\"variantIndex\":1}]}",
                       "type": "text"
                     },
                     {
@@ -3066,7 +3066,7 @@
                     }
                   ]
                 },
-                "description": "OWNER/ADMIN only. multipart/form-data variant of product create: the `data` field carries the same JSON payload the plain-JSON request uses, plus an optional `imageSlots` array ({altText?, sortOrder?, isPrimary?}) matched by position to the uploaded files under the repeated `images` field (max 10). Select actual image files for the two `images` file fields before sending — Postman can't pre-fill a file picker. See openspec/changes/add-product-image-upload."
+                "description": "OWNER/ADMIN only. multipart/form-data variant of product create: the `data` field carries the same JSON payload the plain-JSON request uses, plus an optional `imageSlots` array ({altText?, sortOrder?, isPrimary?, variantIndex?}) matched by position to the uploaded files under the repeated `images` field (max 10). Select actual image files for the two `images` file fields before sending — Postman can't pre-fill a file picker. See openspec/changes/add-product-image-upload and link-product-images-to-variants."
               },
               "response": []
             },
@@ -3193,9 +3193,37 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"variants\": [\n    { \"id\": \"{{variantId}}\", \"name\": \"128GB / Black\", \"sku\": \"GALAXY-S24-128-BLK\", \"price\": 979.99, \"stockQuantity\": 15 },\n    { \"name\": \"512GB / Gold\", \"sku\": \"GALAXY-S24-512-GLD\", \"price\": 1199.99, \"stockQuantity\": 10 }\n  ]\n}"
+                  "raw": "{\n  \"variants\": [\n    { \"id\": \"{{variantId}}\", \"name\": \"128GB / Black\", \"sku\": \"GALAXY-S24-128-BLK\", \"price\": 979.99, \"stockQuantity\": 15 },\n    { \"name\": \"512GB / Gold\", \"sku\": \"GALAXY-S24-512-GLD\", \"price\": 1199.99, \"stockQuantity\": 10 }\n  ],\n  \"images\": [\n    { \"id\": \"{{imageId}}\", \"url\": \"https://example.com/images/galaxy-s24-128-black-front.jpg\", \"sortOrder\": 0, \"variantId\": \"{{variantId}}\" },\n    { \"url\": \"https://example.com/images/galaxy-s24-512-gold-front.jpg\", \"sortOrder\": 1, \"variantIndex\": 1 }\n  ]\n}"
                 },
-                "description": "Demonstrates the nested create-update-delete sync: {{variantId}} is updated, a new variant (no `id`) is created, and any other existing variant not listed here is deleted."
+                "description": "Demonstrates the nested create-update-delete sync: {{variantId}} is updated, a new variant (no `id`) is created, and any other existing variant not listed here is deleted. Images are synced too: existing images keep their `id` and can be reassigned by `variantId` or cleared by omitting the field; new images without `id` are created."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Product Images (reassign/clear by variantId)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"images\": [\n    { \"id\": \"{{imageId}}\", \"url\": \"https://example.com/images/galaxy-s24-256-silver-front.jpg\", \"sortOrder\": 0, \"variantId\": \"{{variantId}}\" },\n    { \"id\": \"{{imageId}}\", \"url\": \"https://example.com/images/galaxy-s24-box.jpg\", \"sortOrder\": 1 }\n  ]\n}"
+                },
+                "description": "Demonstrates image reassignment and clearing: the first image is moved to {{variantId}}, the second image is cleared back to shared (variantId omitted). Images absent from this array are deleted. Run after Create Product so {{imageId}} and {{variantId}} are set."
               },
               "response": []
             },
@@ -3237,6 +3265,33 @@
                     "{{categoryId}}"
                   ]
                 }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Product (invalid variant reference, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Invalid Variant Ref\",\n  \"sku\": \"INVALID-VAR-REF\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 100,\n  \"variants\": [\n    { \"name\": \"V1\", \"sku\": \"INVALID-VAR-REF-V1\", \"price\": 100 }\n  ],\n  \"images\": [\n    { \"url\": \"https://example.com/images/test.jpg\", \"variantIndex\": 5 }\n  ]\n}"
+                },
+                "description": "NEGATIVE TEST — expects HTTP 400. variantIndex 5 is out of range because only 1 variant was submitted. No product, variant, or image row is created. See link-product-images-to-variants design.md Decision 5."
               },
               "response": []
             },
