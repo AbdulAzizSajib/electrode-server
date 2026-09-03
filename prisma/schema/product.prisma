@@ -22,6 +22,25 @@ model Product {
   brandId String?
   brand   Brand?  @relation(fields: [brandId], references: [id], onDelete: SetNull)
 
+  /// How this product is taxed. Nullable in the schema only because existing
+  /// rows predate it; every product is backfilled to the default rule by the
+  /// migration, and the service requires one on write. Restrict, not SetNull:
+  /// a product with no tax rule cannot be taxed, so a rule in use must be
+  /// reassigned before it can be deleted.
+  taxRuleId String?
+  taxRule   TaxRule? @relation(fields: [taxRuleId], references: [id], onDelete: Restrict)
+
+  /// How this product is delivered. Same nullability reasoning as `taxRuleId`:
+  /// a product with no shipping rule cannot be delivered.
+  shippingRuleId String?
+  shippingRule   ShippingRule? @relation(fields: [shippingRuleId], references: [id], onDelete: Restrict)
+
+  /// An optional "buy N get M free" offer. Genuinely optional — most products
+  /// carry none — so SetNull: deleting the deal leaves its products sold
+  /// without an offer rather than blocking the delete.
+  bundleDealId String?
+  bundleDeal   BundleDeal? @relation(fields: [bundleDealId], references: [id], onDelete: SetNull)
+
   price          Decimal  @db.Decimal(12, 2)
   compareAtPrice Decimal? @db.Decimal(12, 2)
   costPrice      Decimal? @db.Decimal(12, 2)
@@ -30,6 +49,25 @@ model Product {
   lowStockThreshold Int @default(5)
 
   weight Decimal? @db.Decimal(10, 3)
+
+  /// What the product is sold in — "1 kg", "500 ml", "pack of 12". Free text
+  /// because units are not enumerable across a general catalogue.
+  unit String?
+
+  /// A short storefront label — "New", "Hot". Presentation only; it grants no
+  /// behaviour and is not a status.
+  badge String?
+
+  /// Facts a shopper needs before buying. Null means the merchant has not said,
+  /// which the storefront shows as nothing rather than as "No" — an unanswered
+  /// question and a negative answer are different claims.
+  isRefundable Boolean?
+  hasWarranty  Boolean?
+
+  /// An optional product video and its poster frame, uploaded together and
+  /// shown alongside the gallery.
+  video          String?
+  videoThumbnail String?
 
   isFeatured Boolean @default(false)
 
@@ -53,12 +91,28 @@ model Product {
   /// refunded or cancelled, floored at 0.
   totalSold Int @default(0)
 
+  /// Denormalized lifetime product-page views, maintained by ProductViewService
+  /// on each counted view. Stored for the same reason as totalSold above:
+  /// Prisma cannot orderBy a relation aggregate, so "sort by most viewed" over
+  /// ProductView rows would otherwise be impossible.
+  ///
+  /// A LIFETIME TOTAL — it says nothing about the present moment. It is not a
+  /// count of people currently on the page, and no code may present it as one.
+  /// Deduplicated per viewer per product per window before it is incremented,
+  /// so it means "how many people looked", not "how many requests arrived".
+  viewCount Int @default(0)
+
+  /// Dedup ledger for viewCount above. Never read to answer "how many viewers
+  /// now" — see ProductView.
+  views ProductView[]
+
   seoTitle       String?
   seoDescription String?
 
   images     ProductImage[]
   variants   ProductVariant[]
   attributes ProductAttribute[]
+
   orderItems OrderItem[]
   reviews    Review[]
 
@@ -77,6 +131,13 @@ model Product {
   /// discoverable via its primary `category`.
   categories ProductCategory[]
 
+  /// Merchandising groupings, independent of `category` above.
+  collections ProductCollection[]
+
+  /// Keywords, shared across the shop so they can be suggested rather than
+  /// retyped.
+  tags ProductTag[]
+
   //banner relation
   banners Banner[]
 
@@ -90,4 +151,5 @@ model Product {
   @@index([createdAt])
   @@index([averageRating])
   @@index([totalSold])
+  @@index([viewCount])
 }

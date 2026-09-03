@@ -1,0 +1,70 @@
+/// A named delivery policy assigned to products, made of one or more places.
+///
+/// Replaces ShippingMethod's flat price, which charged the same to deliver
+/// across the city as across the country. What a shopper is offered and charged
+/// comes from matching their destination against this rule's places.
+///
+/// A rule MUST always keep at least one place: a rule matching nowhere can
+/// charge nothing, and a product assigned to it would be undeliverable. The
+/// service enforces that on write.
+/// See align-admin-catalog-with-reference design.md.
+model ShippingRule {
+  id String @id @default(cuid())
+
+  name String @unique
+
+  places ShippingPlace[]
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// One destination a shipping rule covers, with what it costs to ship there.
+///
+/// Matching is MOST SPECIFIC FIRST — a place naming a region beats one naming a
+/// country, which beats one covering everywhere. Without that order, two places
+/// covering the same shopper would be a coin toss and a merchant adding a
+/// specific rate would see it ignored at random.
+///
+/// `country`/`state` null means "anywhere": a place with both null is the
+/// catch-all, and is what a rule needs to be able to deliver somewhere it has
+/// not enumerated.
+model ShippingPlace {
+  id String @id @default(cuid())
+
+  shippingRuleId String
+  shippingRule   ShippingRule @relation(fields: [shippingRuleId], references: [id], onDelete: Cascade)
+
+  /// What the shopper sees at checkout. Falls back to a name built from the
+  /// delivery time when blank.
+  name String?
+
+  /// ISO country code, or null for every country.
+  country String?
+
+  /// Region within `country`, or null for every region in it. Meaningless
+  /// without a country, which the service rejects.
+  state String?
+
+  price Decimal @db.Decimal(12, 2)
+
+  /// How long delivery takes, for the shopper to see before committing.
+  deliveryDays Int @default(0)
+
+  /// Whether the shopper may collect in person here instead of having it
+  /// delivered.
+  offersPickup Boolean @default(false)
+
+  /// Charged instead of `price` when the shopper collects in person. Ignored
+  /// unless `offersPickup`.
+  pickupPrice Decimal @default(0) @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shippingRuleId])
+  /// Supports the most-specific-first lookup.
+  @@index([country, state])
+}

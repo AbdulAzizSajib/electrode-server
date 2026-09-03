@@ -1,0 +1,25 @@
+/// A "buy N, get M free" offer a product can carry.
+///
+/// Defined once and assigned to products, so "buy 2 get 1 free" is authored
+/// once rather than restated per product.
+///
+/// Both quantities must be at least one — an offer requiring nothing bought, or
+/// giving nothing away, is not an offer. Enforced in the service, since Prisma
+/// cannot express a check constraint.
+/// See align-admin-catalog-with-reference design.md.
+model BundleDeal {
+  id String @id @default(cuid())
+
+  name String @unique
+
+  /// How many units the shopper must buy.
+  buyQuantity Int
+
+  /// How many they then get free.
+  freeQuantity Int
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

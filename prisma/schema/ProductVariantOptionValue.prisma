@@ -1,0 +1,28 @@
+/// Joins a variant to the shop-wide attribute values that define it.
+///
+/// This is what a variant *is*: "Red / XL" is not a name, it is this pair of
+/// rows. Exactly one row per attribute the product sells — the invariant the
+/// service enforces on write, because no schema can express "one row here per
+/// row over there".
+///
+/// Previously pointed at the per-product `ProductOptionValue`; repointed at the
+/// shop-wide `AttributeValue` by align-admin-catalog-with-reference. The shape
+/// is unchanged, only what it references.
+///
+/// Cascade on both sides: a row here is meaningless without either end. The
+/// admin must refuse to delete an attribute value that variants still
+/// reference — silently emptying a variant's selection would leave it
+/// unresolvable and therefore unbuyable, which is worse than refusing the edit.
+model ProductVariantOptionValue {
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  valueId String
+  value   AttributeValue @relation(fields: [valueId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([variantId, valueId])
+  @@index([variantId])
+  @@index([valueId])
+}

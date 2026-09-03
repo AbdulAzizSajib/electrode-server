@@ -1,0 +1,80 @@
+/// A shop-wide axis of choice — Colour, Size, Weight.
+///
+/// Defined ONCE and reused across products. This replaces the per-product
+/// `ProductOption` that shipped in add-product-option-types: with that model a
+/// merchant selling dresses retyped "Size: S, M, XL" on every product, and two
+/// products could disagree about whether the axis was called "Colour" or
+/// "Color". Here the name and the value order are shared, so every product
+/// selling a value presents it identically.
+///
+/// A product does not own attributes; it selects values from them — see
+/// ProductVariantOptionValue.
+/// See align-admin-catalog-with-reference design.md.
+model Attribute {
+  id String @id @default(cuid())
+
+  /// The merchant's own label. Deliberately unconstrained beyond length: the
+  /// storefront renders whatever is here, so a new kind of attribute needs no
+  /// code change in any repo.
+  name String @unique
+
+  /// Authored order, for presenting attributes in a stable sequence.
+  position Int @default(0)
+
+  /// How this attribute's values are drawn. Declared here rather than inferred
+  /// from `name`, which would break the moment a merchant writes "Color"
+  /// instead of "Colour". An unrecognised value renders as a plain label, so
+  /// adding a presentation later cannot break a deployed storefront.
+  presentation AttributePresentation @default(LABEL)
+
+  values AttributeValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([position])
+}
+
+enum AttributePresentation {
+  /// A colour chip drawn from the value's `swatch`.
+  SWATCH
+  /// The value's label as text.
+  LABEL
+}
+
+/// One choice on an attribute — "Red" on Colour, "XL" on Size.
+///
+/// A variant is defined by the values it selects, one per attribute its product
+/// sells. That invariant is what lets a two-attribute selection resolve to a
+/// single purchasable row; it cannot be expressed as a database constraint, so
+/// the product service enforces it on write and the storefront resolver treats
+/// a violation as unavailable rather than crashing.
+model AttributeValue {
+  id String @id @default(cuid())
+
+  attributeId String
+  attribute   Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  /// What the shopper reads — "Red", "XL", "2 pound".
+  label String
+
+  /// Authored order. This is why values are rows rather than a JSON array on
+  /// the attribute: S -> M -> XL is not derivable from the labels, and a JSON
+  /// blob could not be indexed, constrained, or partially updated.
+  position Int @default(0)
+
+  /// CSS colour for a SWATCH attribute, ignored otherwise. The label still
+  /// travels with it — a swatch must name itself for a shopper who cannot
+  /// distinguish the colour.
+  swatch String?
+
+  variants ProductVariantOptionValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Two "Red"s on one Colour attribute would make a variant's selection
+  /// ambiguous and give the shopper two identical chips.
+  @@unique([attributeId, label])
+  @@index([attributeId])
+}

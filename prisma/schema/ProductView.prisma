@@ -1,0 +1,46 @@
+/// Dedup ledger for `Product.viewCount`. One row per (viewer, product, window).
+///
+/// This table exists ONLY so a view is counted once per person rather than once
+/// per request. It is never queried to answer "how many people are viewing this
+/// now" — that would need a live window this change deliberately does not
+/// build, and `viewCount` is a lifetime total with no present-tense meaning.
+/// See add-product-view-tracking design.md Decision 2.
+///
+/// Rows are therefore safe to prune on any schedule: deleting them affects
+/// nothing but the dedup horizon, and `viewCount` is unaffected.
+///
+/// Deduplication is a DATABASE INVARIANT, not a read-then-write check. The
+/// unique constraint below makes a duplicate insert fail, and only a genuinely
+/// new row increments the counter — so two instances racing on the same viewer
+/// cannot both count. `enforceGuestOrderLimits` reached the same conclusion for
+/// the same reason: an in-memory counter is wrong the moment there are two
+/// instances and lost on every restart.
+model ProductView {
+    id String @id @default(cuid())
+
+    productId String
+    product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+    /// Opaque identity for the viewer: the customer id when signed in,
+    /// otherwise a keyed hash of IP + user-agent.
+    ///
+    /// NEVER a raw IP address. An address stored beside a browsing history is
+    /// personal data; the hash is only ever compared, never reversed, and the
+    /// server-side secret means it cannot be recomputed from an address alone.
+    /// See add-product-view-tracking design.md Risks.
+    viewerKey String
+
+    /// Start of the dedup window this view fell in, truncated. Part of the
+    /// unique key, so a return visit in a later window is a NEW row and counts
+    /// again — no expiry job is needed to make that happen.
+    windowStart DateTime
+
+    createdAt DateTime @default(now())
+
+    /// The whole point of the table: a second view by the same viewer, of the
+    /// same product, in the same window, cannot be inserted.
+    @@unique([productId, viewerKey, windowStart])
+    @@index([productId])
+    /// Supports pruning old rows.
+    @@index([windowStart])
+}

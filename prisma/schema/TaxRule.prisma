@@ -1,0 +1,31 @@
+/// A named tax charge assigned to products.
+///
+/// Replaces the single shop-wide rate on StoreSetting, which could not express
+/// a catalogue where different goods are taxed differently — the ordinary case
+/// once a shop sells more than one kind of thing.
+///
+/// A percentage rule applies to the price ACTUALLY charged, so a discounted
+/// product is taxed on the discounted amount rather than the list price.
+/// See align-admin-catalog-with-reference design.md.
+model TaxRule {
+  id String @id @default(cuid())
+
+  name String @unique
+
+  type ChargeType @default(PERCENT)
+
+  /// A percentage when `type` is PERCENT, an amount when FLAT.
+  value Decimal @db.Decimal(12, 2)
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Shared by TaxRule and anything else charging either a share of the price or
+/// a fixed amount.
+enum ChargeType {
+  FLAT
+  PERCENT
+}

@@ -1,0 +1,36 @@
+/// A keyword a product can carry, shared across the shop.
+///
+/// Rows rather than a comma-separated string on Product: a real table is what
+/// lets the admin suggest keywords already in use, so a merchant reuses
+/// "wireless" instead of creating "Wireless" beside it. The reference panel
+/// stores tags as a `,a,b,` string and pays for it with substring-matching
+/// deletes that hit the wrong tag.
+/// See align-admin-catalog-with-reference design.md.
+model Tag {
+  id String @id @default(cuid())
+
+  /// Stored as the merchant typed it; uniqueness is enforced case-insensitively
+  /// by the service, so "Wireless" cannot be created beside "wireless".
+  name String @unique
+
+  products ProductTag[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Join between a product and a tag. The composite key is what makes adding the
+/// same tag twice a no-op rather than a duplicate row.
+model ProductTag {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  tagId String
+  tag   Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([productId, tagId])
+  @@index([productId])
+  @@index([tagId])
+}

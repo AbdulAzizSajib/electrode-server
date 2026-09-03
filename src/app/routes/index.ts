@@ -17,6 +17,13 @@ import { PurchaseOrderRoutes } from "../module/purchase-order/purchase-order.rou
 import { RefundNestedRoutes, RefundRoutes } from "../module/refund/refund.route";
 import { PermissionRoutes, RoleRoutes } from "../module/role/role.route";
 import { ReturnNestedRoutes, ReturnRoutes } from "../module/return/return.route";
+import { AttributeRoutes } from "../module/attribute/attribute.route";
+import { BundleDealRoutes } from "../module/bundle-deal/bundle-deal.route";
+import { CollectionRoutes } from "../module/collection/collection.route";
+import { ShippingRuleRoutes } from "../module/shipping-rule/shipping-rule.route";
+import { TagRoutes } from "../module/tag/tag.route";
+import { TaxRuleRoutes } from "../module/tax-rule/tax-rule.route";
+import { ProductViewNestedRoutes } from "../module/product-view/product-view.route";
 import { ReviewNestedRoutes, ReviewRoutes } from "../module/review/review.route";
 import { ShipmentRoutes } from "../module/shipment/shipment.route";
 import { ShippingMethodRoutes } from "../module/shipping-method/shipping-method.route";
@@ -35,7 +42,16 @@ router.use("/auth", AuthRoutes);
 router.use("/users", UserRoutes);
 router.use("/categories", CategoryRoutes);
 router.use("/brands", BrandRoutes);
+router.use("/attributes", AttributeRoutes);
+router.use("/tax-rules", TaxRuleRoutes);
+router.use("/shipping-rules", ShippingRuleRoutes);
+router.use("/collections", CollectionRoutes);
+router.use("/bundle-deals", BundleDealRoutes);
+router.use("/tags", TagRoutes);
 router.use("/products/:id/reviews", ReviewNestedRoutes);
+// Above `/products` for the same reason as reviews: the product router's
+// `/:slug` would otherwise capture `:id/views` first.
+router.use("/products/:id/views", ProductViewNestedRoutes);
 router.use("/products", ProductRoutes);
 router.use("/cart", CartCouponRoutes);
 router.use("/cart", CartRoutes);

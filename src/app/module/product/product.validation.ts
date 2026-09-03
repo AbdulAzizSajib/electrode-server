@@ -1,5 +1,21 @@
 import z from "zod";
 
+/**
+ * Which shop-wide attribute this product sells, and which of its values.
+ *
+ * The product does not define the attribute — it selects one that already
+ * exists, and a subset of its values. The service checks that every value named
+ * really belongs to the attribute named; this only rejects nonsense.
+ * See align-admin-catalog-with-reference design.md.
+ */
+const productOptionZodSchema = z.object({
+    attributeId: z.string().min(1, "An option must name an attribute"),
+    valueIds: z
+        .array(z.string().min(1))
+        .min(1, "Select at least one value for each attribute"),
+    name: z.string().max(100).optional(),
+});
+
 const productVariantZodSchema = z.object({
     id: z.string().optional(),
     name: z.string().min(1).max(150),
@@ -11,6 +27,12 @@ const productVariantZodSchema = z.object({
     attributes: z.record(z.string(), z.unknown()).optional(),
     image: z.url("Variant image must be a valid URL").optional(),
     status: z.boolean().optional(),
+    /**
+     * One index per option, into that option's `values` — positional because on
+     * create no value has an id yet. The service checks arity and range against
+     * the submitted options; this only rejects nonsense.
+     */
+    optionValueIndexes: z.array(z.number().int().nonnegative()).optional(),
 });
 
 /**
@@ -70,6 +92,38 @@ export const createProductZodSchema = z.object({
     isFeatured: z.boolean().optional(),
     seoTitle: z.string().max(200).optional(),
     seoDescription: z.string().max(500).optional(),
+
+    /*
+     * Which named rules price this product's tax and delivery. Optional here
+     * because a product created before rules existed has them backfilled, but
+     * the service treats a product without them as incomplete — one cannot be
+     * taxed, the other cannot be delivered.
+     */
+    taxRuleId: z.string().optional(),
+    shippingRuleId: z.string().optional(),
+    /** Null clears the offer; omitted leaves it as it was. */
+    bundleDealId: z.string().nullable().optional(),
+
+    /** What the product is sold in — "1 kg", "500 ml", "pack of 12". */
+    unit: z.string().max(60).optional(),
+    /** A short storefront label — "New", "Hot". Presentation only. */
+    badge: z.string().max(40).optional(),
+    /*
+     * Tri-state on purpose: null means the merchant has not said, which the
+     * storefront shows as nothing. That is a different claim from "No".
+     */
+    isRefundable: z.boolean().nullable().optional(),
+    hasWarranty: z.boolean().nullable().optional(),
+
+    video: z.url("Video must be a valid URL").nullable().optional(),
+    videoThumbnail: z.url("Video thumbnail must be a valid URL").nullable().optional(),
+
+    /** Collection ids this product belongs to. The full intended set — omitted leaves them alone. */
+    collectionIds: z.array(z.string()).optional(),
+    /** Keyword names, created on demand. The full intended set. */
+    tags: z.array(z.string().max(60)).optional(),
+
+    options: z.array(productOptionZodSchema).optional(),
     variants: z.array(productVariantZodSchema).optional(),
     images: z.array(productImageZodSchema).optional(),
     attributes: z.array(productAttributeZodSchema).optional(),
@@ -119,6 +173,7 @@ export const PUBLIC_PRODUCT_SORT_FIELDS = [
     "name",
     "averageRating",
     "totalSold",
+    "viewCount",
 ] as const;
 
 /**

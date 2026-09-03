@@ -1,5 +1,25 @@
 import { Prisma } from "../../../generated/prisma/client";
 
+/**
+ * Which shop-wide attribute a product sells, and which of its values.
+ *
+ * A product no longer defines options; it selects from attributes that already
+ * exist. So this names an attribute and the subset of its values this product
+ * stocks — a shop-wide Colour may have six values while a given product sells
+ * two of them.
+ *
+ * Order is positional: the `i`-th entry here is the `i`-th option on the
+ * product, and `valueIds[j]` is the `j`-th value of it. A variant's
+ * `optionValueIndexes` index into exactly those positions.
+ */
+export interface IProductOptionInput {
+    attributeId: string;
+    /** Ids of the values this product sells, in the order to present them. */
+    valueIds: string[];
+    /** Optional, for error messages only — the attribute's own name is authoritative. */
+    name?: string;
+}
+
 export interface IProductVariantInput {
     /** Present on update to target an existing variant; omitted to create a new one. */
     id?: string;
@@ -12,6 +32,16 @@ export interface IProductVariantInput {
     attributes?: Prisma.InputJsonValue;
     image?: string;
     status?: boolean;
+    /**
+     * Which option value this variant selects, per option, by position:
+     * `optionValueIndexes[i]` is the index into `options[i].values`.
+     *
+     * Positional for the same reason images use `variantIndex` — on create no
+     * option value has an id yet, so there is nothing else to name it by. A
+     * variant must supply exactly one entry per option of its product, which is
+     * the invariant the whole model rests on.
+     */
+    optionValueIndexes?: number[];
 }
 
 export interface IProductImageInput {
@@ -77,6 +107,25 @@ export interface ICreateProductPayload {
     isFeatured?: boolean;
     seoTitle?: string;
     seoDescription?: string;
+    taxRuleId?: string;
+    shippingRuleId?: string;
+    /** Null clears the offer; omitted leaves it as it was. */
+    bundleDealId?: string | null;
+
+    unit?: string;
+    badge?: string;
+    /** Null means the merchant has not said — different from "No". */
+    isRefundable?: boolean | null;
+    hasWarranty?: boolean | null;
+    video?: string | null;
+    videoThumbnail?: string | null;
+
+    /** The full intended set of collection memberships; omitted leaves them alone. */
+    collectionIds?: string[];
+    /** The full intended set of keywords, created on demand. */
+    tags?: string[];
+
+    options?: IProductOptionInput[];
     variants?: IProductVariantInput[];
     images?: IProductImageInput[];
     attributes?: IProductAttributeInput[];

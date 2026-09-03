@@ -193,6 +193,34 @@
       "key": "uploadedImageUrl",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "optionColourId",
+      "value": ""
+    },
+    {
+      "key": "optionSizeId",
+      "value": ""
+    },
+    {
+      "key": "optionValueRedId",
+      "value": ""
+    },
+    {
+      "key": "optionValueGreenId",
+      "value": ""
+    },
+    {
+      "key": "optionValueSId",
+      "value": ""
+    },
+    {
+      "key": "optionValueMId",
+      "value": ""
+    },
+    {
+      "key": "optionValueXlId",
+      "value": ""
     }
   ],
   "item": [
@@ -899,6 +927,125 @@
                 },
                 "description": "NEGATIVE TEST — expects HTTP 400.\n\nsortBy on the PUBLIC listing is restricted to: createdAt, price, name, averageRating, totalSold. A field is sortable only if its value already appears in the public product payload.\n\nWithout this, ?sortBy=costPrice ordered the whole catalog by supplier cost and leaked every product's margin ranking to an anonymous caller. The request is rejected rather than silently falling back to the default order, which would return 200 in an order the caller never asked for and cannot detect.\n\nThe ADMIN listing (/products/admin) is deliberately unaffected."
               }
+            },
+            {
+              "name": "Public - Record Product View",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}/views",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}",
+                    "views"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"source\": \"product_detail\"\n}"
+                },
+                "description": "Records that a shopper opened this product's detail page.\n\nAlways answers 202 with the same body — whether the view was counted, deduplicated as a repeat, or dropped as a bot. A response that distinguished them would let a caller probe whether a given viewer has already seen a product.\n\nDeduplicated per viewer per product per 6-hour window, so posting this repeatedly increments `viewCount` only once. Signed-in shoppers are identified by session (optionalAuth); guests by a keyed hash of IP + user-agent — the raw address is never stored.\n\nCheck the effect with 'Public - Get Product By Slug' and read `data.viewCount`.\n\nSee add-product-view-tracking design.md."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Record Product View (bot UA, counts nothing)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}/views",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}",
+                    "views"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"source\": \"product_detail\"\n}"
+                },
+                "description": "NEGATIVE TEST — expects HTTP 202 with `viewCount` UNCHANGED.\n\nSend this with a crawler User-Agent header, e.g.\n    User-Agent: Googlebot/2.1\n\nThe 202 is deliberate and identical to a counted view: a crawler learns nothing from the response. Verify by reading `data.viewCount` before and after — it must not move."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Record Product View (bad source, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}/views",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}",
+                    "views"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"source\": \"listing\"\n}"
+                },
+                "description": "NEGATIVE TEST — expects HTTP 400 and no change to `viewCount`.\n\n`source` is a literal: only `product_detail` is accepted. It is the marker separating 'a shopper opened this page' from a listing, a preview, or a prefetch — so only the detail page can record a view. Omitting `source` entirely fails the same way."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Most Viewed Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products?sortBy=viewCount&sortOrder=desc&limit=6",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "sortBy",
+                      "value": "viewCount"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "desc"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "6"
+                    }
+                  ]
+                },
+                "description": "Ranks the catalogue by lifetime views. `viewCount` joined the public sort allowlist alongside createdAt, price, name, averageRating and totalSold.\n\n`viewCount` is a LIFETIME TOTAL — it says nothing about how many people are on a page now."
+              },
+              "response": []
             }
           ]
         },
@@ -3311,6 +3458,125 @@
                   ]
                 },
                 "description": "Run this last - other Products requests above reference {{productId}}. 409 if the product is referenced by orders/cart items/etc."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get All Products (sorted by views)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/products/admin?page=1&limit=10&sortBy=viewCount&sortOrder=asc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "viewCount"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "asc"
+                    }
+                  ]
+                },
+                "description": "Backs the Views column in the admin product list.\n\nAscending puts the least-viewed products first, which is the question the column exists to answer: a product nobody finds, as distinct from one many people find and reject. Sorting is server-side because the list is paginated — sorting in the browser would only reorder the current page.\n\nAdmin listings are deliberately NOT restricted to the public sort allowlist."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Product (with options: Colour x Size)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Classic Cotton Tee\",\n  \"sku\": \"TEE-CLASSIC\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 500,\n  \"options\": [\n    {\n      \"name\": \"Colour\",\n      \"presentation\": \"SWATCH\",\n      \"values\": [\n        {\n          \"label\": \"Red\",\n          \"swatch\": \"#cc0000\"\n        },\n        {\n          \"label\": \"Green\",\n          \"swatch\": \"#00aa00\"\n        }\n      ]\n    },\n    {\n      \"name\": \"Size\",\n      \"presentation\": \"LABEL\",\n      \"values\": [\n        {\n          \"label\": \"S\"\n        },\n        {\n          \"label\": \"M\"\n        },\n        {\n          \"label\": \"XL\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / M\",\n      \"sku\": \"TEE-CLASSIC-RED-M\",\n      \"price\": 500,\n      \"stockQuantity\": 0,\n      \"optionValueIndexes\": [\n        0,\n        1\n      ]\n    },\n    {\n      \"name\": \"Green / XL\",\n      \"sku\": \"TEE-CLASSIC-GRN-XL\",\n      \"price\": 550,\n      \"stockQuantity\": 7,\n      \"optionValueIndexes\": [\n        1,\n        2\n      ]\n    }\n  ]\n}"
+                },
+                "description": "Creates a product whose variants are defined by OPTIONS rather than by a free-text name.\n\n`options` is an ordered list; each option's `values` are ordered too. Position comes from array order, which is why Size reads S, M, XL rather than alphabetically — nothing about the labels themselves says S precedes M.\n\n`optionValueIndexes` on a variant selects one value PER OPTION, by index into that option's `values`. Positional because on create no value has an id yet — the same reason images use `variantIndex`. So `[1, 2]` means Colour=Green (index 1), Size=XL (index 2).\n\nNote this deliberately does NOT create all 6 combinations: not every combination is a real product. Green/S and Green/M simply do not exist, and the storefront shows those values as unavailable rather than hiding them.\n\n`presentation` decides how values are drawn — SWATCH uses each value's `swatch` colour, LABEL shows its text. Declared per option rather than guessed from the name, which would break on 'Color' vs 'Colour'.\n\nSee add-product-option-types design.md."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Product Options (add a value, add a variant)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"options\": [\n    {\n      \"id\": \"{{optionColourId}}\",\n      \"name\": \"Colour\",\n      \"presentation\": \"SWATCH\",\n      \"values\": [\n        {\n          \"id\": \"{{optionValueRedId}}\",\n          \"label\": \"Red\",\n          \"swatch\": \"#cc0000\"\n        },\n        {\n          \"id\": \"{{optionValueGreenId}}\",\n          \"label\": \"Green\",\n          \"swatch\": \"#00aa00\"\n        }\n      ]\n    },\n    {\n      \"id\": \"{{optionSizeId}}\",\n      \"name\": \"Size\",\n      \"presentation\": \"LABEL\",\n      \"values\": [\n        {\n          \"id\": \"{{optionValueSId}}\",\n          \"label\": \"S\"\n        },\n        {\n          \"id\": \"{{optionValueMId}}\",\n          \"label\": \"M\"\n        },\n        {\n          \"id\": \"{{optionValueXlId}}\",\n          \"label\": \"XL\"\n        },\n        {\n          \"label\": \"XXL\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"id\": \"{{variantId}}\",\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / XXL\",\n      \"sku\": \"TEE-CLASSIC-RED-XXL\",\n      \"price\": 550,\n      \"stockQuantity\": 3,\n      \"optionValueIndexes\": [\n        0,\n        3\n      ]\n    }\n  ]\n}"
+                },
+                "description": "Adds a size (XXL) and a variant that uses it, keeping the existing ones.\n\nOptions and values carrying an `id` are UPDATED; those without are created. Anything omitted from the payload is DELETED — so send the full intended set, exactly as variants/images/attributes already work.\n\n`optionValueIndexes` still refers to positions in THIS request's `options`, not to stored ones: XXL is index 3 because it is fourth in the Size values sent here.\n\nWARNING: removing an option or a value cascades to the variant selections referencing it, leaving those variants unresolvable. The admin UI confirms before doing this; a raw API call does not.\n\nReplace the {{option*}} placeholders with real ids from 'Admin - Get Product By Id'."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Product (incomplete option selection, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Broken Option Selection\",\n  \"sku\": \"BROKEN-OPT-SEL\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"price\": 100,\n  \"options\": [\n    {\n      \"name\": \"Colour\",\n      \"values\": [\n        {\n          \"label\": \"Red\"\n        },\n        {\n          \"label\": \"Blue\"\n        }\n      ]\n    },\n    {\n      \"name\": \"Size\",\n      \"values\": [\n        {\n          \"label\": \"S\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red\",\n      \"sku\": \"BROKEN-OPT-SEL-V1\",\n      \"price\": 100,\n      \"optionValueIndexes\": [\n        0\n      ]\n    }\n  ]\n}"
+                },
+                "description": "NEGATIVE TEST — expects HTTP 400. Nothing is created.\n\nThe variant selects a value for Colour but not for Size. A variant must select EXACTLY ONE value per option of its product: that invariant is what lets a two-option selection resolve to a single row, and it cannot be expressed as a database constraint, so the service enforces it.\n\nThe check runs before the transaction opens, so a rejected request creates no product, option, value or variant.\n\nRelated rejections, all 400:\n  - an index out of range for its option's values\n  - two variants selecting the same combination (resolution would be ambiguous)\n  - duplicate option names, or duplicate value labels within an option\n  - a selection sent for a product that declares no options"
               },
               "response": []
             }

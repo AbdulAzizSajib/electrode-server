@@ -15,4 +15,16 @@ router.post(
     UploadController.uploadImage,
 );
 
+// Video and poster frame arrive together: a video without a thumbnail shows a
+// black rectangle until it plays, so they are only useful as a pair.
+router.post(
+    "/video",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
+    multerUpload.fields([
+        { name: "video", maxCount: 1 },
+        { name: "thumbnail", maxCount: 1 },
+    ]),
+    UploadController.uploadVideo,
+);
+
 export const UploadRoutes = router;

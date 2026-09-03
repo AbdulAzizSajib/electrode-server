@@ -1,0 +1,45 @@
+/// A merchandising grouping independent of the category tree — "Top selling",
+/// "Family offer", "Eid specials".
+///
+/// A product belongs to any number of collections and keeps its category
+/// regardless. Categories answer "what is this"; collections answer "why are we
+/// showing it", and forcing the second through the first is how category trees
+/// become unusable.
+/// See align-admin-catalog-with-reference design.md.
+model Collection {
+  id String @id @default(cuid())
+
+  name String
+  slug String @unique
+
+  /// Hidden collections keep their products and simply are not presented, so a
+  /// seasonal grouping can be prepared before it goes live and retired after
+  /// without losing what was in it.
+  isVisible Boolean @default(true)
+
+  products ProductCollection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isVisible])
+}
+
+/// Join between a product and a collection.
+///
+/// Cascade from both ends: the membership is meaningless without either. This
+/// is why deleting a collection leaves its products untouched — only the
+/// memberships go.
+model ProductCollection {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([productId, collectionId])
+  @@index([productId])
+  @@index([collectionId])
+}

@@ -4,6 +4,10 @@ model ProductVariant {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
+  /// Display label — "Q86 Retro / White". Once a product defines options this
+  /// is no longer what the variant *is*: `optionValues` below is the source of
+  /// truth, and this is kept for the admin list, the cart line and order
+  /// history, which want one readable string.
   name String
 
   sku String @unique
@@ -30,6 +34,11 @@ model ProductVariant {
   /// Images depicting this variant. An image with no variant is shared across
   /// the whole product rather than belonging here — see ProductImage.variantId.
   images ProductImage[]
+
+  /// The option values that define this variant — exactly one per option of its
+  /// product. Empty for a simple product, and for variants authored before
+  /// options existed, whose `name` remains the only thing distinguishing them.
+  optionValues ProductVariantOptionValue[]
 
   orderItems         OrderItem[]
   stockMovements     StockMovement[]

@@ -12,22 +12,58 @@ import { QueryBuilder } from "../../utils/QueryBuilder";
 import { generateUniqueSlug } from "../../utils/slug";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { CampaignService } from "../campaign/campaign.service";
+import { TagService } from "../tag/tag.service";
 import {
     ICreateProductPayload,
     IProductAttributeInput,
     IProductImageInput,
+    IProductOptionInput,
     IProductVariantInput,
     ISearchedProduct,
     IUpdateProductPayload,
 } from "./product.interface";
 
+/**
+ * A variant's option values, carrying enough of the shop-wide attribute for a
+ * caller to reconstruct which options the product sells and in what order.
+ *
+ * A product no longer owns its options — it sells values of shop-wide
+ * attributes — so there is no `options` relation to include. The options are
+ * derived from the distinct attributes its variants' values belong to; see
+ * `deriveProductOptions`.
+ *
+ * Ordering by `position` is the whole point: S -> M -> XL is not derivable from
+ * the labels, and rendering them alphabetically would be wrong.
+ */
+const VARIANT_OPTION_VALUES_INCLUDE = {
+    select: {
+        valueId: true,
+        value: {
+            select: {
+                id: true,
+                label: true,
+                position: true,
+                swatch: true,
+                attribute: {
+                    select: { id: true, name: true, position: true, presentation: true },
+                },
+            },
+        },
+    },
+} as const;
+
 const PRODUCT_DETAIL_INCLUDE = {
     category: true,
     brand: true,
     images: { orderBy: { sortOrder: "asc" as const } },
-    variants: true,
+    variants: { include: { optionValues: VARIANT_OPTION_VALUES_INCLUDE } },
     attributes: true,
     categories: { include: { category: true } },
+    collections: { include: { collection: true } },
+    tags: { include: { tag: true } },
+    taxRule: true,
+    shippingRule: { include: { places: true } },
+    bundleDeal: true,
 };
 
 const PRODUCT_LIST_INCLUDE = {
@@ -70,6 +106,7 @@ const PUBLIC_PRODUCT_SCALARS = {
     averageRating: true,
     reviewCount: true,
     totalSold: true,
+    viewCount: true,
     seoTitle: true,
     seoDescription: true,
     createdAt: true,
@@ -111,10 +148,29 @@ const PUBLIC_PRODUCT_DETAIL_SELECT = {
             attributes: true,
             image: true,
             status: true,
+            // Which option values define this variant. The storefront resolves
+            // a shopper's selection to a variant by matching these, and derives
+            // the option controls from the attributes they belong to.
+            optionValues: VARIANT_OPTION_VALUES_INCLUDE,
         },
     },
     attributes: true,
     categories: { include: { category: true } },
+    // Visible collections and tags only — these are merchandising the shopper
+    // is meant to see.
+    collections: { where: { collection: { isVisible: true } }, include: { collection: true } },
+    tags: { include: { tag: true } },
+    /*
+     * Deliberately NOT projected: `taxRule` and `shippingRule`. They are
+     * commercial policy, not product description — a shopper is told what tax
+     * and delivery cost at checkout, where it is computed, and does not need the
+     * rule itself. Keeping them out follows the same reasoning that excludes
+     * `costPrice` from PUBLIC_PRODUCT_SCALARS above.
+     *
+     * `bundleDeal` IS included: "buy 2 get 1 free" is an offer the shopper must
+     * see to act on.
+     */
+    bundleDeal: true,
 } as const;
 
 const assertCategoryExists = async (categoryId: string) => {
@@ -164,6 +220,144 @@ const ensureUniqueVariantSkus = async (variants: IProductVariantInput[], ownVari
             throw new AppError(status.CONFLICT, `Variant SKU "${variant.sku}" is already in use`);
         }
     }
+};
+
+/**
+ * Rejects an options payload that could not describe a coherent product:
+ * duplicate option names, or duplicate value labels within one option.
+ *
+ * The database enforces both with unique constraints, but a constraint
+ * violation surfaces as a 500 from deep inside a transaction. Catching it here
+ * makes it a 400 naming the offending option, and — like the other precondition
+ * checks — runs OUTSIDE the transaction, so a rejected request modifies nothing.
+ */
+const ensureOptionsAreCoherent = (options: IProductOptionInput[]) => {
+    const attributeIds = options.map((option) => option.attributeId);
+    if (new Set(attributeIds).size !== attributeIds.length) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "The same attribute is selected more than once",
+        );
+    }
+
+    for (const option of options) {
+        if (new Set(option.valueIds).size !== option.valueIds.length) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `The same value is selected more than once for attribute "${option.name ?? option.attributeId}"`,
+            );
+        }
+    }
+};
+
+/**
+ * Rejects a variant whose option selection is not exactly one value per option.
+ *
+ * This is the invariant the whole option model rests on: without it, "Black" +
+ * "256GB" cannot resolve to a single row, and the storefront would have to
+ * guess. It cannot be a database constraint — no schema can say "one row here
+ * per row over there" — so this is the only place it can hold.
+ *
+ * A product with no options requires no selection, which is what keeps every
+ * product authored before options existed valid and editable.
+ * See add-product-option-types design.md.
+ */
+const ensureVariantOptionSelections = (
+    options: IProductOptionInput[] | undefined,
+    variants: IProductVariantInput[] | undefined,
+) => {
+    const optionCount = options?.length ?? 0;
+    if (!variants || variants.length === 0) return;
+
+    variants.forEach((variant, position) => {
+        const selection = variant.optionValueIndexes;
+
+        if (optionCount === 0) {
+            if (selection && selection.length > 0) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Variant at position ${position} selects option values, but this product has no options`,
+                );
+            }
+            return;
+        }
+
+        if (!selection || selection.length !== optionCount) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Variant at position ${position} must select exactly one value for each of the ${optionCount} options`,
+            );
+        }
+
+        selection.forEach((valueIndex, optionPosition) => {
+            const option = options![optionPosition];
+            if (valueIndex >= option.valueIds.length) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Variant at position ${position} selects value ${valueIndex} of option "${option.name ?? option.attributeId}", which has only ${option.valueIds.length} values`,
+                );
+            }
+        });
+    });
+
+    // Two variants selecting the same combination would make resolution
+    // ambiguous — the storefront would have to pick one arbitrarily.
+    if (optionCount > 0) {
+        const combinations = variants.map((v) => (v.optionValueIndexes ?? []).join(":"));
+        if (new Set(combinations).size !== combinations.length) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "Two variants select the same combination of option values",
+            );
+        }
+    }
+};
+
+/**
+ * Rejects an update that would delete a variant appearing on a past order.
+ *
+ * An order line points at the variant that was actually bought; deleting it
+ * would detach the order from what the customer received, corrupting the record
+ * of the sale. The same reasoning already stops a *product* on an order from
+ * being hard-deleted (see `deleteProduct`, which archives instead).
+ *
+ * Runs OUTSIDE the transaction, like every other precondition here, so a
+ * rejected request modifies nothing. The refusal names the variants, since
+ * "cannot delete" without saying which is not actionable.
+ *
+ * A payload that omits `variants` entirely leaves them untouched and so cannot
+ * remove any.
+ */
+const ensureOrderedVariantsSurvive = async (
+    productId: string,
+    variants: IProductVariantInput[] | undefined,
+) => {
+    if (!variants) return;
+
+    const keptIds = new Set(variants.filter((v) => v.id).map((v) => v.id as string));
+
+    const removed = await prisma.productVariant.findMany({
+        where: { productId, id: { notIn: [...keptIds] } },
+        select: { id: true, name: true },
+    });
+
+    if (removed.length === 0) return;
+
+    const ordered = await prisma.orderItem.findMany({
+        where: { variantId: { in: removed.map((v) => v.id) } },
+        select: { variantId: true },
+        distinct: ["variantId"],
+    });
+
+    if (ordered.length === 0) return;
+
+    const orderedIds = new Set(ordered.map((o) => o.variantId));
+    const names = removed.filter((v) => orderedIds.has(v.id)).map((v) => `"${v.name}"`);
+
+    throw new AppError(
+        status.CONFLICT,
+        `${names.join(", ")} ${names.length === 1 ? "has" : "have"} been ordered and cannot be removed. Mark ${names.length === 1 ? "it" : "them"} out of stock instead.`,
+    );
 };
 
 /**
@@ -311,6 +505,12 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
         await ensureUniqueProductSku(payload.sku);
     }
 
+    if (payload.options && payload.options.length > 0) {
+        ensureOptionsAreCoherent(payload.options);
+    }
+
+    ensureVariantOptionSelections(payload.options, payload.variants);
+
     if (payload.variants && payload.variants.length > 0) {
         await ensureUniqueVariantSkus(payload.variants, new Set());
     }
@@ -328,12 +528,13 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
             .then((existing) => Boolean(existing)),
     );
 
-    const { variants, images, attributes, ...rest } = payload;
+    const { options, variants, images, attributes, collectionIds, tags, ...rest } = payload;
 
     /*
-     * Two phases, in a transaction: images can only be written once the
-     * variants they name exist and have ids, and a failure between the two
-     * would otherwise leave a product with variants but no images.
+     * Three phases, in a transaction: option values must exist before a variant
+     * can select one, and images can only be written once the variants they
+     * name exist and have ids. A failure between any two would otherwise leave
+     * a product half-described.
      * See link-product-images-to-variants design.md Decision 4.
      */
     const product = await prisma.$transaction(async (tx) => {
@@ -355,6 +556,21 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
          * now() and rows written inside one transaction can share a timestamp,
          * leaving the order — and therefore every `variantIndex` — undefined.
          */
+        if (collectionIds) {
+            await syncProductCollections(tx, created.id, collectionIds);
+        }
+
+        if (tags) {
+            await TagService.syncProductTags(tx, created.id, tags);
+        }
+
+        // Before variants: a variant names its option values by position, and
+        // on create those values have no ids until this runs.
+        let valueIdsByPosition: string[][] = [];
+        if (options && options.length > 0) {
+            valueIdsByPosition = await resolveProductOptionValues(tx, options);
+        }
+
         const variantIdsByIndex: string[] = [];
         if (variants && variants.length > 0) {
             for (const variant of variants) {
@@ -363,6 +579,13 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
                     select: { id: true },
                 });
                 variantIdsByIndex.push(createdVariant.id);
+
+                await syncVariantOptionValues(
+                    tx,
+                    createdVariant.id,
+                    variant.optionValueIndexes,
+                    valueIdsByPosition,
+                );
             }
         }
 
@@ -392,7 +615,114 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
         newData: product,
     });
 
-    return product;
+    return deriveProductOptions(product);
+};
+
+/**
+ * Replaces a product's collection memberships with exactly those given.
+ *
+ * Replace rather than merge, matching how variants, images and attributes are
+ * synced: the payload is the intended set, so a collection the merchant
+ * unticked is simply absent from it.
+ */
+const syncProductCollections = async (
+    tx: Prisma.TransactionClient,
+    productId: string,
+    collectionIds: string[],
+) => {
+    await tx.productCollection.deleteMany({ where: { productId } });
+
+    const unique = [...new Set(collectionIds)];
+    if (unique.length === 0) return;
+
+    const existing = await tx.collection.findMany({
+        where: { id: { in: unique } },
+        select: { id: true },
+    });
+
+    if (existing.length !== unique.length) {
+        const known = new Set(existing.map((c) => c.id));
+        const missing = unique.filter((id) => !known.has(id));
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Collection${missing.length === 1 ? "" : "s"} ${missing.join(", ")} do${missing.length === 1 ? "es" : ""} not exist`,
+        );
+    }
+
+    await tx.productCollection.createMany({
+        data: unique.map((collectionId) => ({ productId, collectionId })),
+    });
+};
+
+/**
+ * Rebuilds a product's `options` from the attribute values its variants sell.
+ *
+ * A product no longer stores its options — that is the point of moving
+ * attributes shop-wide — but the payload still carries them, because the
+ * storefront's option controls and variant resolution are built around that
+ * shape and there is no reason to make every consumer do this join itself.
+ *
+ * Only attributes and values this product's variants actually use appear: a
+ * shop-wide Colour with six values shows two if that is all the product sells.
+ * Attributes are ordered by the merchant's authored `position`, and values
+ * within them likewise, since S -> M -> XL is not derivable from the labels.
+ */
+type VariantWithOptionValues = {
+    optionValues: {
+        value: {
+            id: string;
+            label: string;
+            position: number;
+            swatch: string | null;
+            attribute: { id: string; name: string; position: number; presentation: string };
+        };
+    }[];
+};
+
+const deriveProductOptions = <T extends { variants?: VariantWithOptionValues[] }>(
+    product: T,
+) => {
+    const byAttribute = new Map<
+        string,
+        {
+            id: string;
+            name: string;
+            position: number;
+            presentation: string;
+            values: Map<string, { id: string; label: string; position: number; swatch: string | null }>;
+        }
+    >();
+
+    for (const variant of product.variants ?? []) {
+        for (const { value } of variant.optionValues) {
+            const attribute = value.attribute;
+            let entry = byAttribute.get(attribute.id);
+            if (!entry) {
+                entry = { ...attribute, values: new Map() };
+                byAttribute.set(attribute.id, entry);
+            }
+            entry.values.set(value.id, {
+                id: value.id,
+                label: value.label,
+                position: value.position,
+                swatch: value.swatch,
+            });
+        }
+    }
+
+    const options = [...byAttribute.values()]
+        .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+        .map((attribute) => ({
+            id: attribute.id,
+            name: attribute.name,
+            position: attribute.position,
+            presentation: attribute.presentation,
+            values: [...attribute.values.values()].sort(
+                (a, b) => a.position - b.position || a.label.localeCompare(b.label),
+            ),
+        }));
+
+    return { ...product, options };
 };
 
 /**
@@ -767,7 +1097,8 @@ const getPublicProductBySlug = async (slug: string) => {
     }
 
     const [withCampaignPricing] = await attachCampaignPricing([product]);
-    return withCampaignPricing;
+    // `options` is derived rather than stored — see deriveProductOptions.
+    return deriveProductOptions(withCampaignPricing);
 };
 
 /**
@@ -859,7 +1190,7 @@ const getAdminProductById = async (id: string) => {
         throw new AppError(status.NOT_FOUND, "Product not found");
     }
 
-    return product;
+    return deriveProductOptions(product);
 };
 
 /**
@@ -878,6 +1209,101 @@ const getAdminProductById = async (id: string) => {
  * one) so each stays type-safe against its own Prisma delegate.
  */
 /**
+ * Resolves the shop-wide attribute values a product sells, returning the value
+ * id at each (attribute position, value position) so a variant naming its
+ * selection positionally can be resolved.
+ *
+ * Attributes are no longer created here. They belong to the shop, defined once
+ * in their own module and merely *selected* by a product — which is the whole
+ * point of align-admin-catalog-with-reference: a merchant selling dresses
+ * should not retype "Size: S, M, XL" on every product.
+ *
+ * So this validates rather than writes: every id in the payload must name a
+ * real attribute and a value that genuinely belongs to it. A payload naming a
+ * value from the wrong attribute would otherwise produce a variant whose
+ * selection cannot be resolved, which reads to a shopper as "Sold out" on a
+ * product that has stock.
+ *
+ * Runs BEFORE variants, because a variant's `optionValueIndexes` are positions
+ * into what this returns. This mirrors the variants-before-images ordering that
+ * `link-product-images-to-variants` established, for the same reason.
+ */
+const resolveProductOptionValues = async (
+    tx: Prisma.TransactionClient,
+    options: IProductOptionInput[],
+): Promise<string[][]> => {
+    const valueIdsByPosition: string[][] = [];
+
+    for (const option of options) {
+        if (!option.attributeId) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Option "${option.name ?? ""}" must name an attribute`,
+            );
+        }
+
+        const attribute = await tx.attribute.findUnique({
+            where: { id: option.attributeId },
+            select: { id: true, name: true, values: { select: { id: true } } },
+        });
+
+        if (!attribute) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Attribute ${option.attributeId} does not exist`,
+            );
+        }
+
+        const ownValueIds = new Set(attribute.values.map((v) => v.id));
+
+        for (const valueId of option.valueIds) {
+            if (!ownValueIds.has(valueId)) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Value ${valueId} does not belong to attribute "${attribute.name}"`,
+                );
+            }
+        }
+
+        if (option.valueIds.length === 0) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Attribute "${attribute.name}" must have at least one value selected`,
+            );
+        }
+
+        valueIdsByPosition.push([...option.valueIds]);
+    }
+
+    return valueIdsByPosition;
+};
+
+/**
+ * Writes a variant's option selection, replacing whatever it had.
+ *
+ * Replace rather than merge: a selection is one value per option as a whole, so
+ * a partial update would be a selection that satisfies no option fully.
+ */
+const syncVariantOptionValues = async (
+    tx: Prisma.TransactionClient,
+    variantId: string,
+    selection: number[] | undefined,
+    valueIdsByPosition: string[][],
+) => {
+    await tx.productVariantOptionValue.deleteMany({ where: { variantId } });
+
+    if (!selection || selection.length === 0) return;
+
+    for (const [optionPosition, valueIndex] of selection.entries()) {
+        const valueId = valueIdsByPosition[optionPosition]?.[valueIndex];
+        // Arity and range were checked before the transaction opened; this
+        // guards against a caller reaching the sync by another path.
+        if (!valueId) continue;
+        await tx.productVariantOptionValue.create({ data: { variantId, valueId } });
+    }
+};
+
+/**
  * Returns the variant id at each submitted position, so an image naming a
  * `variantIndex` can be resolved — including one naming a variant this very
  * call just created. See link-product-images-to-variants design.md Decision 6.
@@ -886,6 +1312,12 @@ const syncProductVariants = async (
     tx: Prisma.TransactionClient,
     productId: string,
     variants: IProductVariantInput[],
+    /**
+     * Value ids by (option position, value position), from `syncProductOptions`
+     * in this same transaction. Empty when the request submitted no options, in
+     * which case no variant carries a selection either.
+     */
+    valueIdsByPosition: string[][] = [],
 ): Promise<string[]> => {
     const existing = await tx.productVariant.findMany({
         where: { productId },
@@ -923,12 +1355,24 @@ const syncProductVariants = async (
             }
             await tx.productVariant.update({ where: { id: variant.id }, data: toVariantData(variant) });
             variantIdsByIndex.push(variant.id);
+            await syncVariantOptionValues(
+                tx,
+                variant.id,
+                variant.optionValueIndexes,
+                valueIdsByPosition,
+            );
         } else {
             const created = await tx.productVariant.create({
                 data: { ...toVariantData(variant), productId },
                 select: { id: true },
             });
             variantIdsByIndex.push(created.id);
+            await syncVariantOptionValues(
+                tx,
+                created.id,
+                variant.optionValueIndexes,
+                valueIdsByPosition,
+            );
         }
     }
 
@@ -1038,6 +1482,23 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         await ensureUniqueProductSku(payload.sku, id);
     }
 
+    if (payload.options && payload.options.length > 0) {
+        ensureOptionsAreCoherent(payload.options);
+    }
+
+    /*
+     * Only checkable when both arrive together: `optionValueIndexes` name
+     * positions in this request's own `options` array, so a payload that
+     * submits variants without options is asking to keep the stored options —
+     * whose positions this request cannot see. The admin always sends both.
+     */
+    if (payload.options || payload.variants) {
+        ensureVariantOptionSelections(payload.options, payload.variants);
+    }
+
+    // Before anything is written: a variant on a past order must survive.
+    await ensureOrderedVariantsSurvive(id, payload.variants);
+
     if (payload.variants && payload.variants.length > 0) {
         const ownVariantIds = new Set(
             payload.variants.filter((v) => v.id).map((v) => v.id as string),
@@ -1076,10 +1537,21 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         );
     }
 
-    const { variants, images, attributes, ...rest } = payload;
+    const { options, variants, images, attributes, collectionIds, tags, ...rest } = payload;
 
     const updated = await prisma.$transaction(async (tx) => {
         await tx.product.update({ where: { id }, data: { ...rest, slug } });
+
+        /*
+         * Options MUST be synced before variants, for the same reason variants
+         * precede images: a variant names its option values by the position
+         * they occupy in this request, including values created by the call
+         * just above.
+         */
+        let valueIdsByPosition: string[][] = [];
+        if (options) {
+            valueIdsByPosition = await resolveProductOptionValues(tx, options);
+        }
 
         /*
          * Variants MUST be synced before images: an image may name a variant by
@@ -1089,7 +1561,7 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
          */
         let variantIdsByIndex: string[] = [];
         if (variants) {
-            variantIdsByIndex = await syncProductVariants(tx, id, variants);
+            variantIdsByIndex = await syncProductVariants(tx, id, variants, valueIdsByPosition);
         }
 
         if (images) {
@@ -1112,6 +1584,14 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
             await syncProductAttributes(tx, id, attributes);
         }
 
+        if (collectionIds) {
+            await syncProductCollections(tx, id, collectionIds);
+        }
+
+        if (tags) {
+            await TagService.syncProductTags(tx, id, tags);
+        }
+
         return tx.product.findUnique({ where: { id }, include: PRODUCT_DETAIL_INCLUDE });
     });
 
@@ -1120,7 +1600,7 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         newData: updated,
     });
 
-    return updated;
+    return updated ? deriveProductOptions(updated) : updated;
 };
 
 /**
