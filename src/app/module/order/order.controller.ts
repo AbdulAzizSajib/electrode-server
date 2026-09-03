@@ -57,6 +57,36 @@ const placeOrder = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+/**
+ * Prices the basket without placing anything, so checkout can show what
+ * delivery actually costs to the shopper's destination — and tell them up front
+ * when nobody delivers there — instead of guessing and being corrected by the
+ * server after Place Order.
+ */
+const quoteCheckout = catchAsync(async (req: Request, res: Response) => {
+    const appliedCouponCode = CookieUtils.getCookie(req, APPLIED_COUPON_COOKIE);
+
+    const actor: ICheckoutActor = req.user
+        ? { kind: "user", userId: req.user.userId }
+        : {
+              kind: "guest",
+              guestToken: CookieUtils.getCookie(req, GUEST_TOKEN_COOKIE),
+              ip: req.ip ?? "unknown",
+          };
+
+    const quote = await OrderService.quoteCheckout(actor, {
+        ...req.body,
+        couponCode: appliedCouponCode,
+    });
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Checkout quote calculated",
+        data: quote,
+    });
+});
+
 const getOrders = catchAsync(async (req: Request, res: Response) => {
     const { data, meta } = await OrderService.getOrders(
         req.user.userId,
@@ -135,6 +165,7 @@ const updateOrderStatus = catchAsync(async (req: Request, res: Response) => {
 
 export const OrderController = {
     placeOrder,
+    quoteCheckout,
     getOrders,
     getOrderById,
     getGuestOrder,

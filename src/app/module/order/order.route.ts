@@ -7,6 +7,7 @@ import { OrderController } from "./order.controller";
 import {
     createOrderZodSchema,
     guestOrderLookupZodSchema,
+    quoteCheckoutZodSchema,
     updateOrderStatusZodSchema,
 } from "./order.validation";
 
@@ -21,6 +22,16 @@ router.post(
     optionalAuth,
     validateRequest(createOrderZodSchema),
     OrderController.placeOrder,
+);
+
+// Pricing without ordering. Same optional session as checkout — a guest needs
+// the quote most, since they have no saved address to have been quoted against
+// before. Declared before "/:id" so that path never captures the literal.
+router.post(
+    "/quote",
+    optionalAuth,
+    validateRequest(quoteCheckoutZodSchema),
+    OrderController.quoteCheckout,
 );
 
 // Guest order tracking. Declared before "/:id" so that path never swallows it,

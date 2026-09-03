@@ -36,6 +36,14 @@ export interface ICreateOrderPayload {
     shippingMethodId?: string;
     notes?: string;
 
+    /**
+     * Whether the shopper wants it delivered or will collect it in person.
+     * Defaults to delivery. Collection is only accepted when every matched
+     * shipping place offers it, and is charged at those places' pickup price
+     * rather than their delivery price.
+     */
+    deliveryMethod?: "DELIVERY" | "PICKUP";
+
     /** Guest checkout only: contact details, since a guest has no account to read them from. */
     fullName?: string;
     phone?: string;
@@ -65,6 +73,25 @@ export interface ICreateOrderPayload {
      * checkout forgoes replay protection (see order.validation.ts).
      */
     idempotencyKey?: string;
+}
+
+/**
+ * What to price, and where to. Everything is optional because a quote is asked
+ * for while the shopper is still filling the form in — a partial destination
+ * simply matches fewer places, and an unmatched one is reported as
+ * undeliverable rather than rejected as invalid.
+ */
+export interface IQuoteCheckoutPayload {
+    /** A saved address, which outranks the inline country/state below. */
+    shippingAddressId?: string;
+    country?: string;
+    state?: string;
+    /** Only used for the flat-price fallback when no product carries a rule. */
+    shippingMethodId?: string;
+    /** Prices these lines instead of the cart, mirroring the checkout bypass. */
+    items?: ICheckoutItemPayload[];
+    /** Injected by the controller from the applied-coupon cookie, as checkout is. */
+    couponCode?: string;
 }
 
 export interface IUpdateOrderStatusPayload {

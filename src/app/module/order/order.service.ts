@@ -25,8 +25,10 @@ import {
     ICheckoutItemPayload,
     ICreateOrderPayload,
     IOrderItemData,
+    IQuoteCheckoutPayload,
     IUpdateOrderStatusPayload,
 } from "./order.interface";
+import { IPricingLine, quoteCharges, roundMoney } from "./order.pricing";
 
 const ORDER_DETAIL_INCLUDE = {
     items: true,
@@ -399,16 +401,25 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
     if (actor.kind === "user") {
         const customer = await CustomerService.getOrCreateCustomerByUserId(actor.userId);
 
+        let shippingAddress = null;
         if (payload.shippingAddressId) {
-            const address = await prisma.customerAddress.findUnique({
+            shippingAddress = await prisma.customerAddress.findUnique({
                 where: { id: payload.shippingAddressId },
             });
-            if (!address || address.customerId !== customer.id) {
+            if (!shippingAddress || shippingAddress.customerId !== customer.id) {
                 throw new AppError(status.BAD_REQUEST, "Shipping address not found");
             }
         }
 
-        return { customer, shippingAddressId: payload.shippingAddressId, cartId: undefined };
+        return {
+            customer,
+            shippingAddressId: payload.shippingAddressId,
+            // Returned alongside the id because shipping is now priced by where
+            // the order is going, and reloading the row to read its country
+            // would be a second query for something already in hand.
+            shippingAddress,
+            cartId: undefined,
+        };
     }
 
     // --- Guest ---
@@ -458,7 +469,7 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
         },
     });
 
-    return { customer, shippingAddressId: address.id, cartId: undefined };
+    return { customer, shippingAddressId: address.id, shippingAddress: address, cartId: undefined };
 };
 
 /**
@@ -470,7 +481,10 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
 const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) => {
     const isGuest = actor.kind === "guest";
 
-    const { customer, shippingAddressId } = await resolveCheckoutContext(actor, payload);
+    const { customer, shippingAddressId, shippingAddress } = await resolveCheckoutContext(
+        actor,
+        payload,
+    );
 
     // Lines come either from the payload (a landing page ordering a product
     // directly) or from the buyer's cart. The cart is only loaded when it is
@@ -546,6 +560,11 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
     }
 
     const orderItemsData: IOrderItemData[] = [];
+    // Built alongside the order items in the same loop rather than zipped back
+    // together afterwards by index — the two lists must describe the same lines,
+    // and an index-aligned pair is one `filter` away from silently pricing the
+    // wrong product's tax rule.
+    const pricingLines: IPricingLine[] = [];
     let subtotal = 0;
 
     // Availability for every checkout line in one grouped query rather than one
@@ -599,6 +618,15 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
             unitPrice,
             totalPrice,
         });
+
+        pricingLines.push({
+            productId: item.productId,
+            productName: item.product.name,
+            quantity: item.quantity,
+            lineTotal: totalPrice,
+            taxRuleId: item.product.taxRuleId,
+            shippingRuleId: item.product.shippingRuleId,
+        });
     }
 
     // Coupon (Phase 6): re-validates whatever coupon is applied to the cart
@@ -612,21 +640,32 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
         : null;
     const discountAmount = couponResult?.discountAmount ?? 0;
 
-    // Tax/free-shipping (Phase "close-core-api-gaps"): StoreSetting.defaultTaxRatePercent
-    // and .freeShippingThreshold were settable but never read before this.
+    // `freeShippingThreshold` still comes from the shop settings — it is a
+    // property of the order's value, not of any one product. The tax rate there
+    // is now only a fallback: tax comes from each product's own rule (see
+    // order.pricing.ts and the `admin/catalog-rules` spec).
     const storeSetting = await StoreSettingService.getStoreSetting();
 
-    const shippingAmountBeforeCoupon = shippingMethod ? Number(shippingMethod.price) : 0;
-    const meetsFreeShippingThreshold =
-        storeSetting.freeShippingThreshold !== null &&
-        subtotal >= Number(storeSetting.freeShippingThreshold);
-    const shippingAmount =
-        couponResult?.freeShipping || meetsFreeShippingThreshold ? 0 : shippingAmountBeforeCoupon;
+    const charges = await quoteCharges({
+        lines: pricingLines,
+        destination: {
+            country: shippingAddress?.country,
+            state: shippingAddress?.state,
+        },
+        discountAmount,
+        deliveryMethod: payload.deliveryMethod ?? "DELIVERY",
+        couponWaivesShipping: Boolean(couponResult?.freeShipping),
+        fallbackTaxPercent: Number(storeSetting.defaultTaxRatePercent),
+        freeShippingThreshold:
+            storeSetting.freeShippingThreshold === null
+                ? null
+                : Number(storeSetting.freeShippingThreshold),
+        fallbackFlatShippingPrice: shippingMethod ? Number(shippingMethod.price) : 0,
+    });
 
-    // Tax on the post-discount subtotal — see design.md's "Tax is computed on the post-discount subtotal".
-    const taxAmount = ((subtotal - discountAmount) * Number(storeSetting.defaultTaxRatePercent)) / 100;
+    const { shippingAmount, taxAmount } = charges;
 
-    const totalAmount = subtotal + shippingAmount + taxAmount - discountAmount;
+    const totalAmount = roundMoney(subtotal + shippingAmount + taxAmount - discountAmount);
 
     if (payload.expectedTotal !== undefined && Math.abs(payload.expectedTotal - totalAmount) > 0.01) {
         throw new AppError(
@@ -749,6 +788,149 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
     ).catch((error) => console.error("Low-stock notification failed after checkout:", error));
 
     return { order: created, isReplay: false };
+};
+
+/**
+ * What this basket would cost to this destination, without placing anything.
+ *
+ * Shipping is no longer a flat price the storefront can add up itself — it
+ * depends on each product's rule and on where the order is going, and so does
+ * tax. Without this the shopper would see one number at checkout and be charged
+ * another, or be told their address is undeliverable only after pressing Place
+ * Order.
+ *
+ * Deliberately shares `quoteCharges` with `placeOrder`: two implementations of
+ * "what does this cost" is exactly how a quote and a charge drift apart.
+ */
+const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPayload) => {
+    const customer =
+        actor.kind === "user"
+            ? await CustomerService.getOrCreateCustomerByUserId(actor.userId)
+            : null;
+
+    let destination: { country?: string | null; state?: string | null } = {
+        country: payload.country,
+        state: payload.state,
+    };
+
+    // A saved address outranks anything sent inline: it is the address the order
+    // would actually ship to.
+    if (payload.shippingAddressId) {
+        if (!customer) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "Please provide your full delivery address to see delivery options",
+            );
+        }
+        const address = await prisma.customerAddress.findUnique({
+            where: { id: payload.shippingAddressId },
+        });
+        if (!address || address.customerId !== customer.id) {
+            throw new AppError(status.BAD_REQUEST, "Shipping address not found");
+        }
+        destination = { country: address.country, state: address.state };
+    }
+
+    const cart = payload.items?.length
+        ? null
+        : await (actor.kind === "guest"
+              ? actor.guestToken
+                  ? prisma.cart.findUnique({
+                        where: { guestToken: actor.guestToken },
+                        include: { items: { include: { product: true, variant: true } } },
+                    })
+                  : Promise.resolve(null)
+              : prisma.cart.findUnique({
+                    where: { customerId: (customer as { id: string }).id },
+                    include: { items: { include: { product: true, variant: true } } },
+                }));
+
+    const lines: ICheckoutLine[] = payload.items?.length
+        ? await loadPayloadLines(payload.items)
+        : (cart?.items ?? []).map((item) => ({
+              productId: item.productId,
+              variantId: item.variantId,
+              quantity: item.quantity,
+              product: item.product,
+              variant: item.variant,
+          }));
+
+    if (lines.length === 0) {
+        throw new AppError(status.BAD_REQUEST, "Your cart is empty");
+    }
+
+    const pricingLines: IPricingLine[] = lines.map((line) => ({
+        productId: line.productId,
+        productName: line.product.name,
+        quantity: line.quantity,
+        lineTotal: Number(line.variant?.price ?? line.product.price) * line.quantity,
+        taxRuleId: line.product.taxRuleId,
+        shippingRuleId: line.product.shippingRuleId,
+    }));
+
+    const appliedCoupon = payload.couponCode
+        ? await CouponService.getActiveCouponByCode(payload.couponCode)
+        : null;
+    const couponResult =
+        appliedCoupon && customer
+            ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
+            : null;
+
+    const [storeSetting, shippingMethod] = await Promise.all([
+        StoreSettingService.getStoreSetting(),
+        payload.shippingMethodId
+            ? prisma.shippingMethod.findUnique({ where: { id: payload.shippingMethodId } })
+            : Promise.resolve(null),
+    ]);
+
+    // Priced for delivery regardless of what the shopper has picked so far —
+    // the quote's job is to tell them what each option costs, and `pickupAmount`
+    // carries the other one. Asking for a PICKUP quote before knowing whether
+    // pickup is offered would just throw.
+    const charges = await quoteCharges({
+        lines: pricingLines,
+        destination,
+        discountAmount: couponResult?.discountAmount ?? 0,
+        deliveryMethod: "DELIVERY",
+        couponWaivesShipping: Boolean(couponResult?.freeShipping),
+        fallbackTaxPercent: Number(storeSetting.defaultTaxRatePercent),
+        freeShippingThreshold:
+            storeSetting.freeShippingThreshold === null
+                ? null
+                : Number(storeSetting.freeShippingThreshold),
+        fallbackFlatShippingPrice: shippingMethod ? Number(shippingMethod.price) : 0,
+    });
+
+    const discountAmount = couponResult?.discountAmount ?? 0;
+
+    return {
+        subtotal: charges.subtotal,
+        discountAmount,
+        taxAmount: charges.taxAmount,
+        shippingAmount: charges.shippingAmount,
+        /** What delivery costs before any waiver — so "Free" can be shown as a saving. */
+        shippingBeforeWaiver: charges.shippingBeforeWaiver,
+        /** Null when collection is not offered for every item in the basket. */
+        pickupAmount: charges.pickupAmount,
+        deliveryDays: charges.deliveryDays,
+        totalAmount: roundMoney(
+            charges.subtotal + charges.shippingAmount + charges.taxAmount - discountAmount,
+        ),
+        /** The same order collected in person, when that is on offer. */
+        pickupTotalAmount:
+            charges.pickupAmount === null
+                ? null
+                : roundMoney(
+                      charges.subtotal + charges.pickupAmount + charges.taxAmount - discountAmount,
+                  ),
+        places: charges.shipping.matches.map((match) => ({
+            name: match.placeName,
+            price: match.price,
+            deliveryDays: match.deliveryDays,
+            offersPickup: match.offersPickup,
+            pickupPrice: match.pickupPrice,
+        })),
+    };
 };
 
 const getOrders = async (userId: string, role: RoleName, queryParams: IQueryParams) => {
@@ -923,6 +1105,7 @@ const updateOrderStatus = async (
 
 export const OrderService = {
     placeOrder,
+    quoteCheckout,
     getOrders,
     getOrderById,
     getGuestOrderByNumberAndPhone,

@@ -30,6 +30,9 @@ export const createOrderZodSchema = z.object({
     shippingMethodId: z.string().optional(),
     notes: z.string().max(1000).optional(),
     expectedTotal: z.number().nonnegative().optional(),
+    // Absent means delivery. Whether collection is actually available depends on
+    // the matched shipping places, which only the service can see.
+    deliveryMethod: z.enum(["DELIVERY", "PICKUP"]).optional(),
 
     fullName: z.string().trim().min(1).max(200).optional(),
     phone: z
@@ -42,6 +45,19 @@ export const createOrderZodSchema = z.object({
     // here would let an authenticated flow pass a method this endpoint does
     // not yet act on, so only COD is spellable.
     paymentMethod: z.literal("COD").optional(),
+});
+
+/**
+ * A pre-checkout price quote. Everything is optional: it is asked for while the
+ * shopper is still typing their address, and a partial destination is a real
+ * question ("what does it cost to Bangladesh?") rather than a malformed one.
+ */
+export const quoteCheckoutZodSchema = z.object({
+    shippingAddressId: z.string().optional(),
+    country: z.string().max(100).optional(),
+    state: z.string().max(100).optional(),
+    shippingMethodId: z.string().optional(),
+    items: z.array(checkoutItemZodSchema).min(1).max(50).optional(),
 });
 
 /**

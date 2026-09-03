@@ -66,11 +66,63 @@ const PRODUCT_DETAIL_INCLUDE = {
     bundleDeal: true,
 };
 
-const PRODUCT_LIST_INCLUDE = {
-    category: true,
-    brand: true,
-    images: { where: { isPrimary: true }, take: 1 },
-};
+/**
+ * Primary image first, then authored order. Declared with an explicit type
+ * rather than inline, so `as const` on the projection below does not turn it
+ * into a readonly tuple — which Prisma's `orderBy` will not accept.
+ */
+const PRIMARY_IMAGE_FIRST: Prisma.ProductImageOrderByWithRelationInput[] = [
+    { isPrimary: "desc" },
+    { sortOrder: "asc" },
+];
+
+/**
+ * Exactly what the admin product listing renders, and nothing else.
+ *
+ * It used to `include` category/brand/images, and `include` returns every
+ * scalar the model has — so a listing of ten products shipped ten full
+ * descriptions (kilobytes of prose each), SEO fields, view counts and every
+ * other column, none of which a table row draws. This is the same allowlist
+ * discipline `PUBLIC_PRODUCT_SCALARS` applies below, for a different reason:
+ * there it is about not leaking columns, here it is about not sending them.
+ *
+ * `id` is not a displayed column but is structural — the row links to the
+ * product, and React needs a stable key.
+ *
+ * `category.parent` is how a sub-category is reported. The hierarchy lives on
+ * `Category.parentId` (there is no separate sub-category model), so a product
+ * assigned to a child category has its parent as the category and the assigned
+ * one as the sub-category; a product assigned to a top-level category has no
+ * sub-category. The admin derives both from this one relation.
+ */
+const ADMIN_PRODUCT_LIST_SELECT = {
+    id: true,
+    name: true,
+    /** Supplier cost — the "purchase" column. */
+    costPrice: true,
+    price: true,
+    compareAtPrice: true,
+    stockQuantity: true,
+    /** Not displayed on its own; it is what makes the low-stock alert possible. */
+    lowStockThreshold: true,
+    createdAt: true,
+    category: {
+        select: { id: true, name: true, parent: { select: { id: true, name: true } } },
+    },
+    brand: { select: { id: true, name: true } },
+    taxRule: { select: { id: true, name: true } },
+    /*
+     * One thumbnail. Ordered rather than filtered on `isPrimary`: a product
+     * whose images were all uploaded without one being marked primary would
+     * otherwise come back with no image at all, showing a broken thumbnail in
+     * a row whose product does have photography.
+     */
+    images: {
+        orderBy: PRIMARY_IMAGE_FIRST,
+        take: 1,
+        select: { url: true },
+    },
+} as const;
 
 /**
  * Every product scalar a PUBLIC response may carry.
@@ -109,6 +161,21 @@ const PUBLIC_PRODUCT_SCALARS = {
     viewCount: true,
     seoTitle: true,
     seoDescription: true,
+    /*
+     * Facts a shopper needs before buying, and the media they browse. Public
+     * because they exist to be read: "1 kg", a "New" badge, whether it can be
+     * returned, whether it is under warranty, and the product video.
+     *
+     * `isRefundable`/`hasWarranty` are tri-state — null means the merchant has
+     * not said, which the storefront must render as nothing at all rather than
+     * as "No".
+     */
+    unit: true,
+    badge: true,
+    isRefundable: true,
+    hasWarranty: true,
+    video: true,
+    videoThumbnail: true,
     createdAt: true,
     updatedAt: true,
 } as const;
@@ -1166,17 +1233,24 @@ const getActiveCampaign = async (placement: CampaignPlacement) => {
 };
 
 const getAdminProducts = async (queryParams: IQueryParams) => {
-    const queryBuilder = new QueryBuilder(prisma.product, queryParams, {
+    const queryBuilder = new QueryBuilder<
+        Prisma.ProductGetPayload<{ select: typeof ADMIN_PRODUCT_LIST_SELECT }>
+    >(prisma.product, queryParams, {
         searchableFields: ["name", "sku", "description"],
         filterableFields: ["status", "type", "categoryId", "brandId", "isFeatured"],
     });
 
+    // `select`, not `include`: the listing needs eleven fields, and `include`
+    // would return every column on top of the relations. See
+    // ADMIN_PRODUCT_LIST_SELECT. Searching and filtering still read `sku`,
+    // `description` and `status` — a projection narrows the response, not the
+    // query.
     return queryBuilder
         .search()
         .filter()
         .sort()
         .paginate()
-        .include(PRODUCT_LIST_INCLUDE)
+        .select(ADMIN_PRODUCT_LIST_SELECT)
         .execute();
 };
 

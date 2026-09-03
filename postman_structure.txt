@@ -28,6 +28,10 @@
     GET Public - Best Selling Products
     GET Public - New Arrivals
     GET Public - Rejected sortBy (expect 400)
+    POST Public - Record Product View
+    POST Public - Record Product View (bot UA, counts nothing)
+    POST Public - Record Product View (bad source, expect 400)
+    GET Public - Most Viewed Products
   [FOLDER] Cart & Wishlist
     GET Get Cart
     POST Add Item to Cart
@@ -52,10 +56,14 @@
   [FOLDER] Shipping Methods
     GET Public - Get Shipping Methods
   [FOLDER] Orders
+    POST Get Checkout Quote (price before ordering)
+    POST Get Checkout Quote (guest, inline destination)
     POST Place Order (Checkout)
+    POST Place Order (collect in person)
     GET Get My Orders
     GET Get Order By Id
     PATCH Cancel Order (Customer)
+    POST Track Guest Order
   [FOLDER] Payments
     POST Record Payment
     GET Get Order Payments
@@ -105,6 +113,7 @@
     POST Admin - Create Child Category
     GET Admin - Get All Categories
     GET Admin - Get Category Tree
+    GET Admin - Get Sub Categories (by parent)
     GET Admin - Get Category By Id
     PATCH Admin - Update Category
     PATCH Admin - Update Category (multipart image upload)
@@ -118,18 +127,80 @@
     PATCH Admin - Update Brand
     PATCH Admin - Update Brand (multipart logo upload)
     DELETE Admin - Delete Brand
+  [FOLDER] Attributes
+    POST Admin - Create Attribute (Colour, SWATCH)
+    POST Admin - Create Attribute (Size, LABEL)
+    POST Admin - Create Attribute (duplicate name, expect 409)
+    GET Admin - Get All Attributes (unpaginated, for pickers)
+    GET Admin - Get Attributes (paginated)
+    GET Admin - Get Attribute By Id
+    PATCH Admin - Update Attribute (add a value)
+    PATCH Admin - Update Attribute (remove a value products sell, expect 409)
+    PATCH Admin - Update Attribute (force removal)
+    DELETE Admin - Delete Attribute in use (expect 409)
+    DELETE Admin - Delete Attribute (confirmed)
+  [FOLDER] Tax Rules
+    POST Admin - Create Tax Rule (VAT 5%)
+    POST Admin - Create Tax Rule (flat amount)
+    GET Admin - Get All Tax Rules (unpaginated, for pickers)
+    GET Admin - Get Tax Rules (paginated)
+    GET Admin - Get Tax Rule By Id
+    PATCH Admin - Update Tax Rule
+    DELETE Admin - Delete Tax Rule in use (expect 409)
+    DELETE Admin - Delete Tax Rule (reassigning its products)
+  [FOLDER] Shipping Rules
+    POST Admin - Create Shipping Rule (region, country, catch-all)
+    POST Admin - Create Shipping Rule (replacement)
+    POST Admin - Create Shipping Rule (region without a country, expect 400)
+    POST Admin - Create Shipping Rule (two places, same destination, expect 400)
+    GET Admin - Get All Shipping Rules (unpaginated, for pickers)
+    GET Admin - Get Shipping Rules (paginated)
+    GET Admin - Get Shipping Rule By Id
+    PATCH Admin - Update Shipping Rule (reconcile places)
+    PATCH Admin - Update Shipping Rule (remove every place, expect 400)
+    DELETE Admin - Delete Shipping Rule in use (expect 409)
+    DELETE Admin - Delete Shipping Rule (reassigning its products)
+  [FOLDER] Collections
+    POST Admin - Create Collection
+    GET Admin - Get All Collections (unpaginated, for pickers)
+    GET Admin - Get Collections (paginated)
+    GET Admin - Get Collection By Id
+    PATCH Admin - Update Collection (hide it)
+    DELETE Admin - Delete Collection
+  [FOLDER] Bundle Deals
+    POST Admin - Create Bundle Deal (buy 2 get 1 free)
+    POST Admin - Create Bundle Deal (gives nothing away, expect 400)
+    GET Admin - Get All Bundle Deals (unpaginated, for pickers)
+    GET Admin - Get Bundle Deals (paginated)
+    GET Admin - Get Bundle Deal By Id
+    PATCH Admin - Update Bundle Deal
+    DELETE Admin - Delete Bundle Deal in use (expect 409)
+    DELETE Admin - Delete Bundle Deal (confirmed)
+  [FOLDER] Tags
+    GET Admin - Search Tags (autocomplete)
+    GET Admin - Search Tags (blank term returns nothing)
+    GET Admin - Get Tags (paginated)
+    DELETE Admin - Delete Tag
   [FOLDER] Products
     POST Admin - Create Product (with variants/images/attributes)
     POST Admin - Create Product (multipart, with uploaded image files)
     GET Admin - Get All Products
     GET Admin - Get Product By Id
     PATCH Admin - Update Product (scalar fields)
+    PATCH Admin - Update Product (rules, facts, collections, keywords)
     PATCH Admin - Update Product Variants/Images/Attributes (sync)
+    PATCH Admin - Update Product Images (reassign/clear by variantId)
     POST Admin - Add Product Category Tag
     DELETE Admin - Remove Product Category Tag
+    POST Admin - Create Product (invalid variant reference, expect 400)
     DELETE Admin - Delete Product
+    GET Admin - Get All Products (sorted by views)
+    POST Admin - Create Product (selecting attribute values)
+    PATCH Admin - Update Product Selection (add a value, add a variant)
+    POST Admin - Create Product (incomplete option selection, expect 400)
   [FOLDER] Uploads
     POST Admin - Upload Image
+    POST Admin - Upload Video (with poster frame)
   [FOLDER] Shipping Methods
     POST Admin - Create Shipping Method
     GET Admin - Get All Shipping Methods
@@ -197,6 +268,9 @@
     GET Admin - Get Banner By Id
     PATCH Admin - Update Banner
     DELETE Admin - Delete Banner
+  [FOLDER] Customers
+    GET Admin - Get All Customers
+    GET Admin - Get Customer By Id
   [FOLDER] Support Tickets
     PATCH Admin - Update Support Ticket
   [FOLDER] Analytics

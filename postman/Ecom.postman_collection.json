@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Ecom API",
-    "description": "Full endpoint set (Phases 1-7) for the Ecom backend (see src/app/routes/index.ts and openspec/changes/add-core-api-endpoints). Phase 1 = Catalog (Categories/Brands/Products). Phase 2 = Cart/Wishlist/Customer Addresses. Phase 3 = Checkout (Shipping Methods/Orders/Payments/Shipments). Phase 4 = Post-Purchase (Returns/Refunds/Reviews). Phase 5 = Inventory & Procurement (Warehouses/Stock/Stock Movements/Suppliers/Purchase Orders). Phase 6 = Marketing (Coupons/Campaigns/Banners). Phase 7 = Support, Notifications & Admin Governance (Support Tickets/Notifications/Store Settings/Roles & Permissions/Audit Logs).\n\nAuth is cookie-based (better-auth.session_token + accessToken + refreshToken, all httpOnly). Run \"Login\" first — Postman's cookie jar holds the session automatically. Most storefront folders (Cart & Wishlist, Customer Addresses, Orders, Payments, Shipments, Returns, Reviews create, Support Tickets) need a CUSTOMER-role session; admin folders (Categories/Brands/Products admin routes, Warehouses, Suppliers, Purchase Orders, Stock, Coupons, Campaigns, Banners admin routes, Store Settings, Audit Logs) need OWNER/ADMIN/STAFF; Roles & Permissions is OWNER-only. Since only one session is active in the cookie jar at a time, switch the userEmail/userPassword variables and re-run Login when moving between a customer flow and an admin flow.\n\nNote: registration requires email verification via OTP before login will succeed (see Register -> Verify Email flow below).\n\nAdmin routes generally split from public/customer routes at the path level (e.g. `GET /categories/admin` vs `GET /categories`), not role-conditional on the same path. Create requests have test scripts that auto-save the created id/slug/code into collection variables so later requests (in the same or a later folder) can chain off them — run folders top-to-bottom on a fresh run for the chaining to line up (a few requests, like deletes that would break a later folder's chain, are intentionally placed last within their folder with a note).\n\nUpdate (close-core-api-gaps): added a generic admin/staff image-upload endpoint (Uploads folder), customer self-service order cancellation (Orders > Cancel Order), and returns now restock inventory on completion (Returns > Admin - Complete Return, requires warehouseId). Checkout also now applies the store's tax rate and free-shipping threshold automatically and validates stock against the warehouse-scoped Stock ledger — no request-shape changes for those, so no new Postman requests were needed.\n\nUpdate (2026-08-25 reorganization): split into two top-level folders — \"Public (Storefront)\" (endpoints the ecommerce website calls) and \"Private (Admin Panel)\" (endpoints the admin panel calls) — each request kept in its original module sub-folder (Categories, Products, etc.), just regrouped by audience instead of one flat list. Also added: Private > Products > Admin - Create Product (multipart, with uploaded image files) and Private > Brands > Admin - Bulk Create Brands (see add-product-image-upload), and the full Private > Analytics folder (Dashboard Summary, Top Products, Sales by Category, Order Status Breakdown, Payment Breakdown, Returns/Refunds Summary — see add-dashboard-analytics-api and add-analytics-reports-api).",
+    "description": "Full endpoint set (Phases 1-7) for the Ecom backend (see src/app/routes/index.ts and openspec/changes/add-core-api-endpoints). Phase 1 = Catalog (Categories/Brands/Products). Phase 2 = Cart/Wishlist/Customer Addresses. Phase 3 = Checkout (Shipping Methods/Orders/Payments/Shipments). Phase 4 = Post-Purchase (Returns/Refunds/Reviews). Phase 5 = Inventory & Procurement (Warehouses/Stock/Stock Movements/Suppliers/Purchase Orders). Phase 6 = Marketing (Coupons/Campaigns/Banners). Phase 7 = Support, Notifications & Admin Governance (Support Tickets/Notifications/Store Settings/Roles & Permissions/Audit Logs).\n\nAuth is cookie-based (better-auth.session_token + accessToken + refreshToken, all httpOnly). Run \"Login\" first — Postman's cookie jar holds the session automatically. Most storefront folders (Cart & Wishlist, Customer Addresses, Orders, Payments, Shipments, Returns, Reviews create, Support Tickets) need a CUSTOMER-role session; admin folders (Categories/Brands/Products admin routes, Warehouses, Suppliers, Purchase Orders, Stock, Coupons, Campaigns, Banners admin routes, Store Settings, Audit Logs) need OWNER/ADMIN/STAFF; Roles & Permissions is OWNER-only. Since only one session is active in the cookie jar at a time, switch the userEmail/userPassword variables and re-run Login when moving between a customer flow and an admin flow.\n\nNote: registration requires email verification via OTP before login will succeed (see Register -> Verify Email flow below).\n\nAdmin routes generally split from public/customer routes at the path level (e.g. `GET /categories/admin` vs `GET /categories`), not role-conditional on the same path. Create requests have test scripts that auto-save the created id/slug/code into collection variables so later requests (in the same or a later folder) can chain off them — run folders top-to-bottom on a fresh run for the chaining to line up (a few requests, like deletes that would break a later folder's chain, are intentionally placed last within their folder with a note).\n\nUpdate (close-core-api-gaps): added a generic admin/staff image-upload endpoint (Uploads folder), customer self-service order cancellation (Orders > Cancel Order), and returns now restock inventory on completion (Returns > Admin - Complete Return, requires warehouseId). Checkout also now applies the store's tax rate and free-shipping threshold automatically and validates stock against the warehouse-scoped Stock ledger — no request-shape changes for those, so no new Postman requests were needed.\n\nUpdate (2026-08-25 reorganization): split into two top-level folders — \"Public (Storefront)\" (endpoints the ecommerce website calls) and \"Private (Admin Panel)\" (endpoints the admin panel calls) — each request kept in its original module sub-folder (Categories, Products, etc.), just regrouped by audience instead of one flat list. Also added: Private > Products > Admin - Create Product (multipart, with uploaded image files) and Private > Brands > Admin - Bulk Create Brands (see add-product-image-upload), and the full Private > Analytics folder (Dashboard Summary, Top Products, Sales by Category, Order Status Breakdown, Payment Breakdown, Returns/Refunds Summary — see add-dashboard-analytics-api and add-analytics-reports-api).\n\nUpdate (align-admin-catalog-with-reference): attributes became SHOP-WIDE. The per-product option shape is gone — `options` on a product now selects an existing attribute and a subset of its values (`{ attributeId, valueIds }`), and the `options` a product returns is DERIVED from its variants' values rather than stored. Two Private folders' requests changed shape accordingly (Products > Create Product (selecting attribute values), Update Product Selection); the old `option*` collection variables were replaced by `attribute*` ones.\n\nNew Private folders: Attributes, Tax Rules, Shipping Rules, Collections, Bundle Deals, Tags. New requests: Uploads > Admin - Upload Video, Categories > Admin - Get Sub Categories (the surface over Category.parentId — no new model), Products > Admin - Update Product (rules, facts, collections, keywords).\n\nCheckout changed: tax now comes from each product's tax rule and delivery from matching the destination against its shipping rule, so Public > Orders gained 'Get Checkout Quote' — call it before Place Order to show the shopper what they will actually be charged, and to learn up front when a destination cannot be delivered to. Place Order gained an optional `deliveryMethod` (DELIVERY | PICKUP).\n\nSuggested run order for a fresh database: Attributes → Tax Rules → Shipping Rules → Collections → Bundle Deals → Categories → Brands → Products. The delete requests in each new folder are placed last within their folder because they remove ids the Products folder chains off.\n\nAlso added while checking the collection against the router (scripts/verify-postman-routes.ts): Private > Customers (the admin customer directory) and Public > Orders > Track Guest Order. All three routes predate this change and had simply never been documented.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -195,31 +195,87 @@
       "type": "string"
     },
     {
-      "key": "optionColourId",
+      "key": "attributeColourId",
       "value": ""
     },
     {
-      "key": "optionSizeId",
+      "key": "attributeSizeId",
       "value": ""
     },
     {
-      "key": "optionValueRedId",
+      "key": "attributeValueRedId",
       "value": ""
     },
     {
-      "key": "optionValueGreenId",
+      "key": "attributeValueGreenId",
       "value": ""
     },
     {
-      "key": "optionValueSId",
+      "key": "attributeValueSId",
       "value": ""
     },
     {
-      "key": "optionValueMId",
+      "key": "attributeValueMId",
       "value": ""
     },
     {
-      "key": "optionValueXlId",
+      "key": "attributeValueXlId",
+      "value": ""
+    },
+    {
+      "key": "attributeValueXxlId",
+      "value": ""
+    },
+    {
+      "key": "taxRuleId",
+      "value": ""
+    },
+    {
+      "key": "taxRuleReplacementId",
+      "value": ""
+    },
+    {
+      "key": "shippingRuleId",
+      "value": ""
+    },
+    {
+      "key": "shippingRuleReplacementId",
+      "value": ""
+    },
+    {
+      "key": "shippingPlaceId",
+      "value": ""
+    },
+    {
+      "key": "collectionId",
+      "value": ""
+    },
+    {
+      "key": "bundleDealId",
+      "value": ""
+    },
+    {
+      "key": "tagId",
+      "value": ""
+    },
+    {
+      "key": "uploadedVideoUrl",
+      "value": ""
+    },
+    {
+      "key": "uploadedVideoThumbnailUrl",
+      "value": ""
+    },
+    {
+      "key": "customerId",
+      "value": ""
+    },
+    {
+      "key": "guestOrderNumber",
+      "value": ""
+    },
+    {
+      "key": "guestOrderPhone",
       "value": ""
     }
   ],
@@ -1558,6 +1614,62 @@
           "name": "Orders",
           "item": [
             {
+              "name": "Get Checkout Quote (price before ordering)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders/quote",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "quote"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"shippingMethodId\": \"{{shippingMethodId}}\"\n}"
+                },
+                "description": "What this basket costs to this destination, WITHOUT placing anything.\n\nNecessary because shipping is no longer a flat price the storefront can add up itself: it comes from each product's shipping rule matched against where the order is going, and so does tax. Without asking the server, checkout would show one number and charge another — or let the shopper reach Place Order before learning nobody delivers to their address.\n\nDeliberately shares its arithmetic with Place Order, so a quote and a charge cannot drift apart.\n\nOptional-auth, like checkout itself: a guest needs this most, having no saved address to have been quoted against before. A guest sends `country`/`state` inline instead of `shippingAddressId`; everything is optional, because a quote is asked for while the shopper is still typing.\n\nReturns subtotal, discountAmount, taxAmount, shippingAmount, shippingBeforeWaiver (so a waived charge can be shown as a saving), deliveryDays, totalAmount, and — when every matched place offers it — pickupAmount and pickupTotalAmount.\n\nAn undeliverable destination is a 400 naming the PRODUCT that cannot get there, not a silent zero."
+              },
+              "response": []
+            },
+            {
+              "name": "Get Checkout Quote (guest, inline destination)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders/quote",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "quote"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"country\": \"Bangladesh\",\n  \"state\": \"Dhaka\"\n}"
+                },
+                "description": "The guest form of the quote: no saved address, so the destination is sent inline as it is typed.\n\nA partial destination is a real question rather than an error — it simply matches fewer places, falling back to the country place and then to the catch-all."
+              },
+              "response": []
+            },
+            {
               "name": "Place Order (Checkout)",
               "request": {
                 "method": "POST",
@@ -1578,9 +1690,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"shippingMethodId\": \"{{shippingMethodId}}\",\n  \"notes\": \"Please call before delivery\"\n}"
+                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"shippingMethodId\": \"{{shippingMethodId}}\",\n  \"deliveryMethod\": \"DELIVERY\",\n  \"notes\": \"Please call before delivery\"\n}"
                 },
-                "description": "Checkout from the customer's cart — snapshots line items, validates stock/price, clears the cart on success. If a coupon is applied to the cart (see Cart & Wishlist folder), it's consumed automatically here (discount applied, Coupon.usageCount incremented) — no need to resend the code. Saves orderId."
+                "description": "Checkout from the customer's cart — snapshots line items, validates stock/price, clears the cart on success. If a coupon is applied to the cart (see Cart & Wishlist folder), it's consumed automatically here (discount applied, Coupon.usageCount incremented) — no need to resend the code. Saves orderId.\n\nUpdate (align-admin-catalog-with-reference): tax now comes from EACH PRODUCT'S tax rule rather than the store-wide rate, and delivery from matching the shopper's destination against each product's shipping rule — charged once per distinct rule in the order, since products under one delivery policy travel together. `shippingMethodId` is still accepted and still creates the Shipment row, but its price is now only a fallback for an order whose products carry no shipping rule at all.\n\n`deliveryMethod` is optional and defaults to DELIVERY. An undeliverable destination is refused with a 400 naming the product, never charged as zero.\n\nCall 'Get Checkout Quote' first to show the shopper what they will be charged."
               },
               "response": [],
               "event": [
@@ -1598,6 +1710,33 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "Place Order (collect in person)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"deliveryMethod\": \"PICKUP\",\n  \"notes\": \"Will collect from the Dhaka point\"\n}"
+                },
+                "description": "Collection instead of delivery, charged at the matched places' `pickupPrice` rather than their delivery price.\n\nAccepted ONLY when every matched place offers collection — an order half of which still has to be delivered is not one the shopper can collect. Otherwise 400.\n\nCall Get Checkout Quote first: its `pickupAmount` is null when this will be refused.\n\nNote that free shipping — from a coupon or the store's order-value threshold — waives DELIVERY only. Choosing to collect is choosing a different service, and its price is what that place charges for it."
+              },
+              "response": []
             },
             {
               "name": "Get My Orders",
@@ -1662,6 +1801,34 @@
                   ]
                 },
                 "description": "Customer self-service — cancels the requester's own order while it's still PENDING or CONFIRMED. 404 if not your order, 400 if it's already PROCESSING or later. No body."
+              },
+              "response": []
+            },
+            {
+              "name": "Track Guest Order",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders/track",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "track"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNumber\": \"{{guestOrderNumber}}\",\n  \"phone\": \"{{guestOrderPhone}}\"\n}"
+                },
+                "description": "How a guest looks up an order they placed without an account.\n\nNo session, so the order number alone must not be enough — it is guessable, and would expose one customer's order to anyone. Requiring the phone the order was placed with makes the PAIR the credential.\n\nPOST rather than GET so the phone — half of that credential — stays out of URLs and server logs.\n\nDeclared above `/:id` in the router, or that path would swallow the literal 'track'."
               },
               "response": []
             }
@@ -2727,6 +2894,39 @@
               "response": []
             },
             {
+              "name": "Admin - Get Sub Categories (by parent)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/categories/admin?parentId={{categoryId}}&page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "categories",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "parentId",
+                      "value": "{{categoryId}}"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "The sub-category list. NO new endpoint or model was needed: the hierarchy has always lived on `Category.parentId`, and `parentId` was already in this listing's filterable fields — what was missing was only an admin surface for it.\n\nThe admin panel's 'Sub categories' page is this request plus a parent picker."
+              },
+              "response": []
+            },
+            {
               "name": "Admin - Get Category By Id",
               "request": {
                 "method": "GET",
@@ -3115,6 +3315,1384 @@
           ]
         },
         {
+          "name": "Attributes",
+          "description": "Shop-wide axes of choice — Colour, Size, Weight — defined once and reused on any product.\n\nAdmin-only throughout: a shopper meets an attribute through a product's options, never as a catalogue of its own.\n\nReplaces the per-product ProductOption/ProductOptionValue model. Run the two create requests first — the rest of this folder, and the Products folder's option requests, chain off the ids they save.",
+          "item": [
+            {
+              "name": "Admin - Create Attribute (Colour, SWATCH)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Colour\",\n  \"presentation\": \"SWATCH\",\n  \"values\": [\n    {\n      \"label\": \"Red\",\n      \"swatch\": \"#cc0000\"\n    },\n    {\n      \"label\": \"Green\",\n      \"swatch\": \"#00aa00\"\n    }\n  ]\n}"
+                },
+                "description": "OWNER/ADMIN only. Defines Colour once for the whole shop.\n\n`values` order IS the presentation order — position is taken from array order rather than sent explicitly, so two values cannot claim the same position.\n\n`presentation` decides how values are drawn: SWATCH uses each value's `swatch` colour, LABEL shows its text. Declared here rather than guessed from the name, which would break on 'Color' vs 'Colour'.\n\nSaves attributeColourId, attributeValueRedId, attributeValueGreenId."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('attributeColourId', data.id);",
+                      "    const byLabel = (label) => data?.values?.find(v => v.label === label)?.id;",
+                      "    if (byLabel('Red')) pm.collectionVariables.set('attributeValueRedId', byLabel('Red'));",
+                      "    if (byLabel('Green')) pm.collectionVariables.set('attributeValueGreenId', byLabel('Green'));",
+                      "    console.log('Saved attributeColourId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Attribute (Size, LABEL)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Size\",\n  \"presentation\": \"LABEL\",\n  \"values\": [\n    {\n      \"label\": \"S\"\n    },\n    {\n      \"label\": \"M\"\n    },\n    {\n      \"label\": \"XL\"\n    }\n  ]\n}"
+                },
+                "description": "OWNER/ADMIN only. Authored S, M, XL in that order — nothing about the labels themselves says S precedes M, which is exactly why order is stored rather than derived.\n\nSaves attributeSizeId and the three value ids."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('attributeSizeId', data.id);",
+                      "    const byLabel = (label) => data?.values?.find(v => v.label === label)?.id;",
+                      "    if (byLabel('S')) pm.collectionVariables.set('attributeValueSId', byLabel('S'));",
+                      "    if (byLabel('M')) pm.collectionVariables.set('attributeValueMId', byLabel('M'));",
+                      "    if (byLabel('XL')) pm.collectionVariables.set('attributeValueXlId', byLabel('XL'));",
+                      "    console.log('Saved attributeSizeId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Attribute (duplicate name, expect 409)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"colour\",\n  \"values\": [\n    {\n      \"label\": \"Blue\"\n    }\n  ]\n}"
+                },
+                "description": "Expect 409. The unique index is exact, so 'Colour' and 'colour' would both be allowed by the database — and the merchant would then face two attributes that look identical, which is precisely the confusion moving attributes shop-wide exists to end. The service compares case-insensitively."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get All Attributes (unpaginated, for pickers)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/attributes/all",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "all"
+                  ]
+                },
+                "description": "Every attribute with its values, ordered by position then name. What the admin product form fills its checkboxes from — a picker that paginated would hide half the shop's attributes behind a page control.\n\nDeclared above `/:id` in the router, or the literal 'all' would be captured as an id."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Attributes (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/attributes?page=1&limit=10&searchTerm=col&sortBy=name&sortOrder=asc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "searchTerm",
+                      "value": "col"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "name"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "asc"
+                    }
+                  ]
+                },
+                "description": "Paginated list for the Attributes admin page. Searchable on `name`, filterable on `presentation`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Attribute By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeColourId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeColourId}}"
+                  ]
+                },
+                "description": "Includes `values` ordered by position."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Attribute (add a value)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeColourId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeColourId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Colour\",\n  \"presentation\": \"SWATCH\",\n  \"values\": [\n    {\n      \"id\": \"{{attributeValueRedId}}\",\n      \"label\": \"Red\",\n      \"swatch\": \"#cc0000\"\n    },\n    {\n      \"id\": \"{{attributeValueGreenId}}\",\n      \"label\": \"Green\",\n      \"swatch\": \"#00aa00\"\n    },\n    {\n      \"label\": \"Blue\",\n      \"swatch\": \"#0000cc\"\n    }\n  ]\n}"
+                },
+                "description": "Values carrying an `id` are UPDATED; those without are created. Anything omitted is DELETED — send the full intended set, exactly as variants and images already work.\n\nRenaming a value here changes it for every product selling it, and loses no variants: the variant points at the value id, not at its label."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Attribute (remove a value products sell, expect 409)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeColourId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeColourId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"values\": [\n    {\n      \"id\": \"{{attributeValueRedId}}\",\n      \"label\": \"Red\",\n      \"swatch\": \"#cc0000\"\n    }\n  ]\n}"
+                },
+                "description": "Expect 409 once a product sells Green — the message names how many products are affected.\n\nChecked BEFORE the transaction opens, so a refused request modifies nothing. Confirm with `?force=1` (next request) to go ahead anyway."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Attribute (force removal)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeColourId}}?force=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeColourId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "1"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"values\": [\n    {\n      \"id\": \"{{attributeValueRedId}}\",\n      \"label\": \"Red\",\n      \"swatch\": \"#cc0000\"\n    }\n  ]\n}"
+                },
+                "description": "The same edit, confirmed. Products selling the removed value lose those choices — which is why the unconfirmed call refuses rather than doing it quietly."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Attribute in use (expect 409)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeSizeId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeSizeId}}"
+                  ]
+                },
+                "description": "Expect 409 while products still sell its values, with a count of how many.\n\nDeleting cascades to every variant selection built on it, so this guard is the one thing standing between a routine catalog edit and a shop full of unbuyable products."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Attribute (confirmed)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/attributes/{{attributeSizeId}}?force=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "attributes",
+                    "{{attributeSizeId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "1"
+                    }
+                  ]
+                },
+                "description": "Placed last in this folder: it removes the attribute the Products folder chains off. Run the Products option requests first."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Tax Rules",
+          "description": "Named tax charges assigned per product, replacing the single shop-wide rate on StoreSetting.\n\nAdmin-only: a shopper is told what tax cost at checkout, where it is computed, and never needs the rule itself.",
+          "item": [
+            {
+              "name": "Admin - Create Tax Rule (VAT 5%)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"VAT\",\n  \"type\": \"PERCENT\",\n  \"value\": 5\n}"
+                },
+                "description": "A PERCENT rule applies to the price ACTUALLY charged, so a discounted product is taxed on the discounted amount rather than the list price.\n\nSaves taxRuleId."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('taxRuleId', data.id);",
+                      "    console.log('Saved taxRuleId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Tax Rule (flat amount)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Zero-rated\",\n  \"type\": \"FLAT\",\n  \"value\": 0\n}"
+                },
+                "description": "A FLAT rule charges its amount PER UNIT bought, not per line — a fixed tax on a product is a tax on each one.\n\nSaves taxRuleReplacementId, used as the reassignment target below."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('taxRuleReplacementId', data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Get All Tax Rules (unpaginated, for pickers)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules/all",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules",
+                    "all"
+                  ]
+                },
+                "description": "Every rule, for the product form's picker."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Tax Rules (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules?page=1&limit=10&sortBy=name&sortOrder=asc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "name"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "asc"
+                    }
+                  ]
+                },
+                "description": "Searchable on `name`, filterable on `type`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Tax Rule By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules/{{taxRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules",
+                    "{{taxRuleId}}"
+                  ]
+                },
+                "description": "A single rule."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Tax Rule",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules/{{taxRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules",
+                    "{{taxRuleId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"value\": 7.5\n}"
+                },
+                "description": "Changing the rate changes what every product assigned to it is taxed."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Tax Rule in use (expect 409)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules/{{taxRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules",
+                    "{{taxRuleId}}"
+                  ]
+                },
+                "description": "Expect 409 with a count of the products using it. A product must be taxable, so it cannot simply lose its rule — the foreign key is Restrict for exactly that reason."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Tax Rule (reassigning its products)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tax-rules/{{taxRuleId}}?reassign_to={{taxRuleReplacementId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tax-rules",
+                    "{{taxRuleId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "reassign_to",
+                      "value": "{{taxRuleReplacementId}}"
+                    }
+                  ]
+                },
+                "description": "The merchant names the replacement, and the move happens in the SAME transaction as the delete — so no product is ever briefly without a rule.\n\nPlaced last in this folder: it removes the rule the Products folder chains off."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Shipping Rules",
+          "description": "Named delivery policies made of places, assigned per product. Replaces ShippingMethod's flat price, which charged the same to deliver across the city as across the country.\n\nA rule MUST always keep at least one place: one matching nowhere can charge nothing, and its products would be undeliverable.",
+          "item": [
+            {
+              "name": "Admin - Create Shipping Rule (region, country, catch-all)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Standard delivery\",\n  \"places\": [\n    {\n      \"name\": \"Inside Dhaka\",\n      \"country\": \"Bangladesh\",\n      \"state\": \"Dhaka\",\n      \"price\": 60,\n      \"deliveryDays\": 1,\n      \"offersPickup\": true,\n      \"pickupPrice\": 20\n    },\n    {\n      \"name\": \"Rest of Bangladesh\",\n      \"country\": \"Bangladesh\",\n      \"price\": 120,\n      \"deliveryDays\": 3\n    },\n    {\n      \"name\": \"Everywhere else\",\n      \"price\": 300,\n      \"deliveryDays\": 10\n    }\n  ]\n}"
+                },
+                "description": "Three places, most specific to least. Matching at checkout is region → country → all-destinations: without that order two places covering the same shopper would be a coin toss, and a merchant adding a specific rate would see it ignored at random.\n\n`country`/`state` omitted means 'anywhere' — the third place here is the catch-all, and is what lets the rule deliver somewhere it has not enumerated.\n\n`offersPickup` lets a shopper collect in person at `pickupPrice` instead of having it delivered.\n\nSaves shippingRuleId."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('shippingRuleId', data.id);",
+                      "    if (data?.places?.[0]?.id) pm.collectionVariables.set('shippingPlaceId', data.places[0].id);",
+                      "    console.log('Saved shippingRuleId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Shipping Rule (replacement)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Flat rate\",\n  \"places\": [\n    {\n      \"name\": \"Anywhere\",\n      \"price\": 100,\n      \"deliveryDays\": 5\n    }\n  ]\n}"
+                },
+                "description": "Saves shippingRuleReplacementId, used as the reassignment target below."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('shippingRuleReplacementId', data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Shipping Rule (region without a country, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Broken rule\",\n  \"places\": [\n    {\n      \"state\": \"Dhaka\",\n      \"price\": 60\n    }\n  ]\n}"
+                },
+                "description": "Expect 400. A region without a country is meaningless — 'Dhaka' in which country? — and could never be matched against a shopper's address."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Shipping Rule (two places, same destination, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Ambiguous rule\",\n  \"places\": [\n    {\n      \"country\": \"Bangladesh\",\n      \"price\": 60\n    },\n    {\n      \"country\": \"Bangladesh\",\n      \"price\": 90\n    }\n  ]\n}"
+                },
+                "description": "Expect 400. Two places covering the same destination would make matching a coin toss, and the merchant would never know which price a shopper saw."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get All Shipping Rules (unpaginated, for pickers)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/all",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "all"
+                  ]
+                },
+                "description": "Every rule with its places, for the product form."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Shipping Rules (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules?page=1&limit=10&sortBy=name&sortOrder=asc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "name"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "asc"
+                    }
+                  ]
+                },
+                "description": "Places come back ordered most-specific-first, which is also the order the matcher wants."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Shipping Rule By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/{{shippingRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "{{shippingRuleId}}"
+                  ]
+                },
+                "description": "A single rule with its places."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Shipping Rule (reconcile places)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/{{shippingRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "{{shippingRuleId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Standard delivery\",\n  \"places\": [\n    {\n      \"id\": \"{{shippingPlaceId}}\",\n      \"name\": \"Inside Dhaka\",\n      \"country\": \"Bangladesh\",\n      \"state\": \"Dhaka\",\n      \"price\": 70,\n      \"deliveryDays\": 1,\n      \"offersPickup\": true,\n      \"pickupPrice\": 25\n    },\n    {\n      \"name\": \"Chattogram\",\n      \"country\": \"Bangladesh\",\n      \"state\": \"Chattogram\",\n      \"price\": 90,\n      \"deliveryDays\": 2\n    },\n    {\n      \"name\": \"Everywhere else\",\n      \"price\": 300,\n      \"deliveryDays\": 10\n    }\n  ]\n}"
+                },
+                "description": "Places with an `id` are updated, those without are created, and existing places absent from the payload are deleted — the same replace-the-set contract as variants and images."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Shipping Rule (remove every place, expect 400)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/{{shippingRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "{{shippingRuleId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"places\": []\n}"
+                },
+                "description": "Expect 400. Enforced in the Zod schema AND again in the service, since an update reaching it by another path could otherwise leave a rule matching nowhere and make its products undeliverable."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Shipping Rule in use (expect 409)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/{{shippingRuleId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "{{shippingRuleId}}"
+                  ]
+                },
+                "description": "Expect 409 with a count. Same reasoning as tax rules: a product must be deliverable, so it cannot simply lose its rule."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Shipping Rule (reassigning its products)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/shipping-rules/{{shippingRuleId}}?reassign_to={{shippingRuleReplacementId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "shipping-rules",
+                    "{{shippingRuleId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "reassign_to",
+                      "value": "{{shippingRuleReplacementId}}"
+                    }
+                  ]
+                },
+                "description": "The move and the delete share one transaction. Placed last in this folder: it removes the rule the Products folder chains off."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Collections",
+          "description": "Merchandising groupings independent of the category tree — \"Top selling\", \"Eid specials\". Categories answer \"what is this\"; collections answer \"why are we showing it\".\n\nA product belongs to any number and keeps its category regardless.",
+          "item": [
+            {
+              "name": "Admin - Create Collection",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/collections",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Top selling\",\n  \"isVisible\": true\n}"
+                },
+                "description": "`slug` is derived from `name` when omitted. Saves collectionId."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('collectionId', data.id);",
+                      "    console.log('Saved collectionId =', data?.id, 'slug =', data?.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Get All Collections (unpaginated, for pickers)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/collections/all",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections",
+                    "all"
+                  ]
+                },
+                "description": "Every collection, for the product form's multi-select."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Collections (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/collections?page=1&limit=10&isVisible=true",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "isVisible",
+                      "value": "true"
+                    }
+                  ]
+                },
+                "description": "Searchable on `name` and `slug`, filterable on `isVisible`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Collection By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/collections/{{collectionId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "description": "A single collection."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Collection (hide it)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/collections/{{collectionId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"isVisible\": false\n}"
+                },
+                "description": "A hidden collection KEEPS its products and simply is not presented, so a seasonal grouping can be prepared before it goes live and retired after without losing what was in it."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Collection",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/collections/{{collectionId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "description": "Needs no reassignment and no confirmation: a product without a collection is perfectly sellable, so only the memberships go. The products themselves are untouched.\n\nPlaced last — later requests reference collectionId."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Bundle Deals",
+          "description": "A \"buy N, get M free\" offer a product can carry. Defined once and assigned to products, so the offer is authored once rather than restated per product.",
+          "item": [
+            {
+              "name": "Admin - Create Bundle Deal (buy 2 get 1 free)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Buy 2 get 1 free\",\n  \"buyQuantity\": 2,\n  \"freeQuantity\": 1\n}"
+                },
+                "description": "Saves bundleDealId."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('bundleDealId', data.id);",
+                      "    console.log('Saved bundleDealId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Bundle Deal (gives nothing away, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Not an offer\",\n  \"buyQuantity\": 2,\n  \"freeQuantity\": 0\n}"
+                },
+                "description": "Expect 400. Both quantities must be at least one — an offer requiring nothing bought, or giving nothing away, is not an offer."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get All Bundle Deals (unpaginated, for pickers)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals/all",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals",
+                    "all"
+                  ]
+                },
+                "description": "Every deal, for the product form's picker."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Bundle Deals (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals?page=1&limit=10",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "Searchable on `name`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Bundle Deal By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals/{{bundleDealId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals",
+                    "{{bundleDealId}}"
+                  ]
+                },
+                "description": "A single deal."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Bundle Deal",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals/{{bundleDealId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals",
+                    "{{bundleDealId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Buy 3 get 1 free\",\n  \"buyQuantity\": 3\n}"
+                },
+                "description": "Changing the offer changes it for every product carrying it."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Bundle Deal in use (expect 409)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals/{{bundleDealId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals",
+                    "{{bundleDealId}}"
+                  ]
+                },
+                "description": "Expect 409 with a count of the products carrying it. Losing an offer is a commercial consequence a merchant should not learn about from a customer."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Bundle Deal (confirmed)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/bundle-deals/{{bundleDealId}}?force=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "bundle-deals",
+                    "{{bundleDealId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "1"
+                    }
+                  ]
+                },
+                "description": "Confirmed. Its products are left sold WITHOUT an offer rather than referencing one that no longer exists — the reference is nullable, so nothing is orphaned.\n\nPlaced last — later requests reference bundleDealId."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Tags",
+          "description": "Product keywords, shared across the shop.\n\nThere is deliberately NO create endpoint: a tag comes into existence by being typed on a product and saved with it (see Products > `tags`). A tag on nothing is a keyword for nothing.\n\nStored as rows rather than the comma-separated string the reference panel uses — a real table is what makes suggestion possible, and avoids the substring-matching delete bug that string brings with it.",
+          "item": [
+            {
+              "name": "Admin - Search Tags (autocomplete)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tags/search?q=wir",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tags",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "wir"
+                    }
+                  ]
+                },
+                "description": "Case-insensitive contains-match, capped at 10 — enough to choose from without becoming a list to read.\n\nThis is the whole point of storing tags as rows: a merchant reuses 'wireless' instead of creating 'Wireless' beside it."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Search Tags (blank term returns nothing)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tags/search?q=",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tags",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "Returns an empty list rather than every tag in the shop. A blank box is not a request for everything."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Tags (paginated)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tags?page=1&limit=20&sortBy=name&sortOrder=asc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tags"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "name"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "asc"
+                    }
+                  ]
+                },
+                "description": "The full keyword list."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Tag",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/tags/{{tagId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "tags",
+                    "{{tagId}}"
+                  ]
+                },
+                "description": "Removes the keyword and its memberships. Set tagId from one of the search results above."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
           "name": "Products",
           "item": [
             {
@@ -3157,9 +4735,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Galaxy S24\",\n  \"sku\": \"GALAXY-S24\",\n  \"description\": \"Samsung's latest flagship smartphone\",\n  \"shortDescription\": \"Flagship smartphone\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 999.99,\n  \"compareAtPrice\": 1099.99,\n  \"stockQuantity\": 50,\n  \"lowStockThreshold\": 5,\n  \"isFeatured\": true,\n  \"variants\": [\n    {\n      \"name\": \"128GB / Black\",\n      \"sku\": \"GALAXY-S24-128-BLK\",\n      \"price\": 999.99,\n      \"stockQuantity\": 20,\n      \"attributes\": { \"storage\": \"128GB\", \"color\": \"Black\" }\n    },\n    {\n      \"name\": \"256GB / Silver\",\n      \"sku\": \"GALAXY-S24-256-SLV\",\n      \"price\": 1099.99,\n      \"stockQuantity\": 30,\n      \"attributes\": { \"storage\": \"256GB\", \"color\": \"Silver\" }\n    }\n  ],\n  \"images\": [\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-128-black-front.jpg\",\n      \"altText\": \"Galaxy S24 128GB Black front view\",\n      \"sortOrder\": 0,\n      \"isPrimary\": true,\n      \"variantIndex\": 0\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-256-silver-front.jpg\",\n      \"altText\": \"Galaxy S24 256GB Silver front view\",\n      \"sortOrder\": 1,\n      \"isPrimary\": false,\n      \"variantIndex\": 1\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-box.jpg\",\n      \"altText\": \"Galaxy S24 box / shared product image\",\n      \"sortOrder\": 2,\n      \"isPrimary\": false\n    }\n  ],\n  \"attributes\": [\n    { \"name\": \"Brand\", \"value\": \"Samsung\" },\n    { \"name\": \"Warranty\", \"value\": \"1 year\" }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"Galaxy S24\",\n  \"sku\": \"GALAXY-S24\",\n  \"description\": \"Samsung's latest flagship smartphone\",\n  \"shortDescription\": \"Flagship smartphone\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 999.99,\n  \"compareAtPrice\": 1099.99,\n  \"stockQuantity\": 50,\n  \"lowStockThreshold\": 5,\n  \"isFeatured\": true,\n  \"taxRuleId\": \"{{taxRuleId}}\",\n  \"shippingRuleId\": \"{{shippingRuleId}}\",\n  \"bundleDealId\": \"{{bundleDealId}}\",\n  \"collectionIds\": [\n    \"{{collectionId}}\"\n  ],\n  \"tags\": [\n    \"wireless\",\n    \"flagship\"\n  ],\n  \"unit\": \"1 piece\",\n  \"badge\": \"New\",\n  \"isRefundable\": true,\n  \"hasWarranty\": true,\n  \"video\": \"{{uploadedVideoUrl}}\",\n  \"videoThumbnail\": \"{{uploadedVideoThumbnailUrl}}\",\n  \"variants\": [\n    {\n      \"name\": \"128GB / Black\",\n      \"sku\": \"GALAXY-S24-128-BLK\",\n      \"price\": 999.99,\n      \"stockQuantity\": 20,\n      \"attributes\": {\n        \"storage\": \"128GB\",\n        \"color\": \"Black\"\n      }\n    },\n    {\n      \"name\": \"256GB / Silver\",\n      \"sku\": \"GALAXY-S24-256-SLV\",\n      \"price\": 1099.99,\n      \"stockQuantity\": 30,\n      \"attributes\": {\n        \"storage\": \"256GB\",\n        \"color\": \"Silver\"\n      }\n    }\n  ],\n  \"images\": [\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-128-black-front.jpg\",\n      \"altText\": \"Galaxy S24 128GB Black front view\",\n      \"sortOrder\": 0,\n      \"isPrimary\": true,\n      \"variantIndex\": 0\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-256-silver-front.jpg\",\n      \"altText\": \"Galaxy S24 256GB Silver front view\",\n      \"sortOrder\": 1,\n      \"isPrimary\": false,\n      \"variantIndex\": 1\n    },\n    {\n      \"url\": \"https://example.com/images/galaxy-s24-box.jpg\",\n      \"altText\": \"Galaxy S24 box / shared product image\",\n      \"sortOrder\": 2,\n      \"isPrimary\": false\n    }\n  ],\n  \"attributes\": [\n    {\n      \"name\": \"Brand\",\n      \"value\": \"Samsung\"\n    },\n    {\n      \"name\": \"Warranty\",\n      \"value\": \"1 year\"\n    }\n  ]\n}"
                 },
-                "description": "OWNER/ADMIN only. Creates the Product together with its nested variants/images/attributes in one call. Saves productId/productSlug/variantId/imageId/attributeId for the rest of this folder."
+                "description": "OWNER/ADMIN only. Creates the Product together with its nested variants/images/attributes in one call. Saves productId/productSlug/variantId/imageId/attributeId for the rest of this folder.\n\nUpdate (align-admin-catalog-with-reference): `taxRuleId` and `shippingRuleId` are required in practice — a product must be taxable and deliverable. `bundleDealId` is optional (null clears it). `collectionIds` and `tags` are the FULL intended sets, replacing what was there; omitting either key leaves it alone. `tags` names are created on demand and de-duplicated case-insensitively, which is why there is no tag create endpoint.\n\n`isRefundable`/`hasWarranty` are TRI-STATE: null means the merchant has not said, which the storefront renders as nothing at all — a different claim from false.\n\n`unit` is what is being sold ('1 kg', '500 ml'), `badge` a short storefront label ('New', 'Hot'). `video`/`videoThumbnail` come from Uploads > Admin - Upload Video."
               },
               "response": []
             },
@@ -3315,6 +4893,34 @@
                   "mode": "raw",
                   "raw": "{\n  \"price\": 949.99,\n  \"isFeatured\": false\n}"
                 }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Product (rules, facts, collections, keywords)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/products/{{productId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"taxRuleId\": \"{{taxRuleReplacementId}}\",\n  \"shippingRuleId\": \"{{shippingRuleReplacementId}}\",\n  \"bundleDealId\": null,\n  \"collectionIds\": [],\n  \"tags\": [\n    \"wireless\",\n    \"Wireless\",\n    \"noise-cancelling\"\n  ],\n  \"unit\": \"500 ml\",\n  \"badge\": \"Hot\",\n  \"isRefundable\": false,\n  \"hasWarranty\": null\n}"
+                },
+                "description": "The fields this change added, on their own.\n\n`bundleDealId: null` CLEARS the offer; omitting the key leaves it as it was. `collectionIds: []` removes every membership — these are full intended sets, not additions.\n\n`tags` here sends 'wireless' twice in different cases on purpose: the product ends up carrying it ONCE. De-duplication is exact and case-insensitive, which is what stops 'Wireless' being created beside 'wireless'.\n\n`hasWarranty: null` means 'not stated' and shows nothing on the storefront — distinct from `false`, which is a claim that there is no warranty."
               },
               "response": []
             },
@@ -3499,7 +5105,7 @@
               "response": []
             },
             {
-              "name": "Admin - Create Product (with options: Colour x Size)",
+              "name": "Admin - Create Product (selecting attribute values)",
               "request": {
                 "method": "POST",
                 "header": [
@@ -3519,14 +5125,14 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Classic Cotton Tee\",\n  \"sku\": \"TEE-CLASSIC\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 500,\n  \"options\": [\n    {\n      \"name\": \"Colour\",\n      \"presentation\": \"SWATCH\",\n      \"values\": [\n        {\n          \"label\": \"Red\",\n          \"swatch\": \"#cc0000\"\n        },\n        {\n          \"label\": \"Green\",\n          \"swatch\": \"#00aa00\"\n        }\n      ]\n    },\n    {\n      \"name\": \"Size\",\n      \"presentation\": \"LABEL\",\n      \"values\": [\n        {\n          \"label\": \"S\"\n        },\n        {\n          \"label\": \"M\"\n        },\n        {\n          \"label\": \"XL\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / M\",\n      \"sku\": \"TEE-CLASSIC-RED-M\",\n      \"price\": 500,\n      \"stockQuantity\": 0,\n      \"optionValueIndexes\": [\n        0,\n        1\n      ]\n    },\n    {\n      \"name\": \"Green / XL\",\n      \"sku\": \"TEE-CLASSIC-GRN-XL\",\n      \"price\": 550,\n      \"stockQuantity\": 7,\n      \"optionValueIndexes\": [\n        1,\n        2\n      ]\n    }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"Classic Cotton Tee\",\n  \"sku\": \"TEE-CLASSIC\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"price\": 500,\n  \"taxRuleId\": \"{{taxRuleId}}\",\n  \"shippingRuleId\": \"{{shippingRuleId}}\",\n  \"options\": [\n    {\n      \"attributeId\": \"{{attributeColourId}}\",\n      \"valueIds\": [\n        \"{{attributeValueRedId}}\",\n        \"{{attributeValueGreenId}}\"\n      ]\n    },\n    {\n      \"attributeId\": \"{{attributeSizeId}}\",\n      \"valueIds\": [\n        \"{{attributeValueSId}}\",\n        \"{{attributeValueMId}}\",\n        \"{{attributeValueXlId}}\"\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / M\",\n      \"sku\": \"TEE-CLASSIC-RED-M\",\n      \"price\": 500,\n      \"stockQuantity\": 0,\n      \"optionValueIndexes\": [\n        0,\n        1\n      ]\n    },\n    {\n      \"name\": \"Green / XL\",\n      \"sku\": \"TEE-CLASSIC-GRN-XL\",\n      \"price\": 550,\n      \"stockQuantity\": 7,\n      \"optionValueIndexes\": [\n        1,\n        2\n      ]\n    }\n  ]\n}"
                 },
-                "description": "Creates a product whose variants are defined by OPTIONS rather than by a free-text name.\n\n`options` is an ordered list; each option's `values` are ordered too. Position comes from array order, which is why Size reads S, M, XL rather than alphabetically — nothing about the labels themselves says S precedes M.\n\n`optionValueIndexes` on a variant selects one value PER OPTION, by index into that option's `values`. Positional because on create no value has an id yet — the same reason images use `variantIndex`. So `[1, 2]` means Colour=Green (index 1), Size=XL (index 2).\n\nNote this deliberately does NOT create all 6 combinations: not every combination is a real product. Green/S and Green/M simply do not exist, and the storefront shows those values as unavailable rather than hiding them.\n\n`presentation` decides how values are drawn — SWATCH uses each value's `swatch` colour, LABEL shows its text. Declared per option rather than guessed from the name, which would break on 'Color' vs 'Colour'.\n\nSee add-product-option-types design.md."
+                "description": "BREAKING CHANGE from the previous shape. A product no longer DEFINES its options — it SELECTS values from shop-wide attributes. Run the Attributes folder first.\n\n`options[].attributeId` names an existing attribute; `valueIds` are the subset of its values this product sells, in the order to present them. Nothing here creates an attribute or a value; the service checks that every value named really belongs to the attribute named.\n\n`optionValueIndexes` still selects one value PER OPTION, by index into that option's `valueIds` — positional because a variant's selection is not yet stored on create, the same reason images use `variantIndex`. So `[1, 2]` means Colour=Green (index 1), Size=XL (index 2).\n\nThis deliberately does NOT create all 6 combinations: not every combination is a real product. Green/S and Green/M simply do not exist, and the storefront shows those values as unavailable rather than hiding them.\n\nNote the response's `options` is DERIVED, not stored — the backend rebuilds it from the attributes these variants' values belong to, so the storefront keeps the shape it already resolves against.\n\nSee align-admin-catalog-with-reference design.md."
               },
               "response": []
             },
             {
-              "name": "Admin - Update Product Options (add a value, add a variant)",
+              "name": "Admin - Update Product Selection (add a value, add a variant)",
               "request": {
                 "method": "PATCH",
                 "header": [
@@ -3547,9 +5153,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"options\": [\n    {\n      \"id\": \"{{optionColourId}}\",\n      \"name\": \"Colour\",\n      \"presentation\": \"SWATCH\",\n      \"values\": [\n        {\n          \"id\": \"{{optionValueRedId}}\",\n          \"label\": \"Red\",\n          \"swatch\": \"#cc0000\"\n        },\n        {\n          \"id\": \"{{optionValueGreenId}}\",\n          \"label\": \"Green\",\n          \"swatch\": \"#00aa00\"\n        }\n      ]\n    },\n    {\n      \"id\": \"{{optionSizeId}}\",\n      \"name\": \"Size\",\n      \"presentation\": \"LABEL\",\n      \"values\": [\n        {\n          \"id\": \"{{optionValueSId}}\",\n          \"label\": \"S\"\n        },\n        {\n          \"id\": \"{{optionValueMId}}\",\n          \"label\": \"M\"\n        },\n        {\n          \"id\": \"{{optionValueXlId}}\",\n          \"label\": \"XL\"\n        },\n        {\n          \"label\": \"XXL\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"id\": \"{{variantId}}\",\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / XXL\",\n      \"sku\": \"TEE-CLASSIC-RED-XXL\",\n      \"price\": 550,\n      \"stockQuantity\": 3,\n      \"optionValueIndexes\": [\n        0,\n        3\n      ]\n    }\n  ]\n}"
+                  "raw": "{\n  \"options\": [\n    {\n      \"attributeId\": \"{{attributeColourId}}\",\n      \"valueIds\": [\n        \"{{attributeValueRedId}}\",\n        \"{{attributeValueGreenId}}\"\n      ]\n    },\n    {\n      \"attributeId\": \"{{attributeSizeId}}\",\n      \"valueIds\": [\n        \"{{attributeValueSId}}\",\n        \"{{attributeValueMId}}\",\n        \"{{attributeValueXlId}}\",\n        \"{{attributeValueXxlId}}\"\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"id\": \"{{variantId}}\",\n      \"name\": \"Red / S\",\n      \"sku\": \"TEE-CLASSIC-RED-S\",\n      \"price\": 500,\n      \"stockQuantity\": 5,\n      \"optionValueIndexes\": [\n        0,\n        0\n      ]\n    },\n    {\n      \"name\": \"Red / XXL\",\n      \"sku\": \"TEE-CLASSIC-RED-XXL\",\n      \"price\": 550,\n      \"stockQuantity\": 3,\n      \"optionValueIndexes\": [\n        0,\n        3\n      ]\n    }\n  ]\n}"
                 },
-                "description": "Adds a size (XXL) and a variant that uses it, keeping the existing ones.\n\nOptions and values carrying an `id` are UPDATED; those without are created. Anything omitted from the payload is DELETED — so send the full intended set, exactly as variants/images/attributes already work.\n\n`optionValueIndexes` still refers to positions in THIS request's `options`, not to stored ones: XXL is index 3 because it is fourth in the Size values sent here.\n\nWARNING: removing an option or a value cascades to the variant selections referencing it, leaving those variants unresolvable. The admin UI confirms before doing this; a raw API call does not.\n\nReplace the {{option*}} placeholders with real ids from 'Admin - Get Product By Id'."
+                "description": "Sells one more size (XXL) and adds a variant using it, keeping the existing one.\n\nAdd XXL to the SIZE ATTRIBUTE first (Attributes > Admin - Update Attribute) — a product cannot invent a value, only select one. Then set attributeValueXxlId from that response.\n\nVariants carrying an `id` are UPDATED and keep their stock, price, code and images; those without are created. Anything omitted is DELETED — send the full intended set.\n\nKeeping the `id` is the important part: it is what makes the backend update the row rather than delete and recreate it, and so what preserves its images and its links from past orders. This is the defect that started this change — regeneration used to match rows by index and silently reset four variants to zero stock.\n\n`optionValueIndexes` refers to positions in THIS request's `valueIds`, not to stored ones: XXL is index 3 because it is fourth in the Size values sent here.\n\nA change that would remove a variant appearing on a past order is refused before the transaction opens, naming the variant."
               },
               "response": []
             },
@@ -3574,7 +5180,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"Broken Option Selection\",\n  \"sku\": \"BROKEN-OPT-SEL\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"price\": 100,\n  \"options\": [\n    {\n      \"name\": \"Colour\",\n      \"values\": [\n        {\n          \"label\": \"Red\"\n        },\n        {\n          \"label\": \"Blue\"\n        }\n      ]\n    },\n    {\n      \"name\": \"Size\",\n      \"values\": [\n        {\n          \"label\": \"S\"\n        }\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red\",\n      \"sku\": \"BROKEN-OPT-SEL-V1\",\n      \"price\": 100,\n      \"optionValueIndexes\": [\n        0\n      ]\n    }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"Broken Option Selection\",\n  \"sku\": \"BROKEN-OPT-SEL\",\n  \"type\": \"VARIABLE\",\n  \"status\": \"ACTIVE\",\n  \"price\": 100,\n  \"taxRuleId\": \"{{taxRuleId}}\",\n  \"shippingRuleId\": \"{{shippingRuleId}}\",\n  \"options\": [\n    {\n      \"attributeId\": \"{{attributeColourId}}\",\n      \"valueIds\": [\n        \"{{attributeValueRedId}}\",\n        \"{{attributeValueGreenId}}\"\n      ]\n    },\n    {\n      \"attributeId\": \"{{attributeSizeId}}\",\n      \"valueIds\": [\n        \"{{attributeValueSId}}\"\n      ]\n    }\n  ],\n  \"variants\": [\n    {\n      \"name\": \"Red\",\n      \"sku\": \"BROKEN-OPT-SEL-V1\",\n      \"price\": 100,\n      \"optionValueIndexes\": [\n        0\n      ]\n    }\n  ]\n}"
                 },
                 "description": "NEGATIVE TEST — expects HTTP 400. Nothing is created.\n\nThe variant selects a value for Colour but not for Size. A variant must select EXACTLY ONE value per option of its product: that invariant is what lets a two-option selection resolve to a single row, and it cannot be expressed as a database constraint, so the service enforces it.\n\nThe check runs before the transaction opens, so a rejected request creates no product, option, value or variant.\n\nRelated rejections, all 400:\n  - an index out of range for its option's values\n  - two variants selecting the same combination (resolution would be ambiguous)\n  - duplicate option names, or duplicate value labels within an option\n  - a selection sent for a product that declares no options"
               },
@@ -3624,6 +5230,58 @@
                       "    const data = pm.response.json()?.data;",
                       "    if (data?.url) pm.collectionVariables.set('uploadedImageUrl', data.url);",
                       "    console.log('Saved uploadedImageUrl =', data?.url);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Upload Video (with poster frame)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/uploads/video",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "uploads",
+                    "video"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "video",
+                      "type": "file",
+                      "src": "",
+                      "disabled": false
+                    },
+                    {
+                      "key": "thumbnail",
+                      "type": "file",
+                      "src": "",
+                      "disabled": false
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN/STAFF only. multipart/form-data taking the video and its poster frame IN ONE REQUEST, because a video without a thumbnail shows a black rectangle until it plays — they are only useful as a pair and should fail or succeed together.\n\n`thumbnail` is optional: Cloudinary can render a frame from the video itself, so a merchant who supplies no poster still gets one. When supplied, it is the merchant's choice of frame and wins.\n\nReturns { url, thumbnailUrl } — set both on a product's `video` and `videoThumbnail`. Saves uploadedVideoUrl and uploadedVideoThumbnailUrl."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.url) pm.collectionVariables.set('uploadedVideoUrl', data.url);",
+                      "    if (data?.thumbnailUrl) pm.collectionVariables.set('uploadedVideoThumbnailUrl', data.thumbnailUrl);",
+                      "    console.log('Saved uploadedVideoUrl =', data?.url);",
                       "}"
                     ]
                   }
@@ -5256,6 +6914,86 @@
                   ]
                 },
                 "description": "OWNER/ADMIN."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Customers",
+          "description": "The admin customer directory. OWNER/ADMIN only.\n\nMounted at `/customers` AFTER `/customers/me/addresses`: Express matches in declaration order, so mounting this first would let `/:id` capture the literal 'me' and 404 every self-service address request.",
+          "item": [
+            {
+              "name": "Admin - Get All Customers",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/customers?page=1&limit=10&searchTerm=&sortBy=createdAt&sortOrder=desc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "customers"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "searchTerm",
+                      "value": ""
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "createdAt"
+                    },
+                    {
+                      "key": "sortOrder",
+                      "value": "desc"
+                    }
+                  ]
+                },
+                "description": "Paginated customer list. Saves customerId for the next request."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.[0]?.id) pm.collectionVariables.set('customerId', data[0].id);",
+                      "    console.log('Saved customerId =', data?.[0]?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Get Customer By Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/customers/{{customerId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "customers",
+                    "{{customerId}}"
+                  ]
+                },
+                "description": "One customer, with the detail the admin panel renders."
               },
               "response": []
             }
