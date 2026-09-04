@@ -22,7 +22,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "verify:postman": "tsx scripts/verify-postman-routes.ts",
     "verify:catalog": "tsx scripts/verify-catalog-change.ts",
-    "verify:checkout": "tsx scripts/verify-checkout-totals.ts"
+    "verify:checkout": "tsx scripts/verify-checkout-totals.ts",
+    "verify:settings": "tsx scripts/verify-site-settings.ts"
   },
   "keywords": [],
   "author": "",

@@ -4,9 +4,6 @@ model Shipment {
   orderId String
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  shippingMethodId String?
-  shippingMethod   ShippingMethod? @relation(fields: [shippingMethodId], references: [id], onDelete: SetNull)
-
   trackingNumber String? @unique
 
   carrier String?
@@ -20,6 +17,5 @@ model Shipment {
   updatedAt DateTime @updatedAt
 
   @@index([orderId])
-  @@index([shippingMethodId])
   @@index([status])
 }

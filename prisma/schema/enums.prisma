@@ -244,3 +244,12 @@ enum BannerType {
   IMAGE // full png/jpg, just clickable, no dynamic content
   DYNAMIC // title, price, discount, button etc dynamically shown on top of bg
 }
+
+/// Only two states on purpose. Versioning, scheduled publishing and
+/// drafts-alongside-live are explicitly out of scope for content pages — see
+/// add-admin-ui-cms-section design.md, Non-Goals. DRAFT is indistinguishable
+/// from "no such page" to a visitor.
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+}

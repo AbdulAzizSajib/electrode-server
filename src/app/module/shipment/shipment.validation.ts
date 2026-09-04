@@ -12,14 +12,12 @@ const shipmentStatusEnum = z.enum([
 ]);
 
 export const createShipmentZodSchema = z.object({
-    shippingMethodId: z.string().optional(),
     trackingNumber: z.string().max(100).optional(),
     carrier: z.string().max(100).optional(),
     status: shipmentStatusEnum.optional(),
 });
 
 export const updateShipmentZodSchema = z.object({
-    shippingMethodId: z.string().optional(),
     trackingNumber: z.string().max(100).optional(),
     carrier: z.string().max(100).optional(),
     status: shipmentStatusEnum.optional(),

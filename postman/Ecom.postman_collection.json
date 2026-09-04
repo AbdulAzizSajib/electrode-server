@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Ecom API",
-    "description": "Full endpoint set (Phases 1-7) for the Ecom backend (see src/app/routes/index.ts and openspec/changes/add-core-api-endpoints). Phase 1 = Catalog (Categories/Brands/Products). Phase 2 = Cart/Wishlist/Customer Addresses. Phase 3 = Checkout (Shipping Methods/Orders/Payments/Shipments). Phase 4 = Post-Purchase (Returns/Refunds/Reviews). Phase 5 = Inventory & Procurement (Warehouses/Stock/Stock Movements/Suppliers/Purchase Orders). Phase 6 = Marketing (Coupons/Campaigns/Banners). Phase 7 = Support, Notifications & Admin Governance (Support Tickets/Notifications/Store Settings/Roles & Permissions/Audit Logs).\n\nAuth is cookie-based (better-auth.session_token + accessToken + refreshToken, all httpOnly). Run \"Login\" first — Postman's cookie jar holds the session automatically. Most storefront folders (Cart & Wishlist, Customer Addresses, Orders, Payments, Shipments, Returns, Reviews create, Support Tickets) need a CUSTOMER-role session; admin folders (Categories/Brands/Products admin routes, Warehouses, Suppliers, Purchase Orders, Stock, Coupons, Campaigns, Banners admin routes, Store Settings, Audit Logs) need OWNER/ADMIN/STAFF; Roles & Permissions is OWNER-only. Since only one session is active in the cookie jar at a time, switch the userEmail/userPassword variables and re-run Login when moving between a customer flow and an admin flow.\n\nNote: registration requires email verification via OTP before login will succeed (see Register -> Verify Email flow below).\n\nAdmin routes generally split from public/customer routes at the path level (e.g. `GET /categories/admin` vs `GET /categories`), not role-conditional on the same path. Create requests have test scripts that auto-save the created id/slug/code into collection variables so later requests (in the same or a later folder) can chain off them — run folders top-to-bottom on a fresh run for the chaining to line up (a few requests, like deletes that would break a later folder's chain, are intentionally placed last within their folder with a note).\n\nUpdate (close-core-api-gaps): added a generic admin/staff image-upload endpoint (Uploads folder), customer self-service order cancellation (Orders > Cancel Order), and returns now restock inventory on completion (Returns > Admin - Complete Return, requires warehouseId). Checkout also now applies the store's tax rate and free-shipping threshold automatically and validates stock against the warehouse-scoped Stock ledger — no request-shape changes for those, so no new Postman requests were needed.\n\nUpdate (2026-08-25 reorganization): split into two top-level folders — \"Public (Storefront)\" (endpoints the ecommerce website calls) and \"Private (Admin Panel)\" (endpoints the admin panel calls) — each request kept in its original module sub-folder (Categories, Products, etc.), just regrouped by audience instead of one flat list. Also added: Private > Products > Admin - Create Product (multipart, with uploaded image files) and Private > Brands > Admin - Bulk Create Brands (see add-product-image-upload), and the full Private > Analytics folder (Dashboard Summary, Top Products, Sales by Category, Order Status Breakdown, Payment Breakdown, Returns/Refunds Summary — see add-dashboard-analytics-api and add-analytics-reports-api).\n\nUpdate (align-admin-catalog-with-reference): attributes became SHOP-WIDE. The per-product option shape is gone — `options` on a product now selects an existing attribute and a subset of its values (`{ attributeId, valueIds }`), and the `options` a product returns is DERIVED from its variants' values rather than stored. Two Private folders' requests changed shape accordingly (Products > Create Product (selecting attribute values), Update Product Selection); the old `option*` collection variables were replaced by `attribute*` ones.\n\nNew Private folders: Attributes, Tax Rules, Shipping Rules, Collections, Bundle Deals, Tags. New requests: Uploads > Admin - Upload Video, Categories > Admin - Get Sub Categories (the surface over Category.parentId — no new model), Products > Admin - Update Product (rules, facts, collections, keywords).\n\nCheckout changed: tax now comes from each product's tax rule and delivery from matching the destination against its shipping rule, so Public > Orders gained 'Get Checkout Quote' — call it before Place Order to show the shopper what they will actually be charged, and to learn up front when a destination cannot be delivered to. Place Order gained an optional `deliveryMethod` (DELIVERY | PICKUP).\n\nSuggested run order for a fresh database: Attributes → Tax Rules → Shipping Rules → Collections → Bundle Deals → Categories → Brands → Products. The delete requests in each new folder are placed last within their folder because they remove ids the Products folder chains off.\n\nAlso added while checking the collection against the router (scripts/verify-postman-routes.ts): Private > Customers (the admin customer directory) and Public > Orders > Track Guest Order. All three routes predate this change and had simply never been documented.",
+    "description": "Full endpoint set (Phases 1-7) for the Ecom backend (see src/app/routes/index.ts and openspec/changes/add-core-api-endpoints). Phase 1 = Catalog (Categories/Brands/Products). Phase 2 = Cart/Wishlist/Customer Addresses. Phase 3 = Checkout (Orders/Payments/Shipments). Phase 4 = Post-Purchase (Returns/Refunds/Reviews). Phase 5 = Inventory & Procurement (Warehouses/Stock/Stock Movements/Suppliers/Purchase Orders). Phase 6 = Marketing (Coupons/Campaigns/Banners). Phase 7 = Support, Notifications & Admin Governance (Support Tickets/Notifications/Store Settings/Roles & Permissions/Audit Logs).\n\nAuth is cookie-based (better-auth.session_token + accessToken + refreshToken, all httpOnly). Run \"Login\" first — Postman's cookie jar holds the session automatically. Most storefront folders (Cart & Wishlist, Customer Addresses, Orders, Payments, Shipments, Returns, Reviews create, Support Tickets) need a CUSTOMER-role session; admin folders (Categories/Brands/Products admin routes, Warehouses, Suppliers, Purchase Orders, Stock, Coupons, Campaigns, Banners admin routes, Store Settings, Audit Logs) need OWNER/ADMIN/STAFF; Roles & Permissions is OWNER-only. Since only one session is active in the cookie jar at a time, switch the userEmail/userPassword variables and re-run Login when moving between a customer flow and an admin flow.\n\nNote: registration requires email verification via OTP before login will succeed (see Register -> Verify Email flow below).\n\nAdmin routes generally split from public/customer routes at the path level (e.g. `GET /categories/admin` vs `GET /categories`), not role-conditional on the same path. Create requests have test scripts that auto-save the created id/slug/code into collection variables so later requests (in the same or a later folder) can chain off them — run folders top-to-bottom on a fresh run for the chaining to line up (a few requests, like deletes that would break a later folder's chain, are intentionally placed last within their folder with a note).\n\nUpdate (close-core-api-gaps): added a generic admin/staff image-upload endpoint (Uploads folder), customer self-service order cancellation (Orders > Cancel Order), and returns now restock inventory on completion (Returns > Admin - Complete Return, requires warehouseId). Checkout also now applies the store's tax rate and free-shipping threshold automatically and validates stock against the warehouse-scoped Stock ledger — no request-shape changes for those, so no new Postman requests were needed.\n\nUpdate (2026-08-25 reorganization): split into two top-level folders — \"Public (Storefront)\" (endpoints the ecommerce website calls) and \"Private (Admin Panel)\" (endpoints the admin panel calls) — each request kept in its original module sub-folder (Categories, Products, etc.), just regrouped by audience instead of one flat list. Also added: Private > Products > Admin - Create Product (multipart, with uploaded image files) and Private > Brands > Admin - Bulk Create Brands (see add-product-image-upload), and the full Private > Analytics folder (Dashboard Summary, Top Products, Sales by Category, Order Status Breakdown, Payment Breakdown, Returns/Refunds Summary — see add-dashboard-analytics-api and add-analytics-reports-api).\n\nUpdate (align-admin-catalog-with-reference): attributes became SHOP-WIDE. The per-product option shape is gone — `options` on a product now selects an existing attribute and a subset of its values (`{ attributeId, valueIds }`), and the `options` a product returns is DERIVED from its variants' values rather than stored. Two Private folders' requests changed shape accordingly (Products > Create Product (selecting attribute values), Update Product Selection); the old `option*` collection variables were replaced by `attribute*` ones.\n\nNew Private folders: Attributes, Tax Rules, Shipping Rules, Collections, Bundle Deals, Tags. New requests: Uploads > Admin - Upload Video, Categories > Admin - Get Sub Categories (the surface over Category.parentId — no new model), Products > Admin - Update Product (rules, facts, collections, keywords).\n\nCheckout changed: tax now comes from each product's tax rule and delivery from matching the destination against its shipping rule, so Public > Orders gained 'Get Checkout Quote' — call it before Place Order to show the shopper what they will actually be charged, and to learn up front when a destination cannot be delivered to. Place Order gained an optional `deliveryMethod` (DELIVERY | PICKUP).\n\nSuggested run order for a fresh database: Attributes → Tax Rules → Shipping Rules → Collections → Bundle Deals → Categories → Brands → Products. The delete requests in each new folder are placed last within their folder because they remove ids the Products folder chains off.\n\nAlso added while checking the collection against the router (scripts/verify-postman-routes.ts): Private > Customers (the admin customer directory) and Public > Orders > Track Guest Order. All three routes predate this change and had simply never been documented.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -92,11 +92,6 @@
     },
     {
       "key": "addressId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "shippingMethodId",
       "value": "",
       "type": "string"
     },
@@ -276,6 +271,14 @@
     },
     {
       "key": "guestOrderPhone",
+      "value": ""
+    },
+    {
+      "key": "pageId",
+      "value": ""
+    },
+    {
+      "key": "pageSlug",
       "value": ""
     }
   ],
@@ -633,6 +636,46 @@
                   ]
                 },
                 "description": "Redirect-based OAuth flow - not directly testable from Postman's request runner. Open this URL in a browser instead; it redirects through Google and back to /auth/google/success, then to FRONTEND_URL."
+              },
+              "response": []
+            },
+            {
+              "name": "Google OAuth - Success Callback",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/auth/google/success",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "google",
+                    "success"
+                  ]
+                },
+                "description": "No auth. Where Google redirects after a successful consent. Not called directly — it completes the session and redirects on to the client. Listed so the collection matches the router."
+              },
+              "response": []
+            },
+            {
+              "name": "Google OAuth - Error Callback",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/auth/oauth/error",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "oauth",
+                    "error"
+                  ]
+                },
+                "description": "No auth. Where the OAuth flow lands when consent fails or is cancelled. Not called directly. Listed so the collection matches the router."
               },
               "response": []
             }
@@ -1588,29 +1631,6 @@
           ]
         },
         {
-          "name": "Shipping Methods",
-          "item": [
-            {
-              "name": "Public - Get Shipping Methods",
-              "request": {
-                "method": "GET",
-                "header": [],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods"
-                  ]
-                },
-                "description": "No auth. Active only."
-              },
-              "response": []
-            }
-          ]
-        },
-        {
           "name": "Orders",
           "item": [
             {
@@ -1635,9 +1655,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"shippingMethodId\": \"{{shippingMethodId}}\"\n}"
+                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\"\n}"
                 },
-                "description": "What this basket costs to this destination, WITHOUT placing anything.\n\nNecessary because shipping is no longer a flat price the storefront can add up itself: it comes from each product's shipping rule matched against where the order is going, and so does tax. Without asking the server, checkout would show one number and charge another — or let the shopper reach Place Order before learning nobody delivers to their address.\n\nDeliberately shares its arithmetic with Place Order, so a quote and a charge cannot drift apart.\n\nOptional-auth, like checkout itself: a guest needs this most, having no saved address to have been quoted against before. A guest sends `country`/`state` inline instead of `shippingAddressId`; everything is optional, because a quote is asked for while the shopper is still typing.\n\nReturns subtotal, discountAmount, taxAmount, shippingAmount, shippingBeforeWaiver (so a waived charge can be shown as a saving), deliveryDays, totalAmount, and — when every matched place offers it — pickupAmount and pickupTotalAmount.\n\nAn undeliverable destination is a 400 naming the PRODUCT that cannot get there, not a silent zero."
+                "description": "What this basket costs to this destination, WITHOUT placing anything.\n\nNecessary because shipping is no longer a flat price the storefront can add up itself: it comes from each product's shipping rule matched against where the order is going, and so does tax. Without asking the server, checkout would show one number and charge another — or let the shopper reach Place Order before learning nobody delivers to their address.\n\nDeliberately shares its arithmetic with Place Order, so a quote and a charge cannot drift apart.\n\nOptional-auth, like checkout itself: a guest needs this most, having no saved address to have been quoted against before. A guest sends `country`/`state` inline instead of `shippingAddressId`; everything is optional, because a quote is asked for while the shopper is still typing.\n\nReturns subtotal, discountAmount, taxAmount, shippingAmount, shippingBeforeWaiver (so a waived charge can be shown as a saving), deliveryDays, totalAmount, and — when every matched place offers it — pickupAmount and pickupTotalAmount. `places` carries every matched place — name, price, deliveryDays, offersPickup, pickupPrice — which is what checkout shows the shopper now that there is no delivery-method list to pick from.\n\nAn undeliverable destination is a 400 naming the PRODUCT that cannot get there, not a silent zero."
               },
               "response": []
             },
@@ -1690,9 +1710,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"shippingMethodId\": \"{{shippingMethodId}}\",\n  \"deliveryMethod\": \"DELIVERY\",\n  \"notes\": \"Please call before delivery\"\n}"
+                  "raw": "{\n  \"shippingAddressId\": \"{{addressId}}\",\n  \"deliveryMethod\": \"DELIVERY\",\n  \"notes\": \"Please call before delivery\"\n}"
                 },
-                "description": "Checkout from the customer's cart — snapshots line items, validates stock/price, clears the cart on success. If a coupon is applied to the cart (see Cart & Wishlist folder), it's consumed automatically here (discount applied, Coupon.usageCount incremented) — no need to resend the code. Saves orderId.\n\nUpdate (align-admin-catalog-with-reference): tax now comes from EACH PRODUCT'S tax rule rather than the store-wide rate, and delivery from matching the shopper's destination against each product's shipping rule — charged once per distinct rule in the order, since products under one delivery policy travel together. `shippingMethodId` is still accepted and still creates the Shipment row, but its price is now only a fallback for an order whose products carry no shipping rule at all.\n\n`deliveryMethod` is optional and defaults to DELIVERY. An undeliverable destination is refused with a 400 naming the product, never charged as zero.\n\nCall 'Get Checkout Quote' first to show the shopper what they will be charged."
+                "description": "Checkout from the customer's cart — snapshots line items, validates stock/price, clears the cart on success. If a coupon is applied to the cart (see Cart & Wishlist folder), it's consumed automatically here (discount applied, Coupon.usageCount incremented) — no need to resend the code. Saves orderId.\n\nTax comes from EACH PRODUCT'S tax rule rather than the store-wide rate, and delivery from matching the shopper's destination against each product's shipping rule — charged once per distinct rule in the order, since products under one delivery policy travel together. A product with no rule of its own rides along in a parcel already being paid for; a basket where NOTHING carries a rule has no parcel to ride in and is refused with a 400 naming the products.\n\n`deliveryMethod` is optional and defaults to DELIVERY. An undeliverable destination is refused with a 400 naming the product, never charged as zero.\n\nNo shipment is opened here — the admin creates one at dispatch (Private → Shipments), so an order never claims a dispatch that has not happened.\n\nCall 'Get Checkout Quote' first to show the shopper what they will be charged."
               },
               "response": [],
               "event": [
@@ -1935,7 +1955,8 @@
                     "{{orderId}}",
                     "shipment"
                   ]
-                }
+                },
+                "description": "The order's shipment, once one exists. 404 — \"This order has no shipment yet\" — until an admin opens it at dispatch; checkout does not create one."
               },
               "response": []
             }
@@ -2584,6 +2605,48 @@
                   ]
                 },
                 "description": "NO AUTH. Storefront presentation payload for the header and footer: branding, mainNav, footerColumns, socialLinks, announcementBar, newsletter, contact, currency. Explicit allow-list - defaultTaxRatePercent and freeShippingThreshold are NOT exposed. Read-only: never creates or mutates the settings row."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Pages",
+          "item": [
+            {
+              "name": "Public - Get Published Pages",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages"
+                  ]
+                },
+                "description": "No auth. Returns every PUBLISHED page trimmed to { id, title, slug } — the list the admin panel's link pickers and the footer editor offer as targets. DRAFT pages are never included."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Page by Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/{{pageSlug}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "{{pageSlug}}"
+                  ]
+                },
+                "description": "No auth. Returns the PUBLISHED page at this slug, which the storefront renders at the root-level `/<slug>`.\n\nA DRAFT page and a slug no page uses both return 404, deliberately: the response must not let a visitor tell an unpublished page from one that was never written."
               },
               "response": []
             }
@@ -3887,7 +3950,7 @@
         },
         {
           "name": "Shipping Rules",
-          "description": "Named delivery policies made of places, assigned per product. Replaces ShippingMethod's flat price, which charged the same to deliver across the city as across the country.\n\nA rule MUST always keep at least one place: one matching nowhere can charge nothing, and its products would be undeliverable.",
+          "description": "Named delivery policies made of places, assigned per product. A place prices one destination, so delivering across the city is not charged the same as delivering across the country.\n\nA rule MUST always keep at least one place: one matching nowhere can charge nothing, and its products would be undeliverable.",
           "item": [
             {
               "name": "Admin - Create Shipping Rule (region, country, catch-all)",
@@ -5291,145 +5354,6 @@
           ]
         },
         {
-          "name": "Shipping Methods",
-          "item": [
-            {
-              "name": "Admin - Create Shipping Method",
-              "request": {
-                "method": "POST",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                  }
-                ],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods"
-                  ]
-                },
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"name\": \"Standard Delivery\",\n  \"description\": \"3-5 business days\",\n  \"price\": 60,\n  \"estimatedDays\": 4,\n  \"isActive\": true\n}"
-                }
-              },
-              "response": [],
-              "event": [
-                {
-                  "listen": "test",
-                  "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                      "if (pm.response.code === 201) {",
-                      "    const data = pm.response.json()?.data;",
-                      "    if (data?.id) pm.collectionVariables.set('shippingMethodId', data.id);",
-                      "    console.log('Saved shippingMethodId =', data?.id);",
-                      "}"
-                    ]
-                  }
-                }
-              ]
-            },
-            {
-              "name": "Admin - Get All Shipping Methods",
-              "request": {
-                "method": "GET",
-                "header": [],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods/admin?page=1&limit=10",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods",
-                    "admin"
-                  ],
-                  "query": [
-                    {
-                      "key": "page",
-                      "value": "1"
-                    },
-                    {
-                      "key": "limit",
-                      "value": "10"
-                    }
-                  ]
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Admin - Get Shipping Method By Id",
-              "request": {
-                "method": "GET",
-                "header": [],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods/admin/{{shippingMethodId}}",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods",
-                    "admin",
-                    "{{shippingMethodId}}"
-                  ]
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Admin - Update Shipping Method",
-              "request": {
-                "method": "PATCH",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                  }
-                ],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods/{{shippingMethodId}}",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods",
-                    "{{shippingMethodId}}"
-                  ]
-                },
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"price\": 70\n}"
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Admin - Delete Shipping Method",
-              "request": {
-                "method": "DELETE",
-                "header": [],
-                "url": {
-                  "raw": "{{base_url}}/shipping-methods/{{shippingMethodId}}",
-                  "host": [
-                    "{{base_url}}"
-                  ],
-                  "path": [
-                    "shipping-methods",
-                    "{{shippingMethodId}}"
-                  ]
-                },
-                "description": "Run this only after the Orders folder — Place Order references {{shippingMethodId}}."
-              },
-              "response": []
-            }
-          ]
-        },
-        {
           "name": "Orders",
           "item": [
             {
@@ -5491,7 +5415,7 @@
                   "mode": "raw",
                   "raw": "{\n  \"trackingNumber\": \"TRK123456789\",\n  \"carrier\": \"Pathao Courier\",\n  \"status\": \"PROCESSING\"\n}"
                 },
-                "description": "One shipment per order (no split-shipment support)."
+                "description": "Opens the order's shipment at dispatch — checkout does not create one, so this is where the parcel first exists. One shipment per order (no split-shipment support): a second POST is a 409, update the existing one instead."
               },
               "response": []
             },
@@ -6920,6 +6844,177 @@
           ]
         },
         {
+          "name": "Pages",
+          "item": [
+            {
+              "name": "Admin - List Pages",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/admin?page=1&limit=10&searchTerm=&status=",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    },
+                    {
+                      "key": "searchTerm",
+                      "value": ""
+                    },
+                    {
+                      "key": "status",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN. Every page regardless of status. `searchTerm` matches title and slug; `status` filters to DRAFT or PUBLISHED. Leave a query value blank to omit that filter."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Page by Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/admin/{{pageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "admin",
+                    "{{pageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Returns a page of any status, including its full body — this is how a DRAFT is reviewed before publishing."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Reserved Slugs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/reserved-slugs",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "reserved-slugs"
+                  ]
+                },
+                "description": "OWNER/ADMIN. The top-level storefront path segments a page may not claim (`cart`, `products`, `checkout`, ...).\n\nServed from the server rather than hardcoded in the admin panel: the two are separate deployments, so an admin-side copy would drift the first time a storefront route is added. The admin slug field checks against this as the merchant types, instead of waiting for the save to 409."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Page",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Creates a content page.\n\n`slug` is OPTIONAL — omit it and the server derives one from the title (\"Terms and Conditions\" -> `terms-and-conditions`). A supplied slug must be lowercase words joined by single hyphens.\n\nRejected with 409 when the slug is already taken, or when it is reserved by the storefront (try `cart` to see it). `body` is required and may not be blank once its tags are stripped.\n\n`status` defaults to DRAFT, so a new page is not publicly reachable until you publish it.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"title\": \"Refund Policy\",\n    \"body\": \"<h2>Refunds</h2><p>Returns are accepted within 30 days of delivery.</p><ul><li>Item must be unused</li><li>Original packaging required</li></ul>\",\n    \"metaTitle\": \"Refund Policy | Gadgets Mart\",\n    \"metaDescription\": \"How refunds and returns work at Gadgets Mart.\",\n    \"status\": \"PUBLISHED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('pageId', data.id);",
+                      "    if (data?.slug) pm.collectionVariables.set('pageSlug', data.slug);",
+                      "    console.log('Saved pageId =', data?.id, 'pageSlug =', data?.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Update Page",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/{{pageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "{{pageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Partial — send only what changes.\n\nOmitting `slug` leaves the stored one alone; it is NOT re-derived from a changed title, so renaming a live page cannot silently move its URL out from under inbound links. Sending a new `slug` re-runs the reserved and uniqueness checks.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"status\": \"PUBLISHED\",\n    \"metaDescription\": \"Updated summary for search engines.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Page",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/pages/{{pageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "pages",
+                    "{{pageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Removes the page. Its former `/<slug>` starts responding with the storefront's 404 on the next request after the cache window elapses."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
           "name": "Customers",
           "description": "The admin customer directory. OWNER/ADMIN only.\n\nMounted at `/customers` AFTER `/customers/me/addresses`: Express matches in declaration order, so mounting this first would let `/:id` capture the literal 'me' and 404 every self-service address request.",
           "item": [
@@ -7229,9 +7324,9 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"storeName\": \"Ecom BD\",\n  \"defaultTaxRatePercent\": 5,\n  \"freeShippingThreshold\": 2000,\n  \"contactEmail\": \"support@ecom.example.com\"\n}"
+                  "raw": "{\n  \"storeName\": \"Ecom BD\",\n  \"defaultTaxRatePercent\": 5,\n  \"freeShippingThreshold\": 2000,\n  \"contactEmail\": \"support@ecom.example.com\",\n  \"footerLogoUrl\": \"https://cdn.example.com/footer-logo.png\",\n  \"siteUrl\": \"https://ecom.example.com\",\n  \"metaTitle\": \"Ecom BD - Electronics Store\",\n  \"metaDescription\": \"Shop the latest electronics with fast delivery across Bangladesh.\",\n  \"checkoutConfig\": {\n    \"fields\": {\n      \"fullName\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"phone\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"addressLine1\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"addressLine2\": {\n        \"show\": true,\n        \"required\": false\n      },\n      \"city\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"postalCode\": {\n        \"show\": true,\n        \"required\": false\n      }\n    },\n    \"showCouponBox\": true,\n    \"showOrderNote\": true,\n    \"allowGuestCheckout\": true,\n    \"notice\": \"\"\n  },\n  \"theme\": {\n    \"background\": \"#ffffff\",\n    \"foreground\": \"#1a1a1a\",\n    \"brand\": \"#0f63b3\",\n    \"brandDark\": \"#133f9e\",\n    \"accent\": \"#f5b301\",\n    \"sale\": \"#e02020\",\n    \"maxWidth\": 1384,\n    \"font\": \"https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap\"\n  }\n}"
                 },
-                "description": "OWNER/ADMIN only. Upserts the one StoreSetting row — never creates a second one."
+                "description": "OWNER/ADMIN only. Upserts the one StoreSetting row — never creates a second one.\n\nEvery field is optional and the patch is partial: a key left out leaves that column untouched. That is what lets the separate admin editors (Store Settings, Header Links, Footer Links, Checkout Setting, Site Setting) write to this one endpoint without clobbering each other.\n\ncheckoutConfig — two invariants are rejected with a 400: no field may be hidden and required at the same time, and \"phone\" must stay shown and required (guest order lookup and the per-phone COD cap are keyed on it).\n\ntheme — colours must be hex (#rgb or #rrggbb). \"maxWidth\" is 960-2560, or the string \"full\". \"font\" is sent as the text pasted from Google Fonts (the @import rule, the <link> tag, or the bare URL); the server parses it, rejects any host other than fonts.googleapis.com, and stores a rebuilt URL. Reading the settings back returns \"font\" as an object of { family, url }."
               },
               "response": []
             }

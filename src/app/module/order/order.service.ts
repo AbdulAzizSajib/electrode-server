@@ -21,6 +21,11 @@ import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
 import { StoreSettingService } from "../store-setting/store-setting.service";
 import {
+    collectMissingCheckoutFields,
+    missingCheckoutFieldsMessage,
+    submittedCheckoutFields,
+} from "./order.checkout-fields";
+import {
     ICheckoutActor,
     ICheckoutItemPayload,
     ICreateOrderPayload,
@@ -33,7 +38,7 @@ import { IPricingLine, quoteCharges, roundMoney } from "./order.pricing";
 const ORDER_DETAIL_INCLUDE = {
     items: true,
     payments: true,
-    shipments: { include: { shippingMethod: true } },
+    shipments: true,
     statusHistory: { orderBy: { createdAt: "desc" as const } },
     shippingAddress: true,
     customer: {
@@ -270,6 +275,13 @@ const deductStockForOrderLines = async (
     }
 };
 
+/**
+ * Stands in for a guest's name when the merchant has turned that field off.
+ * CustomerAddress.fullName is NOT NULL and getOrCreateCustomerByPhone refuses
+ * an empty name, so the alternative is not "no name" but "no order".
+ */
+const GUEST_FALLBACK_NAME = "Guest";
+
 /** Order states that still tie up stock and courier capacity, for the guest COD cap. */
 const UNFULFILLED_COD_STATUSES: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
 
@@ -437,16 +449,52 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
         throw new AppError(status.BAD_REQUEST, "Only cash on delivery is available at checkout");
     }
 
-    if (!payload.fullName || !payload.phone || !payload.shippingAddress) {
+    /*
+     * What checkout is currently configured to ask for. The storefront renders
+     * its form from this same config, but the storefront is not the only way to
+     * reach this endpoint — so it is re-applied here rather than trusted.
+     */
+    const checkoutConfig = await StoreSettingService.getCheckoutConfig();
+
+    // Before the address is created and before the guest limits are counted:
+    // when guest checkout is off, this request should cost nothing.
+    if (!checkoutConfig.allowGuestCheckout) {
         throw new AppError(
-            status.BAD_REQUEST,
-            "Your name, phone number and delivery address are required",
+            status.UNAUTHORIZED,
+            "Please sign in to place an order",
         );
+    }
+
+    /*
+     * The configurable half of guest validation, driven by the same field keys
+     * the admin edits. A merchant who marks City optional makes it genuinely
+     * optional here — that is the whole point of the setting.
+     */
+    const missing = collectMissingCheckoutFields(
+        checkoutConfig,
+        submittedCheckoutFields(payload),
+    );
+
+    if (missing.length > 0) {
+        throw new AppError(status.BAD_REQUEST, missingCheckoutFieldsMessage(missing));
+    }
+
+    /*
+     * The floor, checked independently of the config above. checkoutConfigSchema
+     * refuses to SAVE a config without a required phone; this refuses to ACT on
+     * one, so a row edited straight in the database cannot produce an order that
+     * its owner can never look up and that the per-phone COD cap cannot count.
+     */
+    if (!payload.phone) {
+        throw new AppError(status.BAD_REQUEST, "Your phone number is required");
     }
 
     const customer = await CustomerService.getOrCreateCustomerByPhone(
         payload.phone,
-        payload.fullName,
+        // A merchant may legitimately have turned the name field off. "Guest"
+        // keeps the customer record from being created nameless — the phone is
+        // the identity here, the name was only ever a courtesy.
+        payload.fullName?.trim() || GUEST_FALLBACK_NAME,
     );
 
     // Before anything is created, and well before the transaction opens.
@@ -456,14 +504,21 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
         data: {
             customerId: customer.id,
             type: AddressType.SHIPPING,
-            fullName: payload.fullName,
+            /*
+             * `fullName`, `addressLine1` and `city` are NOT NULL on
+             * CustomerAddress, so a field the merchant chose not to collect is
+             * stored as an empty string rather than null. That is the honest
+             * record — "not asked for" — and it keeps every existing reader of
+             * an address working unchanged.
+             */
+            fullName: payload.fullName?.trim() || GUEST_FALLBACK_NAME,
             phone: payload.phone,
-            addressLine1: payload.shippingAddress.addressLine1,
-            addressLine2: payload.shippingAddress.addressLine2,
-            city: payload.shippingAddress.city,
-            state: payload.shippingAddress.state,
-            postalCode: payload.shippingAddress.postalCode,
-            ...(payload.shippingAddress.country
+            addressLine1: payload.shippingAddress?.addressLine1 ?? "",
+            addressLine2: payload.shippingAddress?.addressLine2,
+            city: payload.shippingAddress?.city ?? "",
+            state: payload.shippingAddress?.state,
+            postalCode: payload.shippingAddress?.postalCode,
+            ...(payload.shippingAddress?.country
                 ? { country: payload.shippingAddress.country }
                 : {}),
         },
@@ -549,14 +604,6 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
 
     if (lines.length === 0) {
         throw new AppError(status.BAD_REQUEST, "Your cart is empty");
-    }
-
-    const shippingMethod = payload.shippingMethodId
-        ? await prisma.shippingMethod.findUnique({ where: { id: payload.shippingMethodId } })
-        : null;
-
-    if (payload.shippingMethodId && (!shippingMethod || !shippingMethod.isActive)) {
-        throw new AppError(status.BAD_REQUEST, "Shipping method not found");
     }
 
     const orderItemsData: IOrderItemData[] = [];
@@ -660,7 +707,6 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
             storeSetting.freeShippingThreshold === null
                 ? null
                 : Number(storeSetting.freeShippingThreshold),
-        fallbackFlatShippingPrice: shippingMethod ? Number(shippingMethod.price) : 0,
     });
 
     const { shippingAmount, taxAmount } = charges;
@@ -710,9 +756,9 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
                               },
                           }
                         : {}),
-                    ...(payload.shippingMethodId
-                        ? { shipments: { create: { shippingMethodId: payload.shippingMethodId } } }
-                        : {}),
+                    // No shipment is opened here. One is created when the parcel
+                    // actually goes out (ShipmentService.createShipment), so an
+                    // order does not claim a dispatch that has not happened.
                 },
             });
 
@@ -876,12 +922,7 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
             ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
             : null;
 
-    const [storeSetting, shippingMethod] = await Promise.all([
-        StoreSettingService.getStoreSetting(),
-        payload.shippingMethodId
-            ? prisma.shippingMethod.findUnique({ where: { id: payload.shippingMethodId } })
-            : Promise.resolve(null),
-    ]);
+    const storeSetting = await StoreSettingService.getStoreSetting();
 
     // Priced for delivery regardless of what the shopper has picked so far —
     // the quote's job is to tell them what each option costs, and `pickupAmount`
@@ -898,7 +939,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
             storeSetting.freeShippingThreshold === null
                 ? null
                 : Number(storeSetting.freeShippingThreshold),
-        fallbackFlatShippingPrice: shippingMethod ? Number(shippingMethod.price) : 0,
     });
 
     const discountAmount = couponResult?.discountAmount ?? 0;

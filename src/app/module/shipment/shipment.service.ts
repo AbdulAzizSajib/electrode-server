@@ -30,7 +30,6 @@ const getLatestShipment = (orderId: string) =>
     prisma.shipment.findFirst({
         where: { orderId },
         orderBy: { createdAt: "desc" },
-        include: { shippingMethod: true },
     });
 
 const getOrderShipment = async (userId: string, role: RoleName, orderId: string) => {
@@ -60,7 +59,6 @@ const createShipment = async (orderId: string, payload: ICreateShipmentPayload) 
 
     return prisma.shipment.create({
         data: { ...payload, orderId },
-        include: { shippingMethod: true },
     });
 };
 
@@ -79,7 +77,6 @@ const updateShipment = async (orderId: string, payload: IUpdateShipmentPayload) 
             shippedAt: shippedAt ? new Date(shippedAt) : undefined,
             deliveredAt: deliveredAt ? new Date(deliveredAt) : undefined,
         },
-        include: { shippingMethod: true },
     });
 };
 

@@ -37,10 +37,23 @@ model StoreSetting {
 
   /// Branding. `siteNameAccent` is the second, accent-coloured half of the
   /// wordmark (the storefront renders `storeName` + `siteNameAccent`).
+  ///
+  /// Two logos, not one: storefront headers and footers are commonly
+  /// light-on-dark and dark-on-light respectively, so one image cannot serve
+  /// both. A store with only `logoUrl` set renders it in both places rather
+  /// than leaving the footer's brand slot blank.
   logoUrl        String?
+  footerLogoUrl  String?
   siteNameAccent String?
   aboutText      String?
   copyrightText  String?
+
+  /// SEO surface. `siteUrl` is the canonical origin used to resolve absolute
+  /// metadata URLs; `metaTitle` falls back to `storeName` when unset, so the
+  /// storefront's document title is never empty.
+  siteUrl         String?
+  metaTitle       String?
+  metaDescription String?
 
   /// Zod-validated on write - see the model doc-comment above.
   /// mainNav:         [{ label, href, children?: [{ label, href }] }] (one level deep)
@@ -53,6 +66,30 @@ model StoreSetting {
   socialLinks     Json?
   announcementBar Json?
   newsletter      Json?
+
+  /// Zod-validated on write exactly like the presentation columns above - the
+  /// schemas in store-setting.validation.ts are the ONLY gate on their shape,
+  /// and both carry invariants Postgres cannot express.
+  ///
+  /// checkoutConfig: { fields: { <fieldKey>: { show, required } }, showCouponBox,
+  ///                   showOrderNote, allowGuestCheckout, notice }
+  ///   Field keys are the ORDER PAYLOAD's own keys (fullName, phone,
+  ///   addressLine1, addressLine2, city, postalCode) so order.service.ts can
+  ///   validate by iterating the map rather than by a switch it has to keep in
+  ///   step with the admin table. Two invariants are enforced in Zod: no field
+  ///   may be hidden-and-required, and `phone` may never be hidden or optional
+  ///   (guest order lookup and the per-phone COD cap are both keyed on it).
+  ///   order.service.ts re-checks phone independently, so a row edited outside
+  ///   the API cannot disable it either.
+  ///
+  /// theme: { background, foreground, brand, brandDark, accent, sale,
+  ///          maxWidth, font: { family, url } }
+  ///   Colours are strict hex - the values are interpolated into an inline
+  ///   style attribute on the storefront's <html>, so a value that could carry
+  ///   further declarations is rejected. `font.url` is REBUILT by the parser
+  ///   from validated components and is never a substring of merchant input.
+  checkoutConfig Json?
+  theme          Json?
 
   updatedAt DateTime @updatedAt
 }

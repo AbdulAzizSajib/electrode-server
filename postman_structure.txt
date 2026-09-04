@@ -53,8 +53,6 @@
     PATCH Update Address
     PATCH Set Default Address
     DELETE Delete Address
-  [FOLDER] Shipping Methods
-    GET Public - Get Shipping Methods
   [FOLDER] Orders
     POST Get Checkout Quote (price before ordering)
     POST Get Checkout Quote (guest, inline destination)
@@ -201,12 +199,6 @@
   [FOLDER] Uploads
     POST Admin - Upload Image
     POST Admin - Upload Video (with poster frame)
-  [FOLDER] Shipping Methods
-    POST Admin - Create Shipping Method
-    GET Admin - Get All Shipping Methods
-    GET Admin - Get Shipping Method By Id
-    PATCH Admin - Update Shipping Method
-    DELETE Admin - Delete Shipping Method
   [FOLDER] Orders
     PATCH Admin - Update Order Status
   [FOLDER] Shipments

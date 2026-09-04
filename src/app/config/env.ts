@@ -33,6 +33,25 @@ interface EnvConfig {
     SUPER_ADMIN_EMAIL: string;
     SUPER_ADMIN_PASSWORD: string;
     SUBSCRIPTION_BKASH_NUMBER: string;
+    /**
+     * Shared secret for the storefront's /api/revalidate endpoint, so a
+     * settings save clears the storefront's cached copy immediately instead of
+     * waiting out its revalidate window.
+     *
+     * Optional, and deliberately absent from requireEnvVariable below: an
+     * install without it keeps working, it just falls back to the storefront's
+     * own timing. The secret lives here rather than in the admin panel because
+     * the admin is a browser bundle and could not keep it.
+     */
+    STOREFRONT_REVALIDATE_SECRET?: string;
+    /**
+     * The storefront's origin, for the revalidation ping above. Optional —
+     * FRONTEND_URL is used when this is unset. They are usually the same, but
+     * FRONTEND_URL also backs auth callbacks and email links, so this exists
+     * for a deployment where the storefront answers on a different host or
+     * port and repointing FRONTEND_URL would break those.
+     */
+    STOREFRONT_URL?: string;
 }
 
 
@@ -101,6 +120,8 @@ const loadEnvVariables = (): EnvConfig => {
         SUPER_ADMIN_EMAIL: process.env.SUPER_ADMIN_EMAIL as string,
         SUPER_ADMIN_PASSWORD: process.env.SUPER_ADMIN_PASSWORD as string,
         SUBSCRIPTION_BKASH_NUMBER: process.env.SUBSCRIPTION_BKASH_NUMBER as string,
+        STOREFRONT_REVALIDATE_SECRET: process.env.STOREFRONT_REVALIDATE_SECRET,
+        STOREFRONT_URL: process.env.STOREFRONT_URL,
     }
 }
 

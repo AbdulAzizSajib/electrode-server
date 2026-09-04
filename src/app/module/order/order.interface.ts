@@ -33,7 +33,6 @@ export interface ICheckoutItemPayload {
 
 export interface ICreateOrderPayload {
     shippingAddressId?: string;
-    shippingMethodId?: string;
     notes?: string;
 
     /**
@@ -86,8 +85,6 @@ export interface IQuoteCheckoutPayload {
     shippingAddressId?: string;
     country?: string;
     state?: string;
-    /** Only used for the flat-price fallback when no product carries a rule. */
-    shippingMethodId?: string;
     /** Prices these lines instead of the cart, mirroring the checkout bypass. */
     items?: ICheckoutItemPayload[];
     /** Injected by the controller from the applied-coupon cookie, as checkout is. */

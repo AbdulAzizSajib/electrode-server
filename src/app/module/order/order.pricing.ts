@@ -196,30 +196,31 @@ export const matchPlace = <T extends { country: string | null; state: string | n
  * one away.
  *
  * A product with no shipping rule rides along on whatever else is being
- * delivered rather than being charged separately; an order made entirely of
- * such products falls back to the flat `ShippingMethod` price the shopper
- * picked, which is what they were charged before this change.
+ * delivered rather than being charged separately — it travels in a parcel
+ * already being paid for.
  *
- * Throws when a rule covers nothing at this destination. A destination nobody
- * can deliver to must be said out loud — quietly charging zero for it is a
- * delivery the merchant pays for.
+ * Throws when a rule covers nothing at this destination, and when no line
+ * carries a rule at all. Neither can be delivered, and both must be said out
+ * loud — quietly charging zero is a delivery the merchant pays for.
  */
 export const quoteShipping = async (
     lines: IPricingLine[],
     destination: IDestination,
-    fallbackFlatPrice: number,
 ): Promise<IShippingQuote> => {
     const ruleIds = [
         ...new Set(lines.map((l) => l.shippingRuleId).filter((id): id is string => !!id)),
     ];
 
     if (ruleIds.length === 0) {
-        return {
-            deliveryAmount: roundMoney(fallbackFlatPrice),
-            pickupAmount: null,
-            deliveryDays: null,
-            matches: [],
-        };
+        // Nothing in the basket has a delivery policy, so there is no parcel to
+        // ride along in. A merchant misconfiguration rather than a shopper
+        // mistake, but the shopper is the one standing at the checkout — so name
+        // what they are holding, as the unmatched-place throw below does.
+        const names = [...new Set(lines.map((l) => l.productName))];
+        throw new AppError(
+            status.BAD_REQUEST,
+            `${names.map((n) => `"${n}"`).join(", ")} cannot be delivered — no delivery option has been set up for ${names.length === 1 ? "it" : "them"}`,
+        );
     }
 
     const rules = await prisma.shippingRule.findMany({
@@ -288,8 +289,6 @@ export interface IChargeQuoteInput {
     fallbackTaxPercent: number;
     /** Threshold above which delivery is free, or null when the shop has none. */
     freeShippingThreshold: number | null;
-    /** The flat price of the picked `ShippingMethod`, for the no-rules fallback. */
-    fallbackFlatShippingPrice: number;
 }
 
 export interface IChargeQuote {
@@ -318,7 +317,7 @@ export const quoteCharges = async (input: IChargeQuoteInput): Promise<IChargeQuo
 
     const [tax, shipping] = await Promise.all([
         quoteTax(input.lines, input.discountAmount, input.fallbackTaxPercent),
-        quoteShipping(input.lines, input.destination, input.fallbackFlatShippingPrice),
+        quoteShipping(input.lines, input.destination),
     ]);
 
     if (input.deliveryMethod === "PICKUP") {

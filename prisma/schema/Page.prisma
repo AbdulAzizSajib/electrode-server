@@ -1,0 +1,44 @@
+/// A merchant-authored content page — About, Terms & Conditions, Refund Policy,
+/// FAQ and the like.
+///
+/// Deliberately not a page *builder*: a page is a title and one rich-text body,
+/// nothing more. Sections, blocks and per-locale variants are out of scope (see
+/// add-admin-ui-cms-section design.md, Non-Goals).
+model Page {
+  id String @id @default(cuid())
+
+  title String
+
+  /// The storefront serves a page at the root, `/<slug>`, so this doubles as a
+  /// top-level URL segment. Two constraints follow from that and are enforced
+  /// in page.validation.ts rather than here, because Postgres cannot express
+  /// either: the slug matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and it may not be
+  /// one of RESERVED_SLUGS (page.constant.ts) — a storefront route would
+  /// silently win the match and the merchant's page would 404 with no clue why.
+  slug String @unique
+
+  /// Semantic HTML from the admin's Tiptap editor. Stored as authored and NOT
+  /// sanitised on write: the guarantee is enforced where the markup meets a
+  /// browser, on the storefront, because sanitising only here would leave
+  /// everything already stored — or written by any other path — trusted
+  /// forever. Same posture as Product.description; see the storefront's
+  /// src/lib/sanitize-html.ts.
+  body String @db.Text
+
+  /// Both optional. The storefront falls back to `title` and to a truncated
+  /// plain-text excerpt of `body` respectively, so a page is never published
+  /// without usable metadata.
+  metaTitle       String?
+  metaDescription String?
+
+  status PageStatus @default(DRAFT)
+
+  /// Orders the admin list only. Pages have no storefront index that would
+  /// render them in sequence — they are reached by direct link.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}

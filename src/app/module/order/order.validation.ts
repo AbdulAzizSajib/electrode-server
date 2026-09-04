@@ -1,11 +1,21 @@
 import z from "zod";
 import { isValidPhone } from "../../utils/phone";
 
-/** Inline shipping address for a guest, who has none saved to reference. */
+/**
+ * Inline shipping address for a guest, who has none saved to reference.
+ *
+ * Every field is optional, `addressLine1` and `city` included. Which of them a
+ * guest must supply is now a merchant setting (see `checkoutConfig` on
+ * StoreSetting), and `validateRequest` cannot read settings — it only ever
+ * parses `req.body`. Requiring them here would reject an order the merchant
+ * deliberately configured to be placeable without them, before order.service.ts
+ * ever got to apply the real rule. This schema keeps its actual job: whatever IS
+ * present must be well-formed.
+ */
 const guestAddressZodSchema = z.object({
-    addressLine1: z.string().min(1).max(255),
+    addressLine1: z.string().max(255).optional(),
     addressLine2: z.string().max(255).optional(),
-    city: z.string().min(1).max(100),
+    city: z.string().max(100).optional(),
     state: z.string().max(100).optional(),
     postalCode: z.string().max(20).optional(),
     country: z.string().max(100).optional(),
@@ -27,7 +37,6 @@ const checkoutItemZodSchema = z.object({
  */
 export const createOrderZodSchema = z.object({
     shippingAddressId: z.string().optional(),
-    shippingMethodId: z.string().optional(),
     notes: z.string().max(1000).optional(),
     expectedTotal: z.number().nonnegative().optional(),
     // Absent means delivery. Whether collection is actually available depends on
@@ -56,7 +65,6 @@ export const quoteCheckoutZodSchema = z.object({
     shippingAddressId: z.string().optional(),
     country: z.string().max(100).optional(),
     state: z.string().max(100).optional(),
-    shippingMethodId: z.string().optional(),
     items: z.array(checkoutItemZodSchema).min(1).max(50).optional(),
 });
 

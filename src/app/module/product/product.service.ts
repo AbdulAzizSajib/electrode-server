@@ -185,8 +185,8 @@ const PUBLIC_PRODUCT_SCALARS = {
  *
  * Deliberately does NOT carry each image's `variantId`: a card shows one
  * primary image and has no variant selector, so the association would be dead
- * weight on every row of every listing. Same for `PRODUCT_LIST_INCLUDE` and
- * `searchProducts`' raw-SQL image subquery.
+ * weight on every row of every listing. Same for `ADMIN_PRODUCT_LIST_SELECT`
+ * and `searchProducts`' raw-SQL image subquery.
  * See link-product-images-to-variants design.md Decision 8.
  */
 const PUBLIC_PRODUCT_LIST_SELECT = {
