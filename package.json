@@ -23,7 +23,13 @@
     "verify:postman": "tsx scripts/verify-postman-routes.ts",
     "verify:catalog": "tsx scripts/verify-catalog-change.ts",
     "verify:checkout": "tsx scripts/verify-checkout-totals.ts",
-    "verify:settings": "tsx scripts/verify-site-settings.ts"
+    "verify:settings": "tsx scripts/verify-site-settings.ts",
+    "verify:supplier-payments": "tsx scripts/verify-supplier-payments.ts",
+    "verify:reports": "tsx scripts/verify-reports.ts",
+    "verify:currency": "tsx scripts/verify-currency-and-content.ts",
+    "verify:blog": "tsx scripts/verify-blog-and-testimonials.ts",
+    "verify:landing-page": "tsx scripts/verify-landing-page.ts",
+    "seed:demo-landing-page": "tsx scripts/seed-demo-landing-page.ts"
   },
   "keywords": [],
   "author": "",

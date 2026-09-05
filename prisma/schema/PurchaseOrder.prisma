@@ -17,6 +17,11 @@ model PurchaseOrder {
 
   items PurchaseOrderItem[]
 
+  /// Money paid out against this purchase order. `amountPaid` and `balanceDue`
+  /// are computed from these on read rather than stored as columns — see
+  /// purchase-order.service.ts.
+  supplierPayments SupplierPayment[]
+
   orderedAt  DateTime?
   receivedAt DateTime?
 

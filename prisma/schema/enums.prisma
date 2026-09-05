@@ -62,6 +62,25 @@ enum PaymentMethod {
   OTHER
 }
 
+/// How money LEAVES the store, on its way to a supplier. Deliberately not
+/// `PaymentMethod`: that enum describes money coming in and carries COD,
+/// STRIPE and PAYPAL, none of which can describe paying a supplier, while
+/// lacking CASH and CHEQUE, which is how most supplier payments here happen.
+///
+/// Sharing one enum would make "cash on delivery is not a supplier payment
+/// method" a runtime filter a direct API call could walk around. Two enums
+/// make it something the database refuses.
+enum SupplierPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CHEQUE
+  BKASH
+  NAGAD
+  ROCKET
+  CARD
+  OTHER
+}
+
 enum ShipmentStatus {
   PENDING
   PROCESSING
@@ -252,4 +271,93 @@ enum BannerType {
 enum PageStatus {
   DRAFT
   PUBLISHED
+}
+
+/// Two states, for the same reason PageStatus has two: a DRAFT post is
+/// indistinguishable from "no such post" to a visitor, and scheduled publishing
+/// is out of scope (see add-currency-format-and-home-content-cms design.md,
+/// Non-Goals). `publishedAt` is the DATE ON THE CARD, authored by the merchant
+/// — it is not what decides visibility, and a future-dated published post is
+/// live now with a future date printed on it.
+enum BlogPostStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// A post shows one thing, and this column says which.
+///
+/// Stated rather than inferred from which of `imageUrl` / `videoUrl` happens to
+/// be non-null: with three nullable columns, "image or video, never both" is a
+/// rule the data merely implies, and a row with both populated has no defined
+/// answer. With this, it does. The Zod schema enforces that the URL columns
+/// match whatever this says.
+enum BlogMediaType {
+  NONE
+  IMAGE
+  VIDEO
+}
+
+/// Two states, matching BlogPostStatus and PageStatus.
+enum TestimonialStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// Which side of the amount the currency symbol sits on — `৳1,200.00` or
+/// `1,200.00 ৳`.
+///
+/// A closed set of two, so the database says so rather than leaving a string
+/// column that could hold "left", "LEFT" or "before". The spacing that goes
+/// with each position is NOT a further setting: no space when the symbol leads,
+/// one non-breaking space when it trails, which is what every leading-symbol
+/// and every trailing-symbol locale does respectively. A knob whose right answer
+/// is determined by the position it accompanies is a knob that is only ever set
+/// wrong. See add-currency-format-and-home-content-cms design.md, Decision 3.
+enum CurrencyPosition {
+  BEFORE
+  AFTER
+}
+
+/// Two states, matching PageStatus, BlogPostStatus and TestimonialStatus. A
+/// DRAFT landing page is indistinguishable from "no such page" to a visitor —
+/// the storefront's not-found page, not a 403, so an unpublished campaign
+/// cannot be enumerated by anyone probing slugs.
+///
+/// Scheduled publishing is out of scope for the same reason it is for the other
+/// three: a campaign starts when the merchant starts spending on ads, which is
+/// not a time this system knows.
+enum LandingPageStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// Whether the storefront root serves the full shop or a single campaign
+/// landing page.
+///
+/// A closed set of two rather than a boolean `isLandingPageMode`, so the column
+/// reads as what it is at every call site and a third mode (should one ever
+/// exist) is an added variant rather than a second flag to keep consistent with
+/// the first.
+///
+/// This governs the ROOT ONLY. In LANDING_PAGE mode every other storefront
+/// route — catalogue, cart, checkout, tracking, account, CMS pages — stays live
+/// and unchanged, so flipping the toggle breaks no existing link and is
+/// reversible with no other consequence. See add-single-product-landing-page
+/// design.md, Decision 6, and the `store-config/site-mode` spec.
+enum SiteMode {
+  WEBSITE
+  LANDING_PAGE
+}
+
+/// Whether a shopper takes delivery of an order or collects it themselves.
+///
+/// Recorded on the order rather than derived, because it decides what staff DO
+/// with it: a collection order must not be handed to a courier. Before delivery
+/// options existed this distinction was computed at checkout and then thrown
+/// away, so an order gave no way to tell the two apart. See the
+/// `commerce/delivery-options` spec, "The order records which option was
+/// chosen".
+enum DeliveryMethod {
+  DELIVERY
+  PICKUP
 }

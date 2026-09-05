@@ -20,6 +20,24 @@ model Order {
   shippingAmount Decimal @default(0) @db.Decimal(12, 2)
   taxAmount      Decimal @default(0) @db.Decimal(12, 2)
 
+  /// Which delivery option the shopper chose, and how they chose to receive it.
+  ///
+  /// Three columns for two different jobs, the same split as `landingPageId` /
+  /// `landingPageTitle` below and for the same reason. `deliveryOptionKey` is
+  /// the stable handle: it survives a rename, so "how many orders chose Inside
+  /// Dhaka" still answers correctly after the merchant edits the label.
+  /// `deliveryOptionLabel` is CAPTURED AT PLACEMENT and never updated — it is
+  /// what the shopper actually agreed to, and it must not move when the option
+  /// is renamed, repriced or deleted. `shippingAmount` above is already the
+  /// captured price, so it is not repeated here.
+  ///
+  /// All three are nullable, for two populations that legitimately have none:
+  /// orders placed before delivery options existed, and landing-page orders,
+  /// which are priced by the page's own zones and never enter this path.
+  deliveryMethod      DeliveryMethod?
+  deliveryOptionKey   String?
+  deliveryOptionLabel String?
+
   totalAmount Decimal @db.Decimal(12, 2)
 
   couponCode String?
@@ -35,6 +53,31 @@ model Order {
   /// Client address of a guest checkout, backing the per-IP rate limit
   /// (see order.service.ts). Null for authenticated orders.
   guestIp String?
+
+  /// Campaign attribution: which landing page produced this order, if any.
+  /// Null for every order placed through the normal checkout.
+  ///
+  /// Two columns rather than one because they answer different questions and
+  /// fail differently. `landingPageId` is the joinable key behind "how many
+  /// orders and how much revenue did this campaign produce"; SetNull so
+  /// deleting a finished campaign never deletes or orphans its orders.
+  /// `landingPageTitle` is CAPTURED AT PLACEMENT and never updated — it is what
+  /// keeps a deleted campaign's orders readable, and what stops a merchant
+  /// renaming a page from silently rewriting the history of orders placed under
+  /// the old name.
+  ///
+  /// Which delivery zone a LANDING-PAGE shopper chose is written to
+  /// `shippingAddress.state`, which is exactly what that field models and which
+  /// every order and courier view already renders. That remains true, and is now
+  /// unambiguous: `state` was once also the matching input that decided delivery
+  /// pricing, so a landing-page address carried a value that could be re-read as
+  /// a pricing signal. Nothing prices from an address any more — a shop order
+  /// carries its choice in `deliveryOptionKey` above, and a landing-page order
+  /// leaves those three columns null. See add-single-product-landing-page
+  /// design.md, Decision 4.
+  landingPageId    String?
+  landingPage      LandingPage? @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
+  landingPageTitle String?
 
   shippingAddressId String?
   shippingAddress   CustomerAddress? @relation(fields: [shippingAddressId], references: [id], onDelete: SetNull)
@@ -59,4 +102,6 @@ model Order {
   /// Serves the per-IP guest-order rate limit: count guest orders from one
   /// address inside a rolling window (order.service.ts).
   @@index([guestIp, createdAt])
+  /// Serves the per-landing-page order count and revenue on the admin list.
+  @@index([landingPageId])
 }

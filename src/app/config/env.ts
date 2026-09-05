@@ -52,6 +52,15 @@ interface EnvConfig {
      * port and repointing FRONTEND_URL would break those.
      */
     STOREFRONT_URL?: string;
+    /**
+     * IANA timezone the admin reports resolve a date range in, so "1–31 March"
+     * means the same 31 days whichever machine asks for it (design decision
+     * 14). Optional; `Asia/Dhaka` when unset, which is where this store trades.
+     *
+     * Not a StoreSetting column: making it merchant-editable is its own change
+     * (see design.md — Open Questions), and a report cannot wait for it.
+     */
+    STORE_TIMEZONE?: string;
 }
 
 
@@ -122,6 +131,7 @@ const loadEnvVariables = (): EnvConfig => {
         SUBSCRIPTION_BKASH_NUMBER: process.env.SUBSCRIPTION_BKASH_NUMBER as string,
         STOREFRONT_REVALIDATE_SECRET: process.env.STOREFRONT_REVALIDATE_SECRET,
         STOREFRONT_URL: process.env.STOREFRONT_URL,
+        STORE_TIMEZONE: process.env.STORE_TIMEZONE,
     }
 }
 

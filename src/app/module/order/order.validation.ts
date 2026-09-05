@@ -39,9 +39,18 @@ export const createOrderZodSchema = z.object({
     shippingAddressId: z.string().optional(),
     notes: z.string().max(1000).optional(),
     expectedTotal: z.number().nonnegative().optional(),
-    // Absent means delivery. Whether collection is actually available depends on
-    // the matched shipping places, which only the service can see.
-    deliveryMethod: z.enum(["DELIVERY", "PICKUP"]).optional(),
+    /*
+     * The chosen delivery option. Optional HERE and required in the service,
+     * deliberately: a landing-page order legitimately has none, and this same
+     * schema does not know which caller it is validating. The service refuses a
+     * normal order without one, so the requirement is enforced exactly once, in
+     * the place that can tell the two paths apart.
+     *
+     * There is no `deliveryMethod` beside it any more. Delivery-versus-collection
+     * is a property of the option the merchant configured, so a client cannot
+     * assert one against the other's price.
+     */
+    deliveryOptionKey: z.string().min(1).max(60).optional(),
 
     fullName: z.string().trim().min(1).max(200).optional(),
     phone: z
@@ -57,14 +66,19 @@ export const createOrderZodSchema = z.object({
 });
 
 /**
- * A pre-checkout price quote. Everything is optional: it is asked for while the
- * shopper is still typing their address, and a partial destination is a real
- * question ("what does it cost to Bangladesh?") rather than a malformed one.
+ * A pre-checkout price quote.
+ *
+ * The option key is required, unlike everything else here: a quote whose
+ * delivery charge is missing is a total the shopper would be shown and then not
+ * charged. The storefront always has a key to send — the option list arrives
+ * with the public settings, before any quote is asked for.
+ *
+ * The address is gone from this schema. It used to be here because delivery was
+ * matched from it while the shopper typed; nothing about the address changes a
+ * price now.
  */
 export const quoteCheckoutZodSchema = z.object({
-    shippingAddressId: z.string().optional(),
-    country: z.string().max(100).optional(),
-    state: z.string().max(100).optional(),
+    deliveryOptionKey: z.string().min(1).max(60),
     items: z.array(checkoutItemZodSchema).min(1).max(50).optional(),
 });
 

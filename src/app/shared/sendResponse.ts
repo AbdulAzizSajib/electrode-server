@@ -19,6 +19,14 @@ interface IResponseData<T> {
             total: number;
             counts: Record<number, number>;
         };
+        /**
+         * How many of a content list the storefront's homepage section actually
+         * renders, for admin lists that need to mark the published entries
+         * falling beyond it. Served rather than duplicated in the admin so the
+         * label cannot promise a number nothing enforces — the same reason
+         * `GET /pages/reserved-slugs` exists. Additive and optional.
+         */
+        homeSectionCount?: number;
     }
 }
 

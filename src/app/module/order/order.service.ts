@@ -13,6 +13,7 @@ import {
 } from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
+import { currencyFormatOf, formatMoney } from "../../utils/formatMoney";
 import { normalizePhone } from "../../utils/phone";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { CouponService } from "../coupon/coupon.service";
@@ -28,6 +29,7 @@ import {
 import {
     ICheckoutActor,
     ICheckoutItemPayload,
+    ICheckoutOverrides,
     ICreateOrderPayload,
     IOrderItemData,
     IQuoteCheckoutPayload,
@@ -44,6 +46,18 @@ const ORDER_DETAIL_INCLUDE = {
     customer: {
         select: { id: true, firstName: true, lastName: true, email: true, phone: true },
     },
+    /*
+     * The campaign this order came from, when it came from one. Null for every
+     * order placed through the normal checkout, and null again once the page
+     * has been deleted — which is exactly why `Order.landingPageTitle` is
+     * captured at placement and returned alongside it as a scalar. The relation
+     * is what makes the admin able to LINK to a page that still exists; the
+     * captured title is what keeps a deleted campaign's orders readable.
+     *
+     * Which delivery area the shopper chose is not here: it is on
+     * `shippingAddress.state`, already included above.
+     */
+    landingPage: { select: { id: true, title: true, slug: true } },
 };
 
 const ORDER_LIST_INCLUDE = {
@@ -403,13 +417,67 @@ const loadPayloadLines = async (items: ICheckoutItemPayload[]): Promise<ICheckou
 };
 
 /**
+ * Stores an address the shopper typed into the checkout form.
+ *
+ * Used by BOTH actor branches below. The rule is about the address, not about
+ * the session: an inline address supplied without a saved-address id is the
+ * only address that order has, so it is stored and used whoever sent it.
+ *
+ * It used to live only in the guest branch, on the assumption that an
+ * authenticated shopper always picks a saved address. A campaign landing page
+ * broke that assumption — it has no address book and no login, so it always
+ * sends an address inline — and a signed-in visitor's typed address was
+ * silently discarded, leaving the order with none at all.
+ *
+ * `fullName`, `addressLine1` and `city` are NOT NULL on CustomerAddress, so a
+ * field the form did not collect is stored as an empty string rather than null.
+ * That is the honest record — "not asked for" — and it keeps every existing
+ * reader of an address working unchanged.
+ */
+const createInlineShippingAddress = async (
+    customer: { id: string; firstName: string; lastName: string | null; phone: string | null },
+    payload: ICreateOrderPayload,
+) =>
+    prisma.customerAddress.create({
+        data: {
+            customerId: customer.id,
+            type: AddressType.SHIPPING,
+            /*
+             * The typed name wins; the customer's own is the fallback. A
+             * merchant may legitimately have turned the name field off, and
+             * GUEST_FALLBACK_NAME is the last resort — the alternative is not
+             * "no name" but "no order", since this column cannot be null.
+             */
+            fullName:
+                payload.fullName?.trim() ||
+                [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim() ||
+                GUEST_FALLBACK_NAME,
+            // The guest branch guarantees a phone before it gets here; an
+            // authenticated shopper falls back to the one on their account.
+            phone: payload.phone || customer.phone || "",
+            addressLine1: payload.shippingAddress?.addressLine1 ?? "",
+            addressLine2: payload.shippingAddress?.addressLine2,
+            city: payload.shippingAddress?.city ?? "",
+            state: payload.shippingAddress?.state,
+            postalCode: payload.shippingAddress?.postalCode,
+            ...(payload.shippingAddress?.country
+                ? { country: payload.shippingAddress.country }
+                : {}),
+        },
+    });
+
+/**
  * The single point where an authenticated checkout and a guest checkout
  * differ. Both resolve to a `Customer`, a set of lines to order, and a
  * shipping address id — after this, checkout is one code path, so pricing,
  * stock safety, coupon handling and idempotency have exactly one
  * implementation and cannot drift between the two flows.
  */
-const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrderPayload) => {
+const resolveCheckoutContext = async (
+    actor: ICheckoutActor,
+    payload: ICreateOrderPayload,
+    overrides?: ICheckoutOverrides,
+) => {
     if (actor.kind === "user") {
         const customer = await CustomerService.getOrCreateCustomerByUserId(actor.userId);
 
@@ -421,11 +489,30 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
             if (!shippingAddress || shippingAddress.customerId !== customer.id) {
                 throw new AppError(status.BAD_REQUEST, "Shipping address not found");
             }
+        } else if (payload.shippingAddress) {
+            /*
+             * A signed-in shopper who typed an address instead of picking a
+             * saved one — which is every order from a campaign landing page,
+             * since that page has no address book and no login, and `optionalAuth`
+             * honours a session if the visitor happens to have one.
+             *
+             * Without this the typed address was dropped on the floor and the
+             * order committed with `shippingAddressId: undefined`, so the admin
+             * panel showed "No shipping address on file" for an order that had
+             * one — and nobody could deliver it.
+             *
+             * Unreachable from the normal checkout: its signed-in path sends
+             * `shippingAddressId` and its guest path is the branch below, so
+             * the two never overlap (see CheckoutForm.tsx).
+             */
+            shippingAddress = await createInlineShippingAddress(customer, payload);
         }
 
         return {
             customer,
-            shippingAddressId: payload.shippingAddressId,
+            // The resolved id, not `payload.shippingAddressId` — an address
+            // created just above has an id the payload never carried.
+            shippingAddressId: shippingAddress?.id ?? payload.shippingAddressId,
             // Returned alongside the id because shipping is now priced by where
             // the order is going, and reloading the row to read its country
             // would be a second query for something already in hand.
@@ -450,33 +537,66 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
     }
 
     /*
-     * What checkout is currently configured to ask for. The storefront renders
-     * its form from this same config, but the storefront is not the only way to
-     * reach this endpoint — so it is re-applied here rather than trusted.
+     * The shop-wide checkout configuration, skipped entirely for a campaign
+     * landing page.
+     *
+     * A landing page asks for three fields — name, phone, address — that this
+     * config does not describe, and it applies its own required-field rule
+     * before ever calling into here (landing-page.service.ts). Running the
+     * shop's six-field map over a payload that was never going to carry a city
+     * or a postal code would reject every campaign order for a field the page
+     * did not show. `allowGuestCheckout` is skipped with it: publishing a
+     * guest-COD landing page IS the merchant opting into guest ordering for
+     * that page, which is a later and more specific decision than the shop-wide
+     * switch. See ICheckoutOverrides.
+     *
+     * The phone floor below is NOT part of this and still runs.
      */
-    const checkoutConfig = await StoreSettingService.getCheckoutConfig();
+    if (!overrides?.bypassCheckoutConfig) {
+        /*
+         * What checkout is currently configured to ask for. The storefront
+         * renders its form from this same config, but the storefront is not the
+         * only way to reach this endpoint — so it is re-applied here rather than
+         * trusted.
+         */
+        const checkoutConfig = await StoreSettingService.getCheckoutConfig();
 
-    // Before the address is created and before the guest limits are counted:
-    // when guest checkout is off, this request should cost nothing.
-    if (!checkoutConfig.allowGuestCheckout) {
-        throw new AppError(
-            status.UNAUTHORIZED,
-            "Please sign in to place an order",
+        // Before the address is created and before the guest limits are counted:
+        // when guest checkout is off, this request should cost nothing.
+        if (!checkoutConfig.allowGuestCheckout) {
+            throw new AppError(
+                status.UNAUTHORIZED,
+                "Please sign in to place an order",
+            );
+        }
+
+        /*
+         * Whether this order is being collected rather than delivered, which
+         * suspends the address fields below. Read off the config already loaded
+         * here rather than waiting for `quoteCharges` to resolve it, because the
+         * answer is needed BEFORE the fields are checked. `quoteDelivery` still
+         * re-resolves the same key authoritatively — an unknown key, or a pickup
+         * key while collection is off, is refused there — so this lookup decides
+         * only which fields to ask for, never a price.
+         */
+        const chosenOption = checkoutConfig.delivery.options.find(
+            (option) => option.key === payload.deliveryOptionKey,
         );
-    }
 
-    /*
-     * The configurable half of guest validation, driven by the same field keys
-     * the admin edits. A merchant who marks City optional makes it genuinely
-     * optional here — that is the whole point of the setting.
-     */
-    const missing = collectMissingCheckoutFields(
-        checkoutConfig,
-        submittedCheckoutFields(payload),
-    );
+        /*
+         * The configurable half of guest validation, driven by the same field
+         * keys the admin edits. A merchant who marks City optional makes it
+         * genuinely optional here — that is the whole point of the setting.
+         */
+        const missing = collectMissingCheckoutFields(
+            checkoutConfig,
+            submittedCheckoutFields(payload),
+            chosenOption?.kind === "PICKUP",
+        );
 
-    if (missing.length > 0) {
-        throw new AppError(status.BAD_REQUEST, missingCheckoutFieldsMessage(missing));
+        if (missing.length > 0) {
+            throw new AppError(status.BAD_REQUEST, missingCheckoutFieldsMessage(missing));
+        }
     }
 
     /*
@@ -500,29 +620,7 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
     // Before anything is created, and well before the transaction opens.
     await enforceGuestOrderLimits(customer.id, actor.ip);
 
-    const address = await prisma.customerAddress.create({
-        data: {
-            customerId: customer.id,
-            type: AddressType.SHIPPING,
-            /*
-             * `fullName`, `addressLine1` and `city` are NOT NULL on
-             * CustomerAddress, so a field the merchant chose not to collect is
-             * stored as an empty string rather than null. That is the honest
-             * record — "not asked for" — and it keeps every existing reader of
-             * an address working unchanged.
-             */
-            fullName: payload.fullName?.trim() || GUEST_FALLBACK_NAME,
-            phone: payload.phone,
-            addressLine1: payload.shippingAddress?.addressLine1 ?? "",
-            addressLine2: payload.shippingAddress?.addressLine2,
-            city: payload.shippingAddress?.city ?? "",
-            state: payload.shippingAddress?.state,
-            postalCode: payload.shippingAddress?.postalCode,
-            ...(payload.shippingAddress?.country
-                ? { country: payload.shippingAddress.country }
-                : {}),
-        },
-    });
+    const address = await createInlineShippingAddress(customer, payload);
 
     return { customer, shippingAddressId: address.id, shippingAddress: address, cartId: undefined };
 };
@@ -533,12 +631,17 @@ const resolveCheckoutContext = async (actor: ICheckoutActor, payload: ICreateOrd
  * `resolveCheckoutContext` absorbs the difference, and everything from the
  * stock check onward is identical for both.
  */
-const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) => {
+const placeOrder = async (
+    actor: ICheckoutActor,
+    payload: ICreateOrderPayload,
+    overrides?: ICheckoutOverrides,
+) => {
     const isGuest = actor.kind === "guest";
 
     const { customer, shippingAddressId, shippingAddress } = await resolveCheckoutContext(
         actor,
         payload,
+        overrides,
     );
 
     // Lines come either from the payload (a landing page ordering a product
@@ -672,7 +775,6 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
             quantity: item.quantity,
             lineTotal: totalPrice,
             taxRuleId: item.product.taxRuleId,
-            shippingRuleId: item.product.shippingRuleId,
         });
     }
 
@@ -695,18 +797,27 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
 
     const charges = await quoteCharges({
         lines: pricingLines,
-        destination: {
-            country: shippingAddress?.country,
-            state: shippingAddress?.state,
-        },
         discountAmount,
-        deliveryMethod: payload.deliveryMethod ?? "DELIVERY",
+        /*
+         * The shopper's own choice, not anything derived from their address.
+         * Absent on the landing-page path below, which prices its own zones.
+         */
+        ...(payload.deliveryOptionKey ? { deliveryOptionKey: payload.deliveryOptionKey } : {}),
         couponWaivesShipping: Boolean(couponResult?.freeShipping),
-        fallbackTaxPercent: Number(storeSetting.defaultTaxRatePercent),
         freeShippingThreshold:
             storeSetting.freeShippingThreshold === null
                 ? null
                 : Number(storeSetting.freeShippingThreshold),
+        /*
+         * Present only for a campaign landing page, which prices delivery from
+         * its own zones. `quoteCharges` skips quoteShipping and ignores both
+         * waivers above when it is set — the page stated a delivery charge and
+         * that is what is charged. Absent for every other caller, so nothing
+         * about the normal checkout moves.
+         */
+        ...(overrides?.shippingOverride
+            ? { shippingOverride: overrides.shippingOverride }
+            : {}),
     });
 
     const { shippingAmount, taxAmount } = charges;
@@ -714,9 +825,12 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
     const totalAmount = roundMoney(subtotal + shippingAmount + taxAmount - discountAmount);
 
     if (payload.expectedTotal !== undefined && Math.abs(payload.expectedTotal - totalAmount) > 0.01) {
+        // Written in the merchant's own currency: a shopper whose basket said
+        // "৳1,200.00" cannot act on a message that says "1200.00".
+        const money = currencyFormatOf(storeSetting);
         throw new AppError(
             status.CONFLICT,
-            `Price mismatch — server computed ${totalAmount.toFixed(2)}, client expected ${payload.expectedTotal.toFixed(2)}`,
+            `Price mismatch — server computed ${formatMoney(totalAmount, money)}, client expected ${formatMoney(payload.expectedTotal, money)}`,
         );
     }
 
@@ -734,12 +848,35 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
                     totalAmount,
                     couponCode: appliedCoupon?.code,
                     notes: payload.notes,
+                    /*
+                     * The delivery choice, captured. `deliveryOptionLabel` is
+                     * written once and never updated, for the same reason
+                     * `landingPageTitle` below is: it is what the shopper agreed
+                     * to, and renaming or deleting the option afterwards must not
+                     * rewrite what this order says. `deliveryMethod` is what tells
+                     * staff not to hand a collection order to a courier.
+                     *
+                     * All three come from the resolved option rather than from the
+                     * request body — a client that could name its own label could
+                     * name its own price.
+                     */
+                    deliveryMethod: charges.delivery?.method,
+                    deliveryOptionKey: charges.delivery?.optionKey,
+                    deliveryOptionLabel: charges.delivery?.optionLabel,
                     // The resolved id, not payload.shippingAddressId: a guest's
                     // address was just created from the payload and is the only
                     // one they have.
                     shippingAddressId,
                     isGuestOrder: isGuest,
                     guestIp: isGuest ? actor.ip : undefined,
+                    /*
+                     * Campaign attribution. `landingPageTitle` is captured here
+                     * and never updated afterwards, so renaming a page does not
+                     * rewrite the history of orders placed under the old name,
+                     * and deleting one leaves its orders still readable.
+                     */
+                    landingPageId: overrides?.landingPage?.id,
+                    landingPageTitle: overrides?.landingPage?.title,
                     items: { createMany: { data: orderItemsData } },
                     statusHistory: { create: { toStatus: OrderStatus.PENDING } },
                     // Guest checkout is cash-on-delivery only. The Payment row
@@ -837,13 +974,18 @@ const placeOrder = async (actor: ICheckoutActor, payload: ICreateOrderPayload) =
 };
 
 /**
- * What this basket would cost to this destination, without placing anything.
+ * What this basket would cost with this delivery option, without placing
+ * anything.
  *
- * Shipping is no longer a flat price the storefront can add up itself — it
- * depends on each product's rule and on where the order is going, and so does
- * tax. Without this the shopper would see one number at checkout and be charged
- * another, or be told their address is undeliverable only after pressing Place
- * Order.
+ * Delivery is not a number the storefront can work out for itself even though
+ * it holds the option list: a free-delivery threshold or a coupon can waive the
+ * charge, and both depend on the subtotal AFTER the order's discount. Tax is
+ * per product's own rule. Without this the shopper would see one number at
+ * checkout and be charged another.
+ *
+ * The address no longer takes part. It used to decide the price, which is why
+ * this once loaded the shopper's saved address to match on — the shopper's
+ * chosen option decides it now, so there is nothing here to look up.
  *
  * Deliberately shares `quoteCharges` with `placeOrder`: two implementations of
  * "what does this cost" is exactly how a quote and a charge drift apart.
@@ -853,29 +995,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         actor.kind === "user"
             ? await CustomerService.getOrCreateCustomerByUserId(actor.userId)
             : null;
-
-    let destination: { country?: string | null; state?: string | null } = {
-        country: payload.country,
-        state: payload.state,
-    };
-
-    // A saved address outranks anything sent inline: it is the address the order
-    // would actually ship to.
-    if (payload.shippingAddressId) {
-        if (!customer) {
-            throw new AppError(
-                status.BAD_REQUEST,
-                "Please provide your full delivery address to see delivery options",
-            );
-        }
-        const address = await prisma.customerAddress.findUnique({
-            where: { id: payload.shippingAddressId },
-        });
-        if (!address || address.customerId !== customer.id) {
-            throw new AppError(status.BAD_REQUEST, "Shipping address not found");
-        }
-        destination = { country: address.country, state: address.state };
-    }
 
     const cart = payload.items?.length
         ? null
@@ -911,7 +1030,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         quantity: line.quantity,
         lineTotal: Number(line.variant?.price ?? line.product.price) * line.quantity,
         taxRuleId: line.product.taxRuleId,
-        shippingRuleId: line.product.shippingRuleId,
     }));
 
     const appliedCoupon = payload.couponCode
@@ -924,17 +1042,17 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
 
     const storeSetting = await StoreSettingService.getStoreSetting();
 
-    // Priced for delivery regardless of what the shopper has picked so far —
-    // the quote's job is to tell them what each option costs, and `pickupAmount`
-    // carries the other one. Asking for a PICKUP quote before knowing whether
-    // pickup is offered would just throw.
+    /*
+     * Priced for the option the shopper has selected. The storefront always has
+     * one to send — the option list arrives with the public settings, so it can
+     * select a default before this is ever called — and quoting without one
+     * would mean showing a total that omits a charge the order will carry.
+     */
     const charges = await quoteCharges({
         lines: pricingLines,
-        destination,
         discountAmount: couponResult?.discountAmount ?? 0,
-        deliveryMethod: "DELIVERY",
+        deliveryOptionKey: payload.deliveryOptionKey,
         couponWaivesShipping: Boolean(couponResult?.freeShipping),
-        fallbackTaxPercent: Number(storeSetting.defaultTaxRatePercent),
         freeShippingThreshold:
             storeSetting.freeShippingThreshold === null
                 ? null
@@ -950,26 +1068,22 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         shippingAmount: charges.shippingAmount,
         /** What delivery costs before any waiver — so "Free" can be shown as a saving. */
         shippingBeforeWaiver: charges.shippingBeforeWaiver,
-        /** Null when collection is not offered for every item in the basket. */
-        pickupAmount: charges.pickupAmount,
         deliveryDays: charges.deliveryDays,
         totalAmount: roundMoney(
             charges.subtotal + charges.shippingAmount + charges.taxAmount - discountAmount,
         ),
-        /** The same order collected in person, when that is on offer. */
-        pickupTotalAmount:
-            charges.pickupAmount === null
-                ? null
-                : roundMoney(
-                      charges.subtotal + charges.pickupAmount + charges.taxAmount - discountAmount,
-                  ),
-        places: charges.shipping.matches.map((match) => ({
-            name: match.placeName,
-            price: match.price,
-            deliveryDays: match.deliveryDays,
-            offersPickup: match.offersPickup,
-            pickupPrice: match.pickupPrice,
-        })),
+        /**
+         * Echoed back so the storefront can confirm it priced what the shopper
+         * sees selected, and so a stale key surfaces as a mismatch rather than
+         * as a silently different total.
+         */
+        delivery: charges.delivery && {
+            optionKey: charges.delivery.optionKey,
+            optionLabel: charges.delivery.optionLabel,
+            method: charges.delivery.method,
+            price: charges.delivery.price,
+            days: charges.delivery.days,
+        },
     };
 };
 

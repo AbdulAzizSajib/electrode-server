@@ -1,0 +1,48 @@
+/// Money paid OUT to a supplier against a purchase order — the counterpart to
+/// `Payment`, which only ever records money coming IN from a customer against
+/// an order. Without this table `PurchaseOrder` carries a `totalAmount` and no
+/// notion of settlement, so a merchant who has received goods and paid half of
+/// them has nowhere to say so and no way to see what is still owed.
+///
+/// Deliberately NOT double-entry accounting: there is no chart of accounts, no
+/// journal, no debit/credit pair. One row says "we paid this supplier this much
+/// against this purchase order on this date". That is enough to make the
+/// Payment history report honest and to compute an outstanding balance.
+model SupplierPayment {
+  id String @id @default(cuid())
+
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  /// Denormalized from `purchaseOrder.supplierId`, and set by the service from
+  /// the purchase order — NEVER read off the request body. Two reasons: a
+  /// payment can then never name a supplier its purchase order does not belong
+  /// to, and the Payment history report can filter by supplier without joining
+  /// through PurchaseOrder on every row of a UNION.
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+
+  amount Decimal @db.Decimal(12, 2)
+
+  method SupplierPaymentMethod
+
+  /// Whatever the bank, cheque or mobile-money app calls this transfer. Free
+  /// text because every method names it differently; not unique because a
+  /// merchant may leave it blank on a cash payment.
+  reference String?
+
+  /// When the money actually moved, which is what the reports date a payment
+  /// by. Defaults to now at the API but is settable, so a payment made last
+  /// week can be entered today and still land in last week's report.
+  paidAt DateTime
+
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  @@index([paidAt])
+  @@index([method])
+}

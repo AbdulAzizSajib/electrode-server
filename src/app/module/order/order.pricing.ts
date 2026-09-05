@@ -2,18 +2,21 @@ import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
 import { ChargeType } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
+import { StoreSettingService } from "../store-setting/store-setting.service";
 
 /**
- * Checkout pricing: what tax and delivery cost, given a set of lines and where
- * they are going.
+ * Checkout pricing: what tax and delivery cost, given a set of lines and the
+ * delivery option the shopper chose.
  *
  * Lives apart from order.service.ts because two callers need the same answer —
  * the checkout that commits the order, and the quote the storefront shows
  * before the shopper commits to it. A second implementation of "what does this
  * cost" is how a storefront ends up quoting one number and charging another.
  *
- * See align-admin-catalog-with-reference — design.md, "Shipping matches
- * most-specific-first", and the `admin/catalog-rules` spec.
+ * Delivery used to be MATCHED here, from the shopper's country and region
+ * against a per-product rule's places, most specific first. It is now simply
+ * LOOKED UP: the shopper picks an option and pays its price. See the
+ * `commerce/delivery-options` spec, and design.md D3 for why the matcher went.
  */
 
 /** Money is stored to 2dp; every intermediate is rounded the same way. */
@@ -22,7 +25,14 @@ export const roundMoney = (value: number) => Math.round(value * 100) / 100;
 /** Whether the shopper is having it delivered or collecting it in person. */
 export type DeliveryMethod = "DELIVERY" | "PICKUP";
 
-/** Enough of a checkout line to price it. */
+/**
+ * Enough of a checkout line to price it.
+ *
+ * Note what is no longer here: `shippingRuleId`. Delivery is a store-wide
+ * choice the shopper makes, so nothing about the basket influences what it
+ * costs — which is why delivery is now charged once per order rather than once
+ * per distinct rule in it.
+ */
 export interface IPricingLine {
     productId: string;
     productName: string;
@@ -30,12 +40,6 @@ export interface IPricingLine {
     /** Unit price times quantity, before any discount. */
     lineTotal: number;
     taxRuleId: string | null;
-    shippingRuleId: string | null;
-}
-
-export interface IDestination {
-    country?: string | null;
-    state?: string | null;
 }
 
 export interface ILineTax {
@@ -51,23 +55,21 @@ export interface ITaxQuote {
     lines: ILineTax[];
 }
 
-export interface IShippingQuote {
-    /** Charged when the order is delivered. */
-    deliveryAmount: number;
-    /** Charged instead when the shopper collects, or null when nobody offers it. */
-    pickupAmount: number | null;
-    /** Longest delivery time among the matched places, for the shopper to see. */
-    deliveryDays: number | null;
-    /** The matched place per shipping rule, for display and for the audit trail. */
-    matches: {
-        shippingRuleId: string;
-        placeId: string;
-        placeName: string | null;
-        price: number;
-        deliveryDays: number;
-        offersPickup: boolean;
-        pickupPrice: number;
-    }[];
+/**
+ * The delivery option the shopper chose, resolved against the store's settings.
+ *
+ * `label` is carried out of here so the order can capture it at placement — see
+ * the spec's "The order records which option was chosen". Resolving it server
+ * side rather than trusting a label from the request body is what stops a
+ * client naming its own price.
+ */
+export interface IDeliveryQuote {
+    optionKey: string;
+    optionLabel: string;
+    method: DeliveryMethod;
+    /** The option's price, before any free-delivery waiver. */
+    price: number;
+    days: number;
 }
 
 /**
@@ -111,16 +113,20 @@ const allocateDiscount = (lines: IPricingLine[], discountAmount: number): number
  * flat rule charges its amount per unit — a fixed tax on a product is a tax on
  * each one bought, not on the line.
  *
- * `fallbackPercent` covers a product with no rule assigned. `Product.taxRuleId`
- * is nullable (rows predate the column; the migration backfilled them and the
- * product service requires one), so this path should not be reachable — but if
- * it is, the shop-wide rate that applied before this change is the answer that
- * does not change what a shopper is charged.
+ * A product with NO rule assigned is untaxed. Tax Rules are the only source of
+ * tax on an order (`store-config/tax-configuration`), so an untagged product
+ * contributing nothing is the answer, not a gap to fill from elsewhere.
+ *
+ * This replaced a shop-wide `fallbackPercent` read from
+ * `StoreSetting.defaultTaxRatePercent`, which predated Tax Rules. Keeping both
+ * meant a merchant who had moved to Tax Rules still had a second, half-forgotten
+ * rate quietly taxing anything they had not yet tagged — invisible from the Tax
+ * Rules screen that was supposed to be the answer. The parameter was removed
+ * rather than defaulted to zero, so the hole cannot be refilled by accident.
  */
 export const quoteTax = async (
     lines: IPricingLine[],
     discountAmount: number,
-    fallbackPercent: number,
 ): Promise<ITaxQuote> => {
     const ruleIds = [...new Set(lines.map((l) => l.taxRuleId).filter((id): id is string => !!id))];
 
@@ -138,7 +144,8 @@ export const quoteTax = async (
 
         let taxAmount: number;
         if (!rule) {
-            taxAmount = roundMoney((taxable * fallbackPercent) / 100);
+            // No rule, no tax. See the note above the function.
+            taxAmount = 0;
         } else if (rule.type === ChargeType.FLAT) {
             taxAmount = roundMoney(Number(rule.value) * line.quantity);
         } else {
@@ -155,140 +162,99 @@ export const quoteTax = async (
 };
 
 /**
- * The place in `places` covering `destination`, most specific first.
+ * The delivery option the shopper chose, resolved and priced.
  *
- * Region beats country beats catch-all. Without that order two places covering
- * the same shopper are a coin toss, and a merchant adding a specific rate would
- * see it ignored at random.
+ * Everything about this is a lookup by key. Nothing is derived from the address
+ * the shopper typed, nothing depends on what is in the basket, and delivery is
+ * charged ONCE — the per-rule grouping this replaced summed a charge per
+ * distinct shipping rule in the order.
  *
- * Matching is case-insensitive on both parts: an address typed "dhaka" and a
- * place authored "Dhaka" are the same place, and a shopper should not be told
- * their address is undeliverable over a capital letter.
+ * The three throws are the three ways a submitted key can be wrong, and they
+ * are deliberately different from one another:
+ *
+ *   - the store has no options at all: a merchant has not set delivery up.
+ *     Named as a store problem, because the shopper can do nothing about it.
+ *   - the key names no option: the shopper's page is stale — the option was
+ *     deleted or renamed away underneath them. They are asked to choose again
+ *     rather than charged a stale price.
+ *   - the key names a pickup point while collection is switched off: a request
+ *     replayed against a setting the merchant has since turned off. Checked
+ *     here and not only in the storefront, so switching it off actually closes
+ *     the door.
  */
-export const matchPlace = <T extends { country: string | null; state: string | null }>(
-    places: T[],
-    destination: IDestination,
-): T | null => {
-    const country = destination.country?.trim().toLowerCase() || null;
-    const state = destination.state?.trim().toLowerCase() || null;
+export const quoteDelivery = async (optionKey: string): Promise<IDeliveryQuote> => {
+    const { delivery } = await StoreSettingService.getCheckoutConfig();
 
-    /** `authored` comes from the place; `wanted` is already normalised. */
-    const same = (authored: string | null, wanted: string) =>
-        (authored ?? "").trim().toLowerCase() === wanted;
-
-    return (
-        (country && state
-            ? places.find((p) => p.state && same(p.country, country) && same(p.state, state))
-            : undefined) ??
-        (country ? places.find((p) => !p.state && same(p.country, country)) : undefined) ??
-        places.find((p) => !p.country && !p.state) ??
-        null
-    );
-};
-
-/**
- * What delivery costs for these lines to this destination.
- *
- * Charged once per distinct shipping rule in the order, not once per product: a
- * rule is a delivery policy, and three products under the same policy travel in
- * the same parcel. Two products under *different* policies genuinely cost two
- * different deliveries, so those add up — charging only the dearer would give
- * one away.
- *
- * A product with no shipping rule rides along on whatever else is being
- * delivered rather than being charged separately — it travels in a parcel
- * already being paid for.
- *
- * Throws when a rule covers nothing at this destination, and when no line
- * carries a rule at all. Neither can be delivered, and both must be said out
- * loud — quietly charging zero is a delivery the merchant pays for.
- */
-export const quoteShipping = async (
-    lines: IPricingLine[],
-    destination: IDestination,
-): Promise<IShippingQuote> => {
-    const ruleIds = [
-        ...new Set(lines.map((l) => l.shippingRuleId).filter((id): id is string => !!id)),
-    ];
-
-    if (ruleIds.length === 0) {
-        // Nothing in the basket has a delivery policy, so there is no parcel to
-        // ride along in. A merchant misconfiguration rather than a shopper
-        // mistake, but the shopper is the one standing at the checkout — so name
-        // what they are holding, as the unmatched-place throw below does.
-        const names = [...new Set(lines.map((l) => l.productName))];
+    if (delivery.options.length === 0) {
         throw new AppError(
             status.BAD_REQUEST,
-            `${names.map((n) => `"${n}"`).join(", ")} cannot be delivered — no delivery option has been set up for ${names.length === 1 ? "it" : "them"}`,
+            "This store has not set up delivery yet, so orders cannot be placed. Please contact the store.",
         );
     }
 
-    const rules = await prisma.shippingRule.findMany({
-        where: { id: { in: ruleIds } },
-        include: { places: true },
-    });
-    const ruleById = new Map(rules.map((rule) => [rule.id, rule]));
+    const option = delivery.options.find((o) => o.key === optionKey);
 
-    const where =
-        [destination.state, destination.country].filter(Boolean).join(", ") || "that destination";
-
-    const matches: IShippingQuote["matches"] = [];
-
-    for (const ruleId of ruleIds) {
-        const rule = ruleById.get(ruleId);
-        if (!rule) {
-            throw new AppError(status.CONFLICT, "A product's delivery options are unavailable");
-        }
-
-        const place = matchPlace(rule.places, destination);
-
-        if (!place) {
-            // Name the product, not the rule: a shopper has never heard of
-            // "Standard delivery" but knows what they put in their basket.
-            const product = lines.find((l) => l.shippingRuleId === ruleId);
-            throw new AppError(
-                status.BAD_REQUEST,
-                `"${product?.productName ?? "One of your items"}" cannot be delivered to ${where}`,
-            );
-        }
-
-        matches.push({
-            shippingRuleId: ruleId,
-            placeId: place.id,
-            placeName: place.name,
-            price: Number(place.price),
-            deliveryDays: place.deliveryDays,
-            offersPickup: place.offersPickup,
-            pickupPrice: Number(place.pickupPrice),
-        });
+    if (!option) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "That delivery option is no longer available — please choose again.",
+        );
     }
 
-    // Collection is offered only when every matched place offers it — an order
-    // half of which still has to be delivered is not an order the shopper can
-    // collect.
-    const everyPlaceOffersPickup = matches.every((m) => m.offersPickup);
+    if (option.kind === "PICKUP" && !delivery.offersPickup) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Collection in person is not being offered — please choose a delivery option.",
+        );
+    }
 
     return {
-        deliveryAmount: roundMoney(matches.reduce((sum, m) => sum + m.price, 0)),
-        pickupAmount: everyPlaceOffersPickup
-            ? roundMoney(matches.reduce((sum, m) => sum + m.pickupPrice, 0))
-            : null,
-        deliveryDays: Math.max(...matches.map((m) => m.deliveryDays)),
-        matches,
+        optionKey: option.key,
+        optionLabel: option.label,
+        method: option.kind,
+        price: roundMoney(option.price),
+        days: option.days,
     };
 };
 
+/**
+ * A delivery charge decided somewhere other than by the store's own options.
+ *
+ * Exists for exactly one caller: a campaign landing page, which offers its own
+ * delivery zones (`ঢাকার ভিতরে ৳60` / `ঢাকার বাইরে ৳120`) and states a charge
+ * on the page before the shopper has typed an address. It cannot go through
+ * `quoteDelivery` because those zones are the PAGE's, authored per campaign —
+ * and because a landing page must work whether or not the merchant has
+ * configured delivery for the rest of the shop.
+ *
+ * `amount` is read from the page's stored zone, never from the request body.
+ * `label` travels with it only so the resulting order can say which area was
+ * chosen.
+ */
+export interface IShippingOverride {
+    amount: number;
+    label: string;
+}
+
 export interface IChargeQuoteInput {
     lines: IPricingLine[];
-    destination: IDestination;
     discountAmount: number;
-    deliveryMethod: DeliveryMethod;
+    /**
+     * Which delivery option the shopper chose. Required on the normal path —
+     * the shopper picks it, nothing infers it — and unused when
+     * `shippingOverride` is set, since a landing page prices its own zones.
+     */
+    deliveryOptionKey?: string;
     /** From an applied coupon. Waives delivery, never collection. */
     couponWaivesShipping: boolean;
-    /** Shop-wide rate, used only for a product with no tax rule of its own. */
-    fallbackTaxPercent: number;
     /** Threshold above which delivery is free, or null when the shop has none. */
     freeShippingThreshold: number | null;
+    /**
+     * When set, delivery costs this and `quoteDelivery` is not consulted at all.
+     * See IShippingOverride, and `quoteCharges` below for why no waiver applies
+     * to it.
+     */
+    shippingOverride?: IShippingOverride;
 }
 
 export interface IChargeQuote {
@@ -297,10 +263,10 @@ export interface IChargeQuote {
     shippingAmount: number;
     /** What delivery would cost before any waiver, for showing the shopper why it is free. */
     shippingBeforeWaiver: number;
-    pickupAmount: number | null;
     deliveryDays: number | null;
     tax: ITaxQuote;
-    shipping: IShippingQuote;
+    /** The resolved option, for the order to capture. Null on the override path. */
+    delivery: IDeliveryQuote | null;
 }
 
 /**
@@ -311,47 +277,74 @@ export interface IChargeQuote {
  * choosing a different service, and its price is what that place charges for
  * it; zeroing it because delivery happened to be free would give away a
  * collection fee nobody waived.
+ *
+ * An overridden delivery charge (see IShippingOverride) short-circuits before
+ * any of that. Tax is still charged by each product's own rule — an override is
+ * a statement about delivery, not about tax — but NEITHER waiver applies:
+ *
+ *   - the shop's order-value threshold, because the landing page printed
+ *     "ডেলিভারি চার্জ ৳60" beside the order button and the shopper agreed to
+ *     that number. Zeroing it because an unrelated shop-wide threshold happened
+ *     to be crossed would make the page a liar in the shopper's favour and the
+ *     merchant's expense, on an order the merchant never quoted that way.
+ *   - a coupon's free-shipping flag, which is moot here (a landing page has no
+ *     coupon box) and is closed explicitly so it stays moot.
+ *
+ * `quoteDelivery` is not called at all on this path — not called and its result
+ * discarded. It throws when the shop has no delivery options, and a landing page
+ * must work whether or not the merchant has configured delivery for the rest of
+ * the shop.
  */
 export const quoteCharges = async (input: IChargeQuoteInput): Promise<IChargeQuote> => {
     const subtotal = roundMoney(input.lines.reduce((sum, line) => sum + line.lineTotal, 0));
 
-    const [tax, shipping] = await Promise.all([
-        quoteTax(input.lines, input.discountAmount, input.fallbackTaxPercent),
-        quoteShipping(input.lines, input.destination),
-    ]);
-
-    if (input.deliveryMethod === "PICKUP") {
-        if (shipping.pickupAmount === null) {
-            throw new AppError(
-                status.BAD_REQUEST,
-                "Collection in person is not available for these items",
-            );
-        }
+    if (input.shippingOverride) {
+        const tax = await quoteTax(input.lines, input.discountAmount);
+        const amount = roundMoney(input.shippingOverride.amount);
 
         return {
             subtotal,
             taxAmount: tax.taxAmount,
-            shippingAmount: shipping.pickupAmount,
-            shippingBeforeWaiver: shipping.pickupAmount,
-            pickupAmount: shipping.pickupAmount,
-            deliveryDays: shipping.deliveryDays,
+            shippingAmount: amount,
+            // Equal by construction: nothing waives an overridden charge, so
+            // there is no "before" that differs from the "after".
+            shippingBeforeWaiver: amount,
+            deliveryDays: null,
             tax,
-            shipping,
+            // The page's zone is not one of the store's options, so there is no
+            // option to report. Null is the honest answer, not a gap — and it is
+            // what keeps a landing-page order out of the option's order counts.
+            delivery: null,
         };
     }
 
+    if (!input.deliveryOptionKey) {
+        throw new AppError(status.BAD_REQUEST, "Please choose a delivery option");
+    }
+
+    const [tax, delivery] = await Promise.all([
+        quoteTax(input.lines, input.discountAmount),
+        quoteDelivery(input.deliveryOptionKey),
+    ]);
+
+    /*
+     * A waiver frees DELIVERY, never collection. A shopper collecting in person
+     * is choosing a different service, and its price is what the merchant set
+     * for it; zeroing it because delivery happened to be free would give away a
+     * collection fee nobody waived.
+     */
     const meetsThreshold =
         input.freeShippingThreshold !== null && subtotal >= input.freeShippingThreshold;
-    const waived = input.couponWaivesShipping || meetsThreshold;
+    const waived =
+        delivery.method === "DELIVERY" && (input.couponWaivesShipping || meetsThreshold);
 
     return {
         subtotal,
         taxAmount: tax.taxAmount,
-        shippingAmount: waived ? 0 : shipping.deliveryAmount,
-        shippingBeforeWaiver: shipping.deliveryAmount,
-        pickupAmount: shipping.pickupAmount,
-        deliveryDays: shipping.deliveryDays,
+        shippingAmount: waived ? 0 : delivery.price,
+        shippingBeforeWaiver: delivery.price,
+        deliveryDays: delivery.days,
         tax,
-        shipping,
+        delivery,
     };
 };

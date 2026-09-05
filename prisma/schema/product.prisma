@@ -141,6 +141,11 @@ model Product {
   //banner relation
   banners Banner[]
 
+  /// Campaign landing pages selling this product. Restrict on the other side:
+  /// a product a campaign is still selling cannot be deleted out from under it
+  /// (see LandingPage.prisma).
+  landingPages LandingPage[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

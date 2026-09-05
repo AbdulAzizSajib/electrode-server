@@ -13,6 +13,8 @@
     POST Reset Password
     POST Logout
     GET Google Login (open in browser)
+    GET Google OAuth - Success Callback
+    GET Google OAuth - Error Callback
   [FOLDER] Categories
     GET Public - Get Category Tree
     GET Public - Get Category By Slug
@@ -99,6 +101,9 @@
     PATCH Mark All Notifications as Read
   [FOLDER] Store Settings
     GET Public - Get Store Settings
+  [FOLDER] Pages
+    GET Public - Get Published Pages
+    GET Public - Get Page by Slug
 [FOLDER] Private (Admin Panel)
   [FOLDER] Users
     GET Get All Users
@@ -234,6 +239,14 @@
     PATCH Admin - Update Purchase Order
     POST Admin - Receive Purchase Order
     DELETE Admin - Delete Purchase Order
+    POST Admin - Record Supplier Payment
+    GET Admin - Get Supplier Payments
+    PATCH Admin - Update Supplier Payment
+    DELETE Admin - Delete Supplier Payment
+    POST Admin - Record Supplier Payment (zero amount, expect 400)
+    POST Admin - Record Supplier Payment (COD method, expect 400)
+    POST Admin - Record Supplier Payment (overpayment, expect 400)
+    POST Admin - Record Supplier Payment (draft PO, expect 400)
   [FOLDER] Stock
     GET Admin - Get Stock
     PATCH Admin - Adjust Stock
@@ -260,6 +273,13 @@
     GET Admin - Get Banner By Id
     PATCH Admin - Update Banner
     DELETE Admin - Delete Banner
+  [FOLDER] Pages
+    GET Admin - List Pages
+    GET Admin - Get Page by Id
+    GET Admin - Get Reserved Slugs
+    POST Admin - Create Page
+    PATCH Admin - Update Page
+    DELETE Admin - Delete Page
   [FOLDER] Customers
     GET Admin - Get All Customers
     GET Admin - Get Customer By Id
@@ -272,6 +292,21 @@
     GET Admin - Order Status Breakdown
     GET Admin - Payment Breakdown
     GET Admin - Returns/Refunds Summary
+  [FOLDER] Reports
+    GET Admin - Stock Report
+    GET Admin - Stock Report (CSV export)
+    GET Admin - Sales Report
+    GET Admin - Sales Report (grouped by day)
+    GET Admin - Sales Report (CSV export)
+    GET Admin - Purchases Report
+    GET Admin - Purchases Report (owing only, by supplier)
+    GET Admin - Purchases Report (CSV export)
+    GET Admin - Stock History
+    GET Admin - Stock History (CSV export)
+    GET Admin - Payment History
+    GET Admin - Payment History (money out only)
+    GET Admin - Payment History (CSV export)
+    GET Admin - Sales Report (backwards range, expect 400)
   [FOLDER] Store Settings
     GET Admin - Get Store Settings
     PATCH Admin - Update Store Settings

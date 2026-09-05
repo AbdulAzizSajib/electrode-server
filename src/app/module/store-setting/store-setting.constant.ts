@@ -1,3 +1,5 @@
+import { CurrencyPosition, SiteMode } from "../../../generated/prisma/client";
+
 /**
  * Storefront presentation defaults for the StoreSetting singleton.
  *
@@ -134,15 +136,42 @@ export const DEFAULT_CHECKOUT_CONFIG = {
     showOrderNote: true,
     allowGuestCheckout: true,
     notice: "",
+    /*
+     * No delivery options, and that is the correct default rather than a gap.
+     *
+     * There is no delivery setup a store can be given that is right for it: an
+     * area named for the wrong city, or a price nobody chose, would be worse
+     * than nothing because it would be charged. So a store that has never
+     * configured delivery has an empty list, and checkout REFUSES to price an
+     * order until the merchant fills it in — a loud, one-time setup step in
+     * place of a silently wrong charge. `checkoutConfigSchema` therefore has to
+     * keep accepting an empty list; only a merchant SAVE rejects one, via
+     * `checkoutConfigUpdateSchema`.
+     */
+    delivery: {
+        offersPickup: false,
+        options: [] as {
+            key: string;
+            label: string;
+            kind: "DELIVERY" | "PICKUP";
+            price: number;
+            days: number;
+        }[],
+    },
 };
 
 /**
  * The storefront's presentation when a store has never configured it.
  *
- * Every value here mirrors what is compiled into `frontend/src/app/globals.css`
- * today: the same six colours, the same Outfit stylesheet, and `maxWidth: 1384`
- * — which is exactly `max-w-346` (346 × 0.25rem = 86.5rem). An unconfigured
- * store must be pixel-identical to the one that shipped before this change.
+ * Every colour and the Outfit stylesheet mirror what is compiled into
+ * `frontend/src/app/globals.css`, so an unconfigured store looks like the one
+ * that shipped.
+ *
+ * `maxWidth` is the exception: it is 1440, the middle of `SITE_CONTENT_WIDTHS`,
+ * rather than the 1384 this shipped with. Content width is now a closed set of
+ * four options — see the comment on that constant for why — and 1384 is not one
+ * of them. Readers snap a stored width to the nearest option, so a store
+ * carrying the old 1384 renders at 1440 — 56px wider — until it is saved again.
  *
  * `font.url` is stored parsed, in the same shape the Google Fonts parser
  * returns, so this constant and a merchant-saved value are indistinguishable to
@@ -155,7 +184,7 @@ export const DEFAULT_THEME = {
     brandDark: "#133f9e",
     accent: "#f5b301",
     sale: "#e02020",
-    maxWidth: 1384,
+    maxWidth: 1440,
     font: {
         family: "Outfit",
         url: "https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap",
@@ -221,6 +250,16 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     copyrightText: STOREFRONT_SEED_DEFAULTS.copyrightText,
     currency: "BDT",
     currencySymbol: "৳",
+    /*
+     * These two reproduce the storefront's pre-configuration rendering exactly
+     * — `formatPrice` was the literal `` `৳${value.toFixed(2)}` `` — so a store
+     * that never opens the currency settings renders prices as it always has.
+     * They are not neutral blanks for the same reason nothing else here is: a
+     * price is on every product card, and there is no safe way to render one
+     * without a symbol.
+     */
+    currencyPosition: "BEFORE" as CurrencyPosition,
+    currencyDecimals: 2,
     contactEmail: STOREFRONT_SEED_DEFAULTS.contactEmail as string | null,
     contactPhone: STOREFRONT_SEED_DEFAULTS.contactPhone as string | null,
     address: STOREFRONT_SEED_DEFAULTS.address as string | null,
@@ -244,4 +283,17 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     newsletter: DEFAULT_NEWSLETTER,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     theme: DEFAULT_THEME,
+    /*
+     * WEBSITE and null, so a storefront that cannot reach this API — or reaches
+     * an install where nobody has ever opened the landing page screen — renders
+     * the normal shop.
+     *
+     * This is the safe direction to fail in, and the only one. Defaulting to
+     * LANDING_PAGE would make an unreachable settings API replace every shop's
+     * home page with a 404; defaulting to WEBSITE makes it show the homepage it
+     * always showed. See the `store-config/site-mode` spec, "Settings API is
+     * unreachable".
+     */
+    siteMode: "WEBSITE" as SiteMode,
+    activeLandingPage: null as { slug: string; title: string } | null,
 };

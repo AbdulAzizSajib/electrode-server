@@ -1,9 +1,16 @@
 /// Singleton store-wide configuration row. There must always be exactly
 /// one row, keyed by the fixed id "singleton" (upsert on that id - never
-/// create a second row). Deliberately a flat single-currency,
-/// single-tax-rate model - no per-region/per-category tax rules and no
-/// multi-currency support (see design.md Non-Goals in
-/// openspec/changes/add-cart-wishlist-store-config).
+/// create a second row). Deliberately single-currency - no multi-currency
+/// support, no per-region pricing and no conversion rates (see design.md
+/// Non-Goals in openspec/changes/add-cart-wishlist-store-config, and again in
+/// openspec/changes/add-currency-format-and-home-content-cms).
+///
+/// TAX IS NOT CONFIGURED HERE. This row carried a shop-wide
+/// `defaultTaxRatePercent` until add-currency-format-and-home-content-cms
+/// removed it: TaxRule now owns tax properly - named rules, percent or flat,
+/// assigned per product - and a product with no rule is untaxed. Do not add a
+/// fallback rate back. Two sources of tax meant a merchant reading their Tax
+/// Rules list was not reading every tax their shop charged.
 ///
 /// The Json columns below carry the storefront's header/footer presentation
 /// content. Postgres does not constrain their shape, so the Zod schemas in
@@ -19,8 +26,26 @@ model StoreSetting {
   currency       String @default("BDT")
   currencySymbol String @default("৳")
 
-  defaultTaxRatePercent Decimal @default(0) @db.Decimal(5, 2)
+  /// How a monetary amount is written, together with `currencySymbol` above.
+  ///
+  /// `currencyDecimals` is PRESENTATION ONLY. Money is stored `Decimal(12,2)`
+  /// and computed in cents throughout; this governs how many digits are shown
+  /// and nothing else. Setting it to 0 rounds the displayed figure, not the
+  /// charged one — so displayed line items may not visibly sum to the displayed
+  /// total, and the admin panel says so beside the field. Setting it above 2
+  /// shows trailing zeros that carry no stored precision.
+  ///
+  /// Bounded 0–4 in store-setting.validation.ts, which Postgres cannot express:
+  /// 0 covers currencies with no minor unit, 3 covers those with three, and 4
+  /// is headroom. The defaults reproduce the storefront's pre-configuration
+  /// rendering exactly, so the additive migration changes nothing on its own.
+  currencyPosition CurrencyPosition @default(BEFORE)
+  currencyDecimals Int              @default(2)
 
+  /// Order value above which delivery is free, or null when the shop makes no
+  /// such offer. Null and 0 are DIFFERENT: 0 makes every order's delivery free.
+  /// Edited on UI → Checkout Setting, not on Store Settings — it is a decision
+  /// about what an order costs, which is what that screen owns.
   freeShippingThreshold Decimal? @db.Decimal(12, 2)
 
   /// Guest COD abuse limits. Guest checkout has neither a session nor a
@@ -90,6 +115,32 @@ model StoreSetting {
   ///   from validated components and is never a substring of merchant input.
   checkoutConfig Json?
   theme          Json?
+
+  /// Whether the storefront root serves the full shop or a single campaign
+  /// landing page, and which landing page that is.
+  ///
+  /// Shop-wide singleton facts, so they live on the singleton row — which also
+  /// means the storefront learns the mode from the settings payload it ALREADY
+  /// fetches in its root layout on every page. No second request, no second
+  /// cache, no second staleness window.
+  ///
+  /// The two columns are only meaningful together, and their invariants need a
+  /// database read, so they are enforced in store-setting.service.ts rather
+  /// than in Zod — transactionally, re-reading the counterpart row, so two
+  /// admins racing cannot land in mode-on-pointing-at-a-draft:
+  ///   - entering LANDING_PAGE requires `activeLandingPageId` to resolve to an
+  ///     existing PUBLISHED page;
+  ///   - the active page cannot be unpublished or deleted while the mode is on
+  ///     (enforced from the landing-page side);
+  ///   - the active selection cannot be cleared while the mode is on.
+  ///
+  /// SetNull, not Restrict: deleting the selected page while in WEBSITE mode is
+  /// allowed and simply empties the pointer, which then blocks the next attempt
+  /// to switch the mode on. A shop is never left serving a page that is gone.
+  siteMode SiteMode @default(WEBSITE)
+
+  activeLandingPageId String?
+  activeLandingPage   LandingPage? @relation(fields: [activeLandingPageId], references: [id], onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 }

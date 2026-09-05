@@ -1,0 +1,44 @@
+/// A merchant-authored customer testimonial, for the storefront's "What Our
+/// Clients Say" section.
+///
+/// Marketing copy the merchant writes, NOT a product Review. Review is a
+/// verified thing tied to a customer and a purchase; these are quotes a
+/// merchant chooses to display. Keeping them separate is the point — merging
+/// them would let editorial copy be presented with a review's authority.
+///
+/// A model rather than a JSON block on StoreSetting so it matches BlogPost:
+/// the two new admin sections are the same shape, and a developer who has read
+/// one can maintain the other.
+model Testimonial {
+  id String @id @default(cuid())
+
+  quote String @db.Text
+
+  authorName String
+  /// The line under the name — "Verified Buyer", "CEO, Acme". Free text
+  /// because it is a caption, not a role the system knows anything about.
+  authorRole String
+
+  /// Optional. The storefront renders the author's initials when this is null,
+  /// so a card without a photo is still a finished-looking card of the same
+  /// footprint rather than a gap or a generic silhouette.
+  photoUrl String?
+
+  /// Whole stars, 1-5, bounded in testimonial.validation.ts. Replaces a
+  /// hardcoded 5 in the storefront's Testimonials.tsx — a section where every
+  /// card shows five stars regardless of what it says is not showing a rating.
+  rating Int @default(5)
+
+  status TestimonialStatus @default(DRAFT)
+
+  /// The merchant's own order, ascending. The homepage section shows only the
+  /// first few, so this is how a merchant decides which quote leads — the admin
+  /// list marks the entries that fall beyond what the section renders, the same
+  /// overflow problem the hero banner slots already surface.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, sortOrder])
+}

@@ -16,7 +16,9 @@
 import { parseGoogleFontEmbed } from "../src/app/module/store-setting/google-font";
 import {
     checkoutConfigSchema,
+    checkoutConfigUpdateSchema,
     themeSchema,
+    SITE_CONTENT_WIDTHS,
 } from "../src/app/module/store-setting/store-setting.validation";
 import {
     DEFAULT_CHECKOUT_CONFIG,
@@ -177,23 +179,36 @@ check(
         .success,
     "hex only",
 );
+for (const width of SITE_CONTENT_WIDTHS) {
+    check(
+        `maxWidth ${width} is accepted`,
+        themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, maxWidth: width })
+            .success,
+        "one of the offered content widths",
+    );
+}
 check(
-    "width below the range is rejected",
-    !themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, maxWidth: 320 })
+    "a width outside the offered set is rejected",
+    !themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, maxWidth: 1384 })
         .success,
-    "960 is the floor",
+    "1384 was the old default and is no longer offered — the hero is laid out from this value",
 );
 check(
-    "width above the range is rejected",
+    "an arbitrary width is rejected",
     !themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, maxWidth: 4000 })
         .success,
-    "2560 is the ceiling",
+    "the set is closed, not a range",
 );
 check(
     'maxWidth "full" is accepted',
     themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, maxWidth: "full" })
         .success,
     "the full-width sentinel",
+);
+check(
+    "DEFAULT_THEME.maxWidth is one of the offered widths",
+    (SITE_CONTENT_WIDTHS as readonly number[]).includes(DEFAULT_THEME.maxWidth),
+    "an unconfigured store must render at a width the form can also show",
 );
 
 console.log("\n--- Checkout config invariants ---\n");
@@ -340,6 +355,135 @@ check(
         "several missing fields are reported in one message",
         missing.length === 3,
         missingCheckoutFieldsMessage(missing),
+    );
+}
+
+console.log("\n--- Delivery options ---\n");
+
+const withDelivery = (delivery: {
+    offersPickup: boolean;
+    options: { key: string; label: string; kind: string; price: number; days: number }[];
+}) => ({ ...DEFAULT_CHECKOUT_CONFIG, delivery });
+
+const insideDhaka = { key: "inside-dhaka", label: "Inside Dhaka", kind: "DELIVERY", price: 60, days: 2 };
+const outsideDhaka = { key: "outside-dhaka", label: "Outside Dhaka", kind: "DELIVERY", price: 120, days: 4 };
+const mirpurPickup = { key: "mirpur", label: "Mirpur 10", kind: "PICKUP", price: 0, days: 0 };
+
+check(
+    "the two-area list a merchant actually wants is accepted",
+    checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: false, options: [insideDhaka, outsideDhaka] }),
+    ).success,
+    "Inside Dhaka / Outside Dhaka — the setup the old place-matching model refused",
+);
+check(
+    "two options may share a price",
+    checkoutConfigSchema.safeParse(
+        withDelivery({
+            offersPickup: false,
+            options: [insideDhaka, { ...outsideDhaka, price: 60 }],
+        }),
+    ).success,
+    "options are told apart by name, not by cost",
+);
+check(
+    "a duplicate label is rejected",
+    !checkoutConfigSchema.safeParse(
+        withDelivery({
+            offersPickup: false,
+            options: [insideDhaka, { ...outsideDhaka, label: "inside dhaka" }],
+        }),
+    ).success,
+    "case-insensitive — a shopper cannot choose between two identical names",
+);
+check(
+    "a duplicate key is rejected",
+    !checkoutConfigSchema.safeParse(
+        withDelivery({
+            offersPickup: false,
+            options: [insideDhaka, { ...outsideDhaka, key: "inside-dhaka" }],
+        }),
+    ).success,
+    "the key is what an order references",
+);
+check(
+    "collection on with no pickup point is rejected",
+    !checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: true, options: [insideDhaka, outsideDhaka] }),
+    ).success,
+    "a shopper choosing collection would be shown an empty list",
+);
+check(
+    "collection on with a pickup point is accepted",
+    checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: true, options: [insideDhaka, mirpurPickup] }),
+    ).success,
+    "the configuration the toggle exists for",
+);
+check(
+    "collection off while pickup points exist is accepted",
+    checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: false, options: [insideDhaka, mirpurPickup] }),
+    ).success,
+    "turning collection off must not force a merchant to delete their points",
+);
+check(
+    "an option with no name is rejected",
+    !checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: false, options: [{ ...insideDhaka, label: "  " }] }),
+    ).success,
+    "a shopper cannot tell an unnamed option apart from any other",
+);
+check(
+    "a negative price is rejected",
+    !checkoutConfigSchema.safeParse(
+        withDelivery({ offersPickup: false, options: [{ ...insideDhaka, price: -1 }] }),
+    ).success,
+    "delivery cannot pay the shopper",
+);
+
+/*
+ * The empty list is legal to STORE and illegal to SAVE. Both directions are
+ * checked because the split is load-bearing: the read path parses rows for
+ * stores that have never configured delivery, and the write path is what stops
+ * a merchant emptying a checkout that was working.
+ */
+check(
+    "an empty option list is accepted by the stored-config schema",
+    checkoutConfigSchema.safeParse(withDelivery({ offersPickup: false, options: [] })).success,
+    "the state a store that has never configured delivery is in",
+);
+check(
+    "an empty option list is rejected on save",
+    !checkoutConfigUpdateSchema.safeParse(withDelivery({ offersPickup: false, options: [] }))
+        .success,
+    "a merchant deleting their last option is emptying a working checkout",
+);
+check(
+    "a populated list is accepted on save",
+    checkoutConfigUpdateSchema.safeParse(
+        withDelivery({ offersPickup: false, options: [insideDhaka, outsideDhaka] }),
+    ).success,
+    "the update schema differs from the stored one in exactly one rule",
+);
+
+/*
+ * The shape a store configured before delivery moved into this blob is in.
+ * It must keep its own field settings rather than being thrown away for the
+ * defaults — see `withDeliveryDefault` in store-setting.service.ts.
+ */
+{
+    const { delivery: _delivery, ...legacy } = DEFAULT_CHECKOUT_CONFIG;
+    check(
+        "a config stored before delivery existed does not parse as-is",
+        !checkoutConfigSchema.safeParse(legacy).success,
+        "which is exactly why the read path fills the key in before parsing",
+    );
+    check(
+        "filling in the missing key makes it parse",
+        checkoutConfigSchema.safeParse({ ...legacy, delivery: DEFAULT_CHECKOUT_CONFIG.delivery })
+            .success,
+        "the merchant keeps their own field, notice and guest-checkout settings",
     );
 }
 

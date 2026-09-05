@@ -7,6 +7,10 @@ import { QueryBuilder } from "../../utils/QueryBuilder";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { StockService } from "../stock/stock.service";
 import {
+    deriveSettlement,
+    sumPaymentsByPurchaseOrder,
+} from "../supplier-payment/supplier-payment.service";
+import {
     ICreatePurchaseOrderPayload,
     IPurchaseOrderItemInput,
     IReceivePurchaseOrderPayload,
@@ -21,6 +25,24 @@ const PURCHASE_ORDER_INCLUDE = {
             variant: { select: { id: true, name: true, sku: true } },
         },
     },
+};
+
+/**
+ * Attaches `amountPaid`, `balanceDue` and `settlementState` to purchase order
+ * rows on the way out.
+ *
+ * Computed rather than stored (design decision 11): a denormalized total is
+ * what `Product.stockQuantity` vs `Stock.quantity` already looks like a year
+ * later, and payments against one purchase order number in the ones, so this
+ * is a `groupBy` over an indexed column rather than a consistency risk.
+ */
+const withSettlement = async <T extends { id: string; totalAmount: unknown }>(rows: T[]) => {
+    const paidByPurchaseOrder = await sumPaymentsByPurchaseOrder(rows.map((row) => row.id));
+
+    return rows.map((row) => ({
+        ...row,
+        ...deriveSettlement(Number(row.totalAmount), paidByPurchaseOrder.get(row.id) ?? 0),
+    }));
 };
 
 const generatePurchaseNumber = () => {
@@ -115,19 +137,53 @@ const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrder
     return purchaseOrder;
 };
 
+/**
+ * Ids of purchase orders that still owe money, for the list's "balance owing"
+ * filter.
+ *
+ * Raw SQL because the predicate compares a column against an aggregate over
+ * another table, which neither Prisma's `where` nor `QueryBuilder` can express
+ * — the same limitation analytics.service.ts already works around for low
+ * stock. `QueryBuilder.where()` then merges the id set into both the page query
+ * and its count, so paging stays correct.
+ *
+ * Returns an id list rather than a join because QueryBuilder owns the query.
+ * That is fine at this table's scale (purchase orders number in the thousands,
+ * not the millions); the Purchases report does the same comparison as a proper
+ * join because it is not routed through QueryBuilder.
+ */
+const findPurchaseOrderIdsWithBalance = async () => {
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT po."id"
+        FROM "PurchaseOrder" po
+        LEFT JOIN (
+            SELECT "purchaseOrderId", SUM("amount") AS paid
+            FROM "SupplierPayment"
+            GROUP BY "purchaseOrderId"
+        ) sp ON sp."purchaseOrderId" = po."id"
+        WHERE po."totalAmount" - COALESCE(sp.paid, 0) > 0
+    `;
+
+    return rows.map((row) => row.id);
+};
+
 const getPurchaseOrders = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.purchaseOrder, queryParams, {
         searchableFields: ["purchaseNumber"],
         filterableFields: ["status", "supplierId"],
     });
 
-    return queryBuilder
-        .search()
-        .filter()
-        .sort()
-        .paginate()
-        .include(PURCHASE_ORDER_INCLUDE)
-        .execute();
+    queryBuilder.search().filter().sort().paginate().include(PURCHASE_ORDER_INCLUDE);
+
+    // Not a `filterableFields` entry: QueryBuilder drops any param outside that
+    // allow-list silently, and it could not express this predicate anyway.
+    if (String(queryParams.hasBalance) === "true") {
+        queryBuilder.where({ id: { in: await findPurchaseOrderIdsWithBalance() } } as never);
+    }
+
+    const result = await queryBuilder.execute();
+
+    return { ...result, data: await withSettlement(result.data as { id: string; totalAmount: unknown }[]) };
 };
 
 const getPurchaseOrderOrThrow = async (id: string) => {
@@ -143,6 +199,30 @@ const getPurchaseOrderOrThrow = async (id: string) => {
     return purchaseOrder;
 };
 
+/** The detail read. Separate from `getPurchaseOrderOrThrow` so the internal guard callers above do not pay for a settlement query they ignore. */
+const getPurchaseOrderById = async (id: string) => {
+    const purchaseOrder = await getPurchaseOrderOrThrow(id);
+    const [withFigures] = await withSettlement([purchaseOrder]);
+    return withFigures;
+};
+
+/**
+ * Refuses to strand recorded money on a document that no longer means
+ * anything (`inventory/supplier-payments`). Applied to both cancellation and
+ * deletion: `SupplierPayment.purchaseOrderId` cascades, so a delete would
+ * destroy the payment rows silently, which is the same hazard with no trace.
+ */
+const assertNoSupplierPayments = async (id: string, action: "cancel" | "delete") => {
+    const paymentCount = await prisma.supplierPayment.count({ where: { purchaseOrderId: id } });
+
+    if (paymentCount > 0) {
+        throw new AppError(
+            status.CONFLICT,
+            `Cannot ${action} a purchase order with ${paymentCount} recorded supplier payment${paymentCount === 1 ? "" : "s"}. Remove the payment${paymentCount === 1 ? "" : "s"} first.`,
+        );
+    }
+};
+
 const updatePurchaseOrder = async (userId: string, id: string, payload: IUpdatePurchaseOrderPayload) => {
     const existing = await getPurchaseOrderOrThrow(id);
 
@@ -154,6 +234,13 @@ const updatePurchaseOrder = async (userId: string, id: string, payload: IUpdateP
             status.BAD_REQUEST,
             "Cannot edit a purchase order that has already started receiving stock",
         );
+    }
+
+    if (
+        payload.status === PurchaseOrderStatus.CANCELLED &&
+        existing.status !== PurchaseOrderStatus.CANCELLED
+    ) {
+        await assertNoSupplierPayments(id, "cancel");
     }
 
     const shippingCost = payload.shippingCost ?? Number(existing.shippingCost);
@@ -193,6 +280,8 @@ const deletePurchaseOrder = async (userId: string, id: string) => {
             "Cannot delete a purchase order that has already received stock",
         );
     }
+
+    await assertNoSupplierPayments(id, "delete");
 
     const deleted = await prisma.purchaseOrder.delete({ where: { id } });
 
@@ -343,6 +432,7 @@ const receivePurchaseOrder = async (
 export const PurchaseOrderService = {
     createPurchaseOrder,
     getPurchaseOrders,
+    getPurchaseOrderById,
     getPurchaseOrderOrThrow,
     updatePurchaseOrder,
     deletePurchaseOrder,

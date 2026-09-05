@@ -1,0 +1,29 @@
+-- Migration B of three, and the only destructive step in this change.
+-- Drops the shop-wide fallback tax rate. See
+-- openspec/changes/add-currency-format-and-home-content-cms.
+--
+-- WHY: `defaultTaxRatePercent` predates TaxRule. Since TaxRule shipped, a shop
+-- has had TWO sources of tax — named per-product rules on the Tax Rules screen,
+-- and this rate, applied by order.pricing.ts to every line whose product had no
+-- rule. A merchant who had migrated to Tax Rules still had this one quietly
+-- taxing anything they had not yet tagged, invisible from the screen that was
+-- supposed to be the answer. Tax Rules are now the sole source
+-- (`store-config/tax-configuration`), and a product with no rule is untaxed.
+--
+-- SAFETY, checked against the live database before this was written:
+--   defaultTaxRatePercent = 0.00 on the singleton row, and 2 of 2 products
+--   already carry a TaxRule. Nothing was relying on the fallback, so no order
+--   total changes. Had it been non-zero, the prerequisite was to reproduce it
+--   as a TaxRule and assign it to every untagged product FIRST — see task 1.2.
+--
+-- Kept SEPARATE from Migration A (currency columns) so rolling this back does
+-- not take those with it. Restoring this column would restore a zero-valued
+-- default, not any merchant's original rate — which is harmless precisely
+-- because the reading above was already zero.
+--
+-- The code that read it goes in the same release: quoteTax lost its
+-- `fallbackPercent` parameter outright rather than defaulting it to zero, so
+-- the hole cannot be refilled by accident.
+
+-- AlterTable
+ALTER TABLE "StoreSetting" DROP COLUMN "defaultTaxRatePercent";

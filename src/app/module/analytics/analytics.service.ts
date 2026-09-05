@@ -1,4 +1,5 @@
 import { OrderStatus, ProductStatus, RefundStatus, ReturnStatus } from "../../../generated/prisma/client";
+import { SALES_ORDER_WHERE } from "../../constants/sales.constant";
 import { prisma } from "../../lib/prisma";
 import {
     ICategorySales,
@@ -44,7 +45,7 @@ const getDashboardSummary = async (range: IDashboardRange): Promise<IDashboardSu
     // One query covers both the current and immediately-preceding window (design.md Decision 1) —
     // cancelled orders don't count as revenue/order activity either way.
     const orders = await prisma.order.findMany({
-        where: { status: { not: OrderStatus.CANCELLED }, createdAt: { gte: previousSince } },
+        where: { ...SALES_ORDER_WHERE, createdAt: { gte: previousSince } },
         select: { totalAmount: true, createdAt: true },
     });
 
@@ -131,7 +132,7 @@ const getTopProducts = async (range: IDashboardRange): Promise<ITopProduct[]> =>
     const since = resolveSince(range);
 
     const items = await prisma.orderItem.findMany({
-        where: { order: { status: { not: OrderStatus.CANCELLED }, createdAt: { gte: since } } },
+        where: { order: { ...SALES_ORDER_WHERE, createdAt: { gte: since } } },
         select: {
             productId: true,
             productName: true,
@@ -167,7 +168,7 @@ const getSalesByCategory = async (range: IDashboardRange): Promise<ICategorySale
     const since = resolveSince(range);
 
     const items = await prisma.orderItem.findMany({
-        where: { order: { status: { not: OrderStatus.CANCELLED }, createdAt: { gte: since } } },
+        where: { order: { ...SALES_ORDER_WHERE, createdAt: { gte: since } } },
         select: {
             totalPrice: true,
             product: { select: { categoryId: true, category: { select: { name: true } } } },

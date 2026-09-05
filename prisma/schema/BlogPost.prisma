@@ -1,0 +1,72 @@
+/// A merchant-authored blog post.
+///
+/// A model rather than a JSON block on StoreSetting, unlike the header/footer
+/// content: a blog grows, needs a slug index for `/blogs/<slug>`, needs
+/// pagination, and its body is a rich-text document. The settings blocks suit a
+/// short fixed list edited as a whole; this is none of those things. See
+/// add-currency-format-and-home-content-cms design.md, Decision 7.
+///
+/// Deliberately NOT a full publishing system: no categories, tags, authors,
+/// comments or scheduled publishing. A post is content, one media slot and a
+/// status — the same shape Page is content and a status.
+model BlogPost {
+  id String @id @default(cuid())
+
+  title String
+
+  /// The storefront serves a post at `/blogs/<slug>`, a namespace of its own —
+  /// so unlike Page.slug this is NOT checked against RESERVED_SLUGS, which
+  /// guards the storefront ROOT. The format rule still applies and is enforced
+  /// in blog-post.validation.ts: `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+  slug String @unique
+
+  /// What every listing renders under the title. Required, not optional: a card
+  /// with no excerpt is a half-empty card, and falling back to a truncation of
+  /// `body` would put the first words of the article — often a lead-in that
+  /// reads as nothing on its own — where a summary belongs.
+  excerpt String @db.Text
+
+  /// Semantic HTML from the admin's Tiptap editor. Stored as authored and NOT
+  /// sanitised on write, exactly like Page.body and Product.description: the
+  /// guarantee is enforced where the markup meets a browser, on the storefront,
+  /// because sanitising only here would leave everything already stored — or
+  /// written by any other path — trusted forever. See the storefront's
+  /// src/lib/sanitize-html.ts.
+  body String @db.Text
+
+  /// Which of the three URL columns below is meaningful. The invariant tying
+  /// them together lives in blog-post.validation.ts, since Postgres cannot
+  /// express "exactly these columns are set, given that one".
+  mediaType BlogMediaType @default(NONE)
+
+  /// Set when mediaType is IMAGE.
+  imageUrl String?
+
+  /// Both set when mediaType is VIDEO. The thumbnail is never null for a video
+  /// post: POST /uploads/video derives a frame when the merchant supplies no
+  /// poster, so a listing always has a still to render rather than a black
+  /// rectangle. Listings show the thumbnail; only the post's own page plays the
+  /// video.
+  videoUrl          String?
+  videoThumbnailUrl String?
+
+  /// The date printed on the card, and the sort key for "most recent". Authored
+  /// by the merchant and defaulted to now — NOT a timestamp of when `status`
+  /// last changed, which would reorder the blog every time an old post was
+  /// corrected.
+  publishedAt DateTime @default(now())
+
+  /// Both optional. The storefront falls back to `title` and `excerpt`
+  /// respectively, so a post is never published without usable metadata.
+  metaTitle       String?
+  metaDescription String?
+
+  status BlogPostStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Serves both storefront reads: the homepage section and the index both ask
+  /// for published posts newest first.
+  @@index([status, publishedAt])
+}

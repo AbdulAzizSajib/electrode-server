@@ -41,17 +41,41 @@ export const submittedCheckoutFields = (payload: {
 });
 
 /**
+ * The four fields that describe where to deliver. Not required of a shopper who
+ * is collecting the order themselves, whatever the merchant configured — there
+ * is nowhere to deliver to.
+ */
+const ADDRESS_FIELD_KEYS: ICheckoutFieldKey[] = [
+    "addressLine1",
+    "addressLine2",
+    "city",
+    "postalCode",
+];
+
+/**
  * The required fields the request left out, in the config's own order.
  *
  * Whitespace does not satisfy a required field — " " in a name box is an empty
  * name, and accepting it would put a blank into an address the courier reads.
+ *
+ * `isPickup` suspends the four address fields. It is applied HERE, in the rule
+ * itself, rather than only in the storefront's form: hiding the fields in the UI
+ * while the server still demanded them would leave a valid collection order
+ * rejected with a message about an address nobody was asked for. Name and phone
+ * are untouched — someone still has to be identified and reached when they come
+ * to collect. See the `commerce/delivery-options` spec, "Choosing a pickup point
+ * suppresses the delivery address".
  */
 export const collectMissingCheckoutFields = (
     config: ICheckoutConfig,
     submitted: SubmittedCheckoutFields,
+    isPickup = false,
 ): ICheckoutFieldKey[] =>
     CHECKOUT_FIELD_KEYS.filter(
-        (key) => config.fields[key].required && !submitted[key]?.trim(),
+        (key) =>
+            config.fields[key].required &&
+            !(isPickup && ADDRESS_FIELD_KEYS.includes(key)) &&
+            !submitted[key]?.trim(),
     );
 
 /** One message naming every missing field, so a shopper fixes them in one pass. */

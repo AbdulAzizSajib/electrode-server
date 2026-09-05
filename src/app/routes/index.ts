@@ -3,18 +3,22 @@ import { AnalyticsRoutes } from "../module/analytics/analytics.route";
 import { AuditLogRoutes } from "../module/audit-log/audit-log.route";
 import { AuthRoutes } from "../module/auth/auth.route";
 import { BannerRoutes } from "../module/banner/banner.route";
+import { BlogPostRoutes } from "../module/blog-post/blog-post.route";
 import { BrandRoutes } from "../module/brand/brand.route";
 import { CampaignRoutes } from "../module/campaign/campaign.route";
 import { CartRoutes } from "../module/cart/cart.route";
 import { CategoryRoutes } from "../module/category/category.route";
 import { CartCouponRoutes, CouponRoutes } from "../module/coupon/coupon.route";
 import { CustomerAddressRoutes, CustomerRoutes } from "../module/customer/customer.route";
+import { LandingPageRoutes } from "../module/landing-page/landing-page.route";
 import { NotificationRoutes } from "../module/notification/notification.route";
 import { OrderRoutes } from "../module/order/order.route";
 import { PageRoutes } from "../module/page/page.route";
 import { PaymentRoutes } from "../module/payment/payment.route";
 import { ProductRoutes } from "../module/product/product.route";
 import { PurchaseOrderRoutes } from "../module/purchase-order/purchase-order.route";
+import { ReportRoutes } from "../module/report/report.route";
+import { SupplierPaymentRoutes } from "../module/supplier-payment/supplier-payment.route";
 import { RefundNestedRoutes, RefundRoutes } from "../module/refund/refund.route";
 import { PermissionRoutes, RoleRoutes } from "../module/role/role.route";
 import { ReturnNestedRoutes, ReturnRoutes } from "../module/return/return.route";
@@ -24,6 +28,7 @@ import { CollectionRoutes } from "../module/collection/collection.route";
 import { ShippingRuleRoutes } from "../module/shipping-rule/shipping-rule.route";
 import { TagRoutes } from "../module/tag/tag.route";
 import { TaxRuleRoutes } from "../module/tax-rule/tax-rule.route";
+import { TestimonialRoutes } from "../module/testimonial/testimonial.route";
 import { ProductViewNestedRoutes } from "../module/product-view/product-view.route";
 import { ReviewNestedRoutes, ReviewRoutes } from "../module/review/review.route";
 import { ShipmentRoutes } from "../module/shipment/shipment.route";
@@ -72,6 +77,9 @@ router.use("/warehouses", WarehouseRoutes);
 router.use("/stock-movements", StockMovementRoutes);
 router.use("/stock", StockRoutes);
 router.use("/suppliers", SupplierRoutes);
+// Before the bare /purchase-orders mount, matching how /orders/:id/payments is
+// registered ahead of /orders above.
+router.use("/purchase-orders/:id/payments", SupplierPaymentRoutes);
 router.use("/purchase-orders", PurchaseOrderRoutes);
 router.use("/coupons", CouponRoutes);
 router.use("/campaigns", CampaignRoutes);
@@ -80,11 +88,26 @@ router.use("/support-tickets/:id/messages", SupportMessageRoutes);
 router.use("/support-tickets", SupportTicketRoutes);
 router.use("/notifications", NotificationRoutes);
 router.use("/pages", PageRoutes);
+// The two homepage sections a merchant now owns. Beside /pages and /banners
+// rather than under them: all four are storefront content, and none nests
+// inside another.
+router.use("/blog-posts", BlogPostRoutes);
+router.use("/testimonials", TestimonialRoutes);
+// Beside the other storefront content, not under /pages: a landing page is a
+// campaign document that also takes orders, which is neither a content page nor
+// a discount schedule. Its public routes are namespaced under a literal
+// `by-slug` segment so an ad's traffic can never collide with the admin's
+// `/:id` reads — see landing-page.route.ts.
+router.use("/landing-pages", LandingPageRoutes);
 router.use("/settings", StoreSettingRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);
 router.use("/analytics", AnalyticsRoutes);
+// Beside /analytics, not on top of it: the dashboard answers six fixed
+// questions over a fixed window; reports take an arbitrary range, filters,
+// paging and export. They share one revenue definition (constants/sales.constant.ts).
+router.use("/reports", ReportRoutes);
 router.use("/uploads", UploadRoutes);
 
 export const IndexRoutes = router;

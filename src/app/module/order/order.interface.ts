@@ -36,12 +36,17 @@ export interface ICreateOrderPayload {
     notes?: string;
 
     /**
-     * Whether the shopper wants it delivered or will collect it in person.
-     * Defaults to delivery. Collection is only accepted when every matched
-     * shipping place offers it, and is charged at those places' pickup price
-     * rather than their delivery price.
+     * Which delivery option the shopper chose, by its key.
+     *
+     * Required for a normal order — the price comes from this and from nothing
+     * else. Whether it is a delivery or a collection is a property of the
+     * OPTION, not a separate field the client asserts: sending both would let a
+     * client claim collection against a delivery price.
+     *
+     * Optional only because a landing-page order does not have one; those are
+     * priced by the page's own zones.
      */
-    deliveryMethod?: "DELIVERY" | "PICKUP";
+    deliveryOptionKey?: string;
 
     /** Guest checkout only: contact details, since a guest has no account to read them from. */
     fullName?: string;
@@ -75,16 +80,60 @@ export interface ICreateOrderPayload {
 }
 
 /**
- * What to price, and where to. Everything is optional because a quote is asked
- * for while the shopper is still filling the form in — a partial destination
- * simply matches fewer places, and an unmatched one is reported as
- * undeliverable rather than rejected as invalid.
+ * The three ways a campaign landing page's checkout differs from the shop's.
+ *
+ * Passed as ONE optional argument to `placeOrder` rather than as three flags on
+ * the payload, so it is impossible to reach any of them from a request body:
+ * every field here is decided by the landing-page service from stored data, and
+ * `createOrderZodSchema` has no idea it exists.
+ *
+ * Everything NOT listed here is deliberately identical between the two paths —
+ * stock deduction, the guest COD abuse caps, the order number, the PENDING COD
+ * payment, status history, idempotency and notifications all run through the
+ * same core. A second implementation of order creation is the risk this
+ * parameter exists to avoid; see add-single-product-landing-page design.md,
+ * Decision 3 and Decision 8.
+ */
+export interface ICheckoutOverrides {
+    /**
+     * Charged instead of whatever `quoteShipping` would have matched. Read from
+     * the landing page's stored delivery zone — never from the request.
+     */
+    shippingOverride?: { amount: number; label: string };
+    /**
+     * Skips the shop-wide `checkoutConfig` gate: its six-field requiredness map
+     * AND `allowGuestCheckout`.
+     *
+     * A landing page asks for three fields the config does not describe, so a
+     * shop requiring a postal code at its normal checkout would otherwise reject
+     * every campaign order for a field the page never showed. `allowGuestCheckout`
+     * goes with it because publishing a guest-COD landing page IS the merchant
+     * opting into guest ordering for that page — a more specific decision than
+     * the shop-wide switch, made later.
+     *
+     * What this does NOT skip: the phone floor, the guest COD caps, or any
+     * stock or pricing check. See the landing page's own required-field rule in
+     * landing-page.service.ts.
+     */
+    bypassCheckoutConfig?: boolean;
+    /** Campaign attribution recorded on the resulting order. */
+    landingPage?: { id: string; title: string };
+}
+
+/**
+ * What to price, and under which delivery option.
+ *
+ * The address is deliberately absent. A quote used to take one because delivery
+ * was matched from it, which meant the price moved as the shopper typed; the
+ * shopper picks the option now, so the only thing that changes the delivery
+ * charge is the choice they make.
  */
 export interface IQuoteCheckoutPayload {
-    /** A saved address, which outranks the inline country/state below. */
-    shippingAddressId?: string;
-    country?: string;
-    state?: string;
+    /**
+     * Which option to price. The storefront holds the option list already — it
+     * arrives with the public settings — so it can always name one.
+     */
+    deliveryOptionKey: string;
     /** Prices these lines instead of the cart, mirroring the checkout bypass. */
     items?: ICheckoutItemPayload[];
     /** Injected by the controller from the applied-coupon cookie, as checkout is. */

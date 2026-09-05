@@ -280,6 +280,38 @@
     {
       "key": "pageSlug",
       "value": ""
+    },
+    {
+      "key": "supplierPaymentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "draftPurchaseOrderId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "blogPostId",
+      "value": ""
+    },
+    {
+      "key": "blogPostSlug",
+      "value": ""
+    },
+    {
+      "key": "testimonialId",
+      "value": ""
+    },
+    {
+      "key": "landingPageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "landingPageSlug",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2647,6 +2679,192 @@
                   ]
                 },
                 "description": "No auth. Returns the PUBLISHED page at this slug, which the storefront renders at the root-level `/<slug>`.\n\nA DRAFT page and a slug no page uses both return 404, deliberately: the response must not let a visitor tell an unpublished page from one that was never written."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Blog",
+          "item": [
+            {
+              "name": "Public - Get Recent Blog Posts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/recent",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "recent"
+                  ]
+                },
+                "description": "No auth. The newest PUBLISHED posts, newest first, bounded to what the storefront's homepage section renders (4). A fixed question with a fixed answer — no pagination metadata.\n\nEach entry is a SUMMARY: no `body`, so four cards do not ship four rich-text documents.\n\nReturns `[]` for a shop with nothing published, and the storefront omits the whole section rather than rendering a heading over an empty grid."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Blog Posts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts?page=1&limit=9",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "9"
+                    }
+                  ]
+                },
+                "description": "No auth. PUBLISHED posts only, newest first by `publishedAt`, paginated — the storefront's blog index.\n\n`status` is FORCED server-side, not read from the query string: passing `?status=DRAFT` does not surface drafts."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Get Blog Post by Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/{{blogPostSlug}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "{{blogPostSlug}}"
+                  ]
+                },
+                "description": "No auth. The PUBLISHED post at this slug, which the storefront renders at `/blogs/<slug>`. Includes the full `body`.\n\nA DRAFT post and a slug no post uses both return 404, deliberately: the response must not let a visitor tell an unpublished post from one that was never written."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Testimonials",
+          "item": [
+            {
+              "name": "Public - Get Testimonials",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials"
+                  ]
+                },
+                "description": "No auth. PUBLISHED testimonials in the merchant's own order (`sortOrder` ascending, then newest first), bounded to what the homepage's \"What Our Clients Say\" section renders (4).\n\nPass `?limit=all` to lift the bound.\n\nReturns `[]` for a shop with nothing published, and the storefront omits the whole section."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Landing Pages",
+          "item": [
+            {
+              "name": "Public - Get Landing Page by Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/by-slug/{{landingPageSlug}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "by-slug",
+                    "{{landingPageSlug}}"
+                  ]
+                },
+                "description": "No auth. The PUBLISHED landing page at `/lp/<slug>`, plus a server-resolved product snapshot (name, price, compareAtPrice, images, available stock, isOrderable).\n\nA DRAFT page and a slug that does not exist are the SAME 404 — an unpublished campaign must not be discoverable by probing slugs.\n\nNo price comes from this payload's client. `unitPrice` and `compareAtPrice` are the bound product's own; a landing page cannot author a price."
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Quote Landing Page Order",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/by-slug/{{landingPageSlug}}/quote",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "by-slug",
+                    "{{landingPageSlug}}",
+                    "quote"
+                  ]
+                },
+                "description": "No auth. What the order will cost for this quantity and delivery zone, so the page displays the server's own totals rather than arithmetic of its own.\n\nComputed through the SAME `quoteCharges` the order is priced by: tax from the product's own tax rule, delivery from the page's stored zone price. Reimplementing the tax rules in the browser would be a second answer to \"what does this cost\".\n\n`zoneKey` must be one of the page's own zone keys — an unknown key is rejected rather than falling back to the cheapest zone.\n\nCarries no prices in the request: a price arriving from a browser is not an input to what anything costs.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"quantity\": 1,\n  \"zoneKey\": \"inside-dhaka\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Public - Place Landing Page Order",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}",
+                    "type": "text",
+                    "description": "Optional. A UUID; anything else is rejected. Sending one makes a retried submit return the order the first attempt created instead of placing a second."
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/by-slug/{{landingPageSlug}}/order",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "by-slug",
+                    "{{landingPageSlug}}",
+                    "order"
+                  ]
+                },
+                "description": "No auth, and no session is read even if the visitor has one: a campaign order is ALWAYS a guest cash-on-delivery order. The landing page has no login and no address book, so there is no authenticated experience to resolve, and honouring a session would make the page behave differently for a signed-in merchant testing it than for the ad traffic it exists for. The customer is resolved BY PHONE, so an order from a number that already has an account still attaches to it and still appears in that account's order history. Places a cash-on-delivery order for the page's product, direct: no cart, no checkout page, no login.\n\nRuns through the SAME order core as normal checkout — order number, stock deduction, PENDING COD payment, status history, per-phone and per-IP guest COD caps, idempotency, merchant notification. Three things differ, all decided server-side from stored data:\n  - delivery is charged at the selected zone's stored price, NOT by the product's shipping rule, and neither the shop's free-shipping threshold nor a coupon waiver applies to it;\n  - the shop-wide `checkoutConfig` does not gate the fields (this page asks for three the config does not describe);\n  - the order records which landing page produced it.\n\nThe address becomes `shippingAddress.addressLine1`; the chosen zone's LABEL becomes `shippingAddress.state`, which is where the admin and the courier read the delivery area.\n\n`fullName` is required only when the page's own `orderForm.fields.fullName.required` says so. `phone` and `address` are always required and no configuration can change that — phone because the per-phone COD cap and guest order lookup are keyed on it, address because a COD parcel with no address cannot be delivered.\n\n`expectedTotal` is the last quote the page showed. A mismatch is rejected with the difference stated in the shop's currency format, so a price that changed between page load and submit is reported rather than silently charged.\n\nReturns 201 on a new order and 200 on an idempotent replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"quantity\": 2,\n  \"zoneKey\": \"inside-dhaka\",\n  \"fullName\": \"রহিম আহমেদ\",\n  \"phone\": \"01712345678\",\n  \"address\": \"বাড়ি ১২, রোড ৫, ধানমন্ডি, ঢাকা\",\n  \"notes\": \"বিকেলে কল করবেন\",\n  \"expectedTotal\": 2040\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
               },
               "response": []
             }
@@ -6131,6 +6349,237 @@
                 "description": "Demonstrates the guard: 409 once the purchase order has already received stock (run Receive above first)."
               },
               "response": []
+            },
+            {
+              "name": "Admin - Record Supplier Payment",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 5000,\n  \"method\": \"BANK_TRANSFER\",\n  \"reference\": \"TXN-100234\",\n  \"note\": \"First instalment\"\n}"
+                },
+                "description": "Money paid OUT to the supplier against this purchase order. The supplier is taken from the purchase order and is NOT settable here. Saves supplierPaymentId for the requests below."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('supplierPaymentId', data.id);",
+                      "    console.log('Saved supplierPaymentId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Get Supplier Payments",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "description": "Returns the payments plus the purchase order's settlement position: totalAmount, amountPaid, balanceDue and settlementState. Those four are computed on read, never stored."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Supplier Payment",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments/{{supplierPaymentId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments",
+                    "{{supplierPaymentId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 4000,\n  \"note\": \"Corrected after checking the bank statement\"\n}"
+                },
+                "description": "Corrects a recorded payment. Re-runs the overpayment ceiling against the OTHER payments, so a correction cannot push total paid above the purchase order total."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Supplier Payment",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments/{{supplierPaymentId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments",
+                    "{{supplierPaymentId}}"
+                  ]
+                },
+                "description": "Removes a payment recorded in error. The purchase order's paid and due figures are recomputed without it."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Record Supplier Payment (zero amount, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 0,\n  \"method\": \"CASH\"\n}"
+                },
+                "description": "A zero-amount payment settles nothing and is rejected at validation."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Record Supplier Payment (COD method, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 100,\n  \"method\": \"COD\"\n}"
+                },
+                "description": "COD is not a supplier payment method — a supplier payment is not collected from a courier. SupplierPaymentMethod is a separate enum from PaymentMethod for exactly this reason."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Record Supplier Payment (overpayment, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{purchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{purchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 99999999,\n  \"method\": \"CASH\"\n}"
+                },
+                "description": "Rejected with the outstanding balance named. The check runs inside a transaction, so two concurrent payments cannot together exceed the balance."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Record Supplier Payment (draft PO, expect 400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/purchase-orders/{{draftPurchaseOrderId}}/payments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "purchase-orders",
+                    "{{draftPurchaseOrderId}}",
+                    "payments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 100,\n  \"method\": \"CASH\"\n}"
+                },
+                "description": "A draft purchase order is not yet a commitment, so it cannot be settled. A cancelled one is refused on the same grounds."
+              },
+              "response": []
             }
           ]
         },
@@ -7015,6 +7464,560 @@
           ]
         },
         {
+          "name": "Blog",
+          "item": [
+            {
+              "name": "Admin - List Blog Posts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/admin?page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN. Every post, ANY status. Searchable on `searchTerm` (title, slug, excerpt) and filterable on `status` and `mediaType`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Blog Post by Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/admin/{{blogPostId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "admin",
+                    "{{blogPostId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. One post by id, any status. 404 when no post has that id."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Blog Post (image)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Creates a post with an IMAGE.\n\n`slug` is OPTIONAL — omit it and the server derives one from the title (\"How to Set Up a Smart Home\" -> `how-to-set-up-a-smart-home`). A supplied slug must be lowercase words joined by single hyphens. Unlike a content page, a post slug is NOT checked against the storefront's reserved list: posts live under `/blogs/<slug>`, a namespace of their own.\n\n409 when the slug is already taken, naming the conflicting post.\n\nMEDIA INVARIANT: `mediaType` decides which URL columns may be set. IMAGE requires `imageUrl` and forbids the video pair; VIDEO requires `videoUrl` and forbids `imageUrl`; NONE forbids all three. A post shows one thing.\n\n`status` defaults to DRAFT, so a new post is not publicly reachable until you publish it. `publishedAt` defaults to now and is the date on the card plus the sort key — it does NOT control visibility.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"title\": \"How to Set Up a Smart Home on a Budget\",\n    \"excerpt\": \"Cheap ways to automate a first room without committing to an ecosystem.\",\n    \"body\": \"<h2>Getting started</h2><p>Automating a first room costs less than most people expect.</p><ul><li>Start with one smart plug</li><li>Add a hub only when you need one</li></ul>\",\n    \"mediaType\": \"IMAGE\",\n    \"imageUrl\": \"https://cdn.example.com/blog/smart-home.jpg\",\n    \"publishedAt\": \"2026-09-05T00:00:00.000Z\",\n    \"metaTitle\": \"Smart Home on a Budget | Gadgets Mart\",\n    \"metaDescription\": \"Cheap ways to automate a first room.\",\n    \"status\": \"PUBLISHED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('blogPostId', data.id);",
+                      "    if (data?.slug) pm.collectionVariables.set('blogPostSlug', data.slug);",
+                      "    console.log('Saved blogPostId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Blog Post (video)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts"
+                  ]
+                },
+                "description": "OWNER/ADMIN. The VIDEO variant. Upload the file first through `POST /uploads/video`, which returns both the video URL and a poster frame — it derives one when you supply no thumbnail, which is why a video post always has a still for listings to render rather than a black rectangle.\n\nListings show `videoThumbnailUrl`; only the post's own page plays the video.\n\nSending `imageUrl` alongside is rejected: a post shows one thing.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"title\": \"Unboxing the New Mechanical Keyboard\",\n    \"excerpt\": \"A two-minute look at the switches, the case and the sound.\",\n    \"body\": \"<p>Watch the full unboxing above.</p>\",\n    \"mediaType\": \"VIDEO\",\n    \"videoUrl\": \"{{uploadedVideoUrl}}\",\n    \"videoThumbnailUrl\": \"{{uploadedVideoThumbnailUrl}}\",\n    \"status\": \"PUBLISHED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Blog Post",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/{{blogPostId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "{{blogPostId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Partial — every field optional, so flipping `status` needs no `body` resend.\n\nTwo things to know:\n\n1. The slug is only re-derived when you actually SEND `slug`. A PATCH that just changes `status` will not silently move a live post's URL out from under its inbound links.\n\n2. The media fields move as a SET. A payload naming any of `imageUrl`/`videoUrl`/`videoThumbnailUrl` must also name `mediaType`, and is then checked against the full invariant. Switching type clears the columns the new type does not use, so a row can never hold both.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"title\": \"How to Set Up a Smart Home on a Budget (2026 edition)\",\n    \"status\": \"PUBLISHED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Blog Post (switch to no media)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/{{blogPostId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "{{blogPostId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Setting `mediaType` to NONE clears `imageUrl`, `videoUrl` and `videoThumbnailUrl`. The post's cards then render without a picture area rather than with an empty one.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"mediaType\": \"NONE\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Blog Post",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/blog-posts/{{blogPostId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "blog-posts",
+                    "{{blogPostId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Removes the post. Nothing references it as a foreign key, but its address goes dead — any link shared elsewhere starts leading to a 404."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Testimonials",
+          "item": [
+            {
+              "name": "Admin - List Testimonials",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials/admin?page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials",
+                    "admin"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN. Every testimonial, ANY status, in the merchant's own display order by default (`sortOrder` ascending) rather than newest-first — this list doubles as the reordering surface.\n\n`meta.homeSectionCount` carries how many the homepage section renders, so the admin can mark the published entries falling beyond it without keeping its own copy of the number."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Testimonial by Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials/admin/{{testimonialId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials",
+                    "admin",
+                    "{{testimonialId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. One testimonial by id, any status."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Testimonial",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Creates a testimonial.\n\n`rating` is WHOLE stars, 1-5 — 0, 6 and 4.5 are all rejected. It replaces a hardcoded 5 in the storefront: a section where every card shows five stars regardless of what it says is not showing a rating.\n\n`photoUrl` is OPTIONAL. Without one the storefront renders the author's initials, so a card is never a gap or a stock silhouette, and occupies the same footprint either way. Upload through `POST /uploads/image` first.\n\n`status` defaults to DRAFT. `sortOrder` decides which quote leads — the homepage shows only the first few.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"quote\": \"Ordered on Tuesday and it arrived Thursday morning. The packaging was genuinely careful.\",\n    \"authorName\": \"Rahim Ahmed\",\n    \"authorRole\": \"Verified Buyer\",\n    \"photoUrl\": \"{{uploadedImageUrl}}\",\n    \"rating\": 5,\n    \"status\": \"PUBLISHED\",\n    \"sortOrder\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json()?.data;",
+                      "    if (data?.id) pm.collectionVariables.set('testimonialId', data.id);",
+                      "    console.log('Saved testimonialId =', data?.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Admin - Create Testimonial (no photo)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Omitting `photoUrl` is legitimate — the storefront falls back to the author's initials. Send the key omitted, not as an empty string, which fails the URL check.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"quote\": \"Good prices and the support team actually answers.\",\n    \"authorName\": \"Nusrat Jahan\",\n    \"authorRole\": \"Customer\",\n    \"rating\": 4,\n    \"status\": \"PUBLISHED\",\n    \"sortOrder\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Testimonial",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials/{{testimonialId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials",
+                    "{{testimonialId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Partial — every field optional, so nudging `sortOrder` or flipping `status` needs no quote resend.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"sortOrder\": 2,\n    \"rating\": 5\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Testimonial",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/testimonials/{{testimonialId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "testimonials",
+                    "{{testimonialId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Removes the quote from the homepage."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Landing Pages",
+          "item": [
+            {
+              "name": "Admin - List Landing Pages",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages?page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN. Every landing page, ANY status, in the merchant's own display order by default (`sortOrder` ascending).\n\nEach row carries `orderCount` and `revenue` for the campaign it represents, fetched in ONE grouped query over the page of rows — a list of ten campaigns is not eleven queries. Revenue counts every order the page produced regardless of status: at the point a merchant is comparing two campaigns, a cancelled order still says the ad worked.\n\nSearchable on `title`, `slug` and `headline`; filterable on `status` and `productId`."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Create Landing Page",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Creates a campaign landing page bound to exactly one product.\n\nNO PRICE IS SET HERE and none can be. The page renders `product.price` and `product.compareAtPrice` — already the merchant's \"regular vs offer\" pair — so a campaign price is a product edit. A second place to author money is how a shop ends up quoting one number and charging another.\n\n`slug` is optional: omitted, it is derived from the title, then the headline, and finally generated. A Bangla title derives to nothing, which is why it falls back rather than erroring.\n\n`deliveryZones` and `orderForm` are optional on create only — omitted, both are seeded with the Bangla defaults (`ঢাকার ভিতরে` 60 / `ঢাকার বাইরে` 120, and নাম / মোবাইল নম্বর / ঠিকানা). Every one of those strings is editable content, not a locale.\n\nInvariants the Zod schema enforces and Postgres cannot: 1-5 delivery zones with distinct keys and non-negative prices; `facebookPixelId` digits only; and NO way to spell \"hide the phone field\" or \"make the address optional\" — those keys do not exist in the schema and an attempt to send them is rejected as unknown.\n\n`status` defaults to DRAFT, which is a 404 on the storefront.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"শীতের অফার - হুডি\",\n  \"slug\": \"winter-hoodie-offer\",\n  \"productId\": \"{{productId}}\",\n  \"status\": \"DRAFT\",\n  \"headline\": \"প্রিমিয়াম উইন্টার হুডি — সীমিত সময়ের অফার\",\n  \"subheadline\": \"নরম ফ্লিস, ঠান্ডায় আরামদায়ক। ক্যাশ অন ডেলিভারি।\",\n  \"badgeText\": \"৩৫% ছাড়\",\n  \"bodyHtml\": \"<p>উন্নত মানের ফ্লিস কাপড়ে তৈরি, শীতে আরামদায়ক এবং টেকসই।</p>\",\n  \"media\": [\n    {\n      \"type\": \"IMAGE\",\n      \"url\": \"{{uploadedImageUrl}}\",\n      \"alt\": \"হুডির সামনের ছবি\"\n    },\n    {\n      \"type\": \"VIDEO\",\n      \"url\": \"https://res.cloudinary.com/demo/video/upload/hoodie.mp4\",\n      \"thumbnailUrl\": \"{{uploadedImageUrl}}\"\n    }\n  ],\n  \"highlights\": [\n    {\n      \"icon\": \"mdi:truck-fast\",\n      \"title\": \"সারা দেশে ডেলিভারি\",\n      \"text\": \"২-৪ দিনের মধ্যে\"\n    },\n    {\n      \"icon\": \"mdi:cash\",\n      \"title\": \"ক্যাশ অন ডেলিভারি\",\n      \"text\": \"পণ্য হাতে পেয়ে টাকা দিন\"\n    }\n  ],\n  \"faqs\": [\n    {\n      \"question\": \"সাইজ কি এক্সচেঞ্জ করা যাবে?\",\n      \"answer\": \"হ্যাঁ, ৭ দিনের মধ্যে।\"\n    }\n  ],\n  \"quotes\": [\n    {\n      \"name\": \"করিম\",\n      \"text\": \"কাপড়ের মান খুব ভালো।\",\n      \"rating\": 5\n    }\n  ],\n  \"trustBadges\": [\n    {\n      \"icon\": \"mdi:shield-check\",\n      \"label\": \"১০০% অরিজিনাল\"\n    }\n  ],\n  \"deliveryZones\": [\n    {\n      \"key\": \"inside-dhaka\",\n      \"label\": \"ঢাকার ভিতরে\",\n      \"price\": 60\n    },\n    {\n      \"key\": \"outside-dhaka\",\n      \"label\": \"ঢাকার বাইরে\",\n      \"price\": 120\n    }\n  ],\n  \"orderForm\": {\n    \"heading\": \"অর্ডার করতে নিচের ফর্মটি পূরণ করুন\",\n    \"subheading\": \"আপনার তথ্য দিন, পণ্য হাতে পেয়ে টাকা পরিশোধ করুন।\",\n    \"fields\": {\n      \"fullName\": {\n        \"label\": \"নাম\",\n        \"placeholder\": \"আপনার সম্পূর্ণ নাম\",\n        \"required\": true\n      },\n      \"phone\": {\n        \"label\": \"মোবাইল নম্বর\",\n        \"placeholder\": \"01XXXXXXXXX\",\n        \"helper\": \"অর্ডার কনফার্ম করতে আমরা এই নম্বরে কল করব।\"\n      },\n      \"address\": {\n        \"label\": \"ঠিকানা\",\n        \"placeholder\": \"গ্রাম/রোড, থানা, জেলা\"\n      }\n    },\n    \"submitLabel\": \"অর্ডার কনফার্ম করুন\",\n    \"notice\": \"ক্যাশ অন ডেলিভারি — পণ্য হাতে পেয়ে টাকা দিন।\"\n  },\n  \"successHeading\": \"ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে।\",\n  \"successMessage\": \"আমাদের প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবে।\",\n  \"metaTitle\": \"উইন্টার হুডি অফার\",\n  \"metaDescription\": \"৩৫% ছাড়ে প্রিমিয়াম উইন্টার হুডি, ক্যাশ অন ডেলিভারি।\",\n  \"facebookPixelId\": \"1234567890\",\n  \"sortOrder\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - List Published Landing Pages",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/published",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "published"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Id, title and slug of every PUBLISHED landing page — what the site-mode screen's active-page selector offers.\n\nOnly published pages appear because only a published page may be made active: the shop refuses to enter landing page mode pointing at a draft."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Preview Landing Page by Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/preview/{{landingPageSlug}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "preview",
+                    "{{landingPageSlug}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. The same payload the public read returns, but for ANY status — so a merchant can see a draft exactly as a shopper would before publishing it.\n\nA separate route rather than a `?preview=true` flag on the public read, which would be one forgotten check away from publishing every draft."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Get Landing Page by Id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/{{landingPageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "{{landingPageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. One landing page by id, any status, with its bound product's id, name and slug."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Landing Page",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/{{landingPageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "{{landingPageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Partial update — a PATCH that only flips `status` does not have to resend the body, the gallery or the order form, and will not silently re-derive the slug and move a live campaign's URL out from under the ads pointing at it.\n\nREFUSED while this page is live: setting `status` to DRAFT when the shop is in LANDING_PAGE mode and this is the active page returns 409 naming the fix — switch the site back to website mode, or make a different page active, first. Checked inside a transaction that re-reads the settings row, so two admins racing cannot leave the storefront root serving nothing.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"PUBLISHED\",\n  \"headline\": \"প্রিমিয়াম উইন্টার হুডি — আজই অর্ডার করুন\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Duplicate Landing Page",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/{{landingPageId}}/duplicate",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "{{landingPageId}}",
+                    "duplicate"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Copies a page so the next campaign can be drafted while the current one runs, or so two pages can be A/B tested against the same product.\n\nAlways DRAFT and always a new slug: a duplicate that arrived PUBLISHED would put a half-edited copy of a live campaign on the internet the moment it was created."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Delete Landing Page",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/landing-pages/{{landingPageId}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "landing-pages",
+                    "{{landingPageId}}"
+                  ]
+                },
+                "description": "OWNER/ADMIN. Deletes a landing page.\n\nREFUSED with 409 while the shop is in LANDING_PAGE mode and this is the active page.\n\nAllowed when the page is merely SELECTED but the shop is in website mode — the foreign key nulls the pointer, and the next attempt to switch the mode on is refused for want of a selection. A shop is never left serving a page that is gone.\n\nOrders the campaign produced are NOT deleted and are not orphaned: `Order.landingPageId` nulls, and `Order.landingPageTitle` — captured at placement — keeps each one readable."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
           "name": "Customers",
           "description": "The admin customer directory. OWNER/ADMIN only.\n\nMounted at `/customers` AFTER `/customers/me/addresses`: Express matches in declaration order, so mounting this first would let `/:id` capture the literal 'me' and 404 every self-service address request.",
           "item": [
@@ -7283,6 +8286,477 @@
           ]
         },
         {
+          "name": "Reports",
+          "item": [
+            {
+              "name": "Admin - Stock Report",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/stock?page=1&limit=20&lowStockOnly=false",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "stock"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    },
+                    {
+                      "key": "lowStockOnly",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "The present stock position — a position, not a period, so it takes NO date range. Summary totals cover the whole filtered result, never the page. An item with no cost price is excluded from the cost total and disclosed in unvaluedItemCount rather than counted as zero."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Stock Report (CSV export)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/stock?format=csv",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "stock"
+                  ],
+                  "query": [
+                    {
+                      "key": "format",
+                      "value": "csv"
+                    }
+                  ]
+                },
+                "description": "Same endpoint, same filters, streamed as CSV — every matching row, not just the page. Recorded in the audit trail as an EXPORT action."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Sales Report",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/sales?from=2026-03-01&to=2026-03-31&page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "sales"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "Non-cancelled orders by the date they were PLACED. Revenue is booked, not collected — collected/outstanding/refunded are separate figures. Shares one revenue definition with GET /analytics/dashboard via constants/sales.constant.ts."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Sales Report (grouped by day)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/sales?from=2026-03-01&to=2026-03-31&groupBy=day",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "sales"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "groupBy",
+                      "value": "day"
+                    }
+                  ]
+                },
+                "description": "groupBy accepts day | product | category | method. Group amounts always sum to the report total for the same measure; product and category group by order LINE, so they sum to gross sales rather than order total."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Sales Report (CSV export)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/sales?from=2026-03-01&to=2026-03-31&format=csv",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "sales"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "format",
+                      "value": "csv"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Purchases Report",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/purchases?from=2026-03-01&to=2026-03-31&page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "purchases"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "Purchase orders raised in the range: ordered vs received quantity, purchase value, amount paid and balance owed. Drafts are excluded from the money figures by default and the exclusion is reported in excludedDraftCount; pass includeDrafts=true to count them."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Purchases Report (owing only, by supplier)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/purchases?from=2026-03-01&to=2026-03-31&owingOnly=true&groupBy=supplier",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "purchases"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "owingOnly",
+                      "value": "true"
+                    },
+                    {
+                      "key": "groupBy",
+                      "value": "supplier"
+                    }
+                  ]
+                },
+                "description": "Supplier grouping is ordered by amount owed descending, so the largest liability leads."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Purchases Report (CSV export)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/purchases?from=2026-03-01&to=2026-03-31&format=csv",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "purchases"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "format",
+                      "value": "csv"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Stock History",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/stock-history?from=2026-03-01&to=2026-03-31&page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "stock-history"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "The movement ledger over a period, with opening + in − out = closing and a running balance per row. Distinct from GET /stock-movements, which is an unbounded audit feed with no opening balance. A type filter narrows the LISTED rows only; opening and closing still describe the unfiltered position, flagged as isTypeFiltered."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Stock History (CSV export)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/stock-history?from=2026-03-01&to=2026-03-31&format=csv",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "stock-history"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "format",
+                      "value": "csv"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Payment History",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/payments?from=2026-03-01&to=2026-03-31&page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "payments"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "Money in and money out in one chronological list — a SQL UNION ALL over Payment and SupplierPayment. Dated by COALESCE(paidAt, createdAt), so an unsettled COD payment appears under its record date flagged isSettled=false and is held OUT of moneyIn (stated separately as pending)."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Payment History (money out only)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/payments?from=2026-03-01&to=2026-03-31&direction=OUT",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "payments"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "direction",
+                      "value": "OUT"
+                    }
+                  ]
+                },
+                "description": "direction accepts IN | OUT. A supplierId filter implies OUT and a customerId filter implies IN, so the other side of the union is not queried at all."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Payment History (CSV export)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/payments?from=2026-03-01&to=2026-03-31&format=csv",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "payments"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-01"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "format",
+                      "value": "csv"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Sales Report (backwards range, expect 400)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/reports/sales?from=2026-03-31&to=2026-03-01",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "reports",
+                    "sales"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-03-31"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-03-01"
+                    }
+                  ]
+                },
+                "description": "Rejected rather than quietly returning nothing: an empty table is indistinguishable from \"no sales that month\", and a merchant would believe it."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
           "name": "Store Settings",
           "item": [
             {
@@ -7324,9 +8798,36 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"storeName\": \"Ecom BD\",\n  \"defaultTaxRatePercent\": 5,\n  \"freeShippingThreshold\": 2000,\n  \"contactEmail\": \"support@ecom.example.com\",\n  \"footerLogoUrl\": \"https://cdn.example.com/footer-logo.png\",\n  \"siteUrl\": \"https://ecom.example.com\",\n  \"metaTitle\": \"Ecom BD - Electronics Store\",\n  \"metaDescription\": \"Shop the latest electronics with fast delivery across Bangladesh.\",\n  \"checkoutConfig\": {\n    \"fields\": {\n      \"fullName\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"phone\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"addressLine1\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"addressLine2\": {\n        \"show\": true,\n        \"required\": false\n      },\n      \"city\": {\n        \"show\": true,\n        \"required\": true\n      },\n      \"postalCode\": {\n        \"show\": true,\n        \"required\": false\n      }\n    },\n    \"showCouponBox\": true,\n    \"showOrderNote\": true,\n    \"allowGuestCheckout\": true,\n    \"notice\": \"\"\n  },\n  \"theme\": {\n    \"background\": \"#ffffff\",\n    \"foreground\": \"#1a1a1a\",\n    \"brand\": \"#0f63b3\",\n    \"brandDark\": \"#133f9e\",\n    \"accent\": \"#f5b301\",\n    \"sale\": \"#e02020\",\n    \"maxWidth\": 1384,\n    \"font\": \"https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap\"\n  }\n}"
+                  "raw": "{\n    \"storeName\": \"Ecom BD\",\n    \"currency\": \"BDT\",\n    \"currencySymbol\": \"৳\",\n    \"currencyPosition\": \"BEFORE\",\n    \"currencyDecimals\": 2,\n    \"contactEmail\": \"support@ecom.example.com\",\n    \"footerLogoUrl\": \"https://cdn.example.com/footer-logo.png\",\n    \"siteUrl\": \"https://ecom.example.com\",\n    \"metaTitle\": \"Ecom BD - Electronics Store\",\n    \"metaDescription\": \"Shop the latest electronics with fast delivery across Bangladesh.\",\n    \"checkoutConfig\": {\n        \"fields\": {\n            \"fullName\": {\n                \"show\": true,\n                \"required\": true\n            },\n            \"phone\": {\n                \"show\": true,\n                \"required\": true\n            },\n            \"addressLine1\": {\n                \"show\": true,\n                \"required\": true\n            },\n            \"addressLine2\": {\n                \"show\": true,\n                \"required\": false\n            },\n            \"city\": {\n                \"show\": true,\n                \"required\": true\n            },\n            \"postalCode\": {\n                \"show\": true,\n                \"required\": false\n            }\n        },\n        \"showCouponBox\": true,\n        \"showOrderNote\": true,\n        \"allowGuestCheckout\": true,\n        \"notice\": \"\"\n    },\n    \"theme\": {\n        \"background\": \"#ffffff\",\n        \"foreground\": \"#1a1a1a\",\n        \"brand\": \"#0f63b3\",\n        \"brandDark\": \"#133f9e\",\n        \"accent\": \"#f5b301\",\n        \"sale\": \"#e02020\",\n        \"maxWidth\": 1440,\n        \"font\": \"https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap\"\n    }\n}"
                 },
-                "description": "OWNER/ADMIN only. Upserts the one StoreSetting row — never creates a second one.\n\nEvery field is optional and the patch is partial: a key left out leaves that column untouched. That is what lets the separate admin editors (Store Settings, Header Links, Footer Links, Checkout Setting, Site Setting) write to this one endpoint without clobbering each other.\n\ncheckoutConfig — two invariants are rejected with a 400: no field may be hidden and required at the same time, and \"phone\" must stay shown and required (guest order lookup and the per-phone COD cap are keyed on it).\n\ntheme — colours must be hex (#rgb or #rrggbb). \"maxWidth\" is 960-2560, or the string \"full\". \"font\" is sent as the text pasted from Google Fonts (the @import rule, the <link> tag, or the bare URL); the server parses it, rejects any host other than fonts.googleapis.com, and stores a rebuilt URL. Reading the settings back returns \"font\" as an object of { family, url }."
+                "description": "OWNER/ADMIN. Partial upsert on the singleton row — every key is optional and an omitted key is LEFT UNCHANGED. That is what lets the admin's several settings editors write to this one endpoint without clobbering each other.\n\nCURRENCY: `currencySymbol`, `currencyPosition` (BEFORE|AFTER) and `currencyDecimals` (0-4) decide how every amount is written, in the storefront, the admin panel and any amount the server names in a message. Decimals are PRESENTATION ONLY — money is stored and charged to the cent regardless, so a store set to 0 still charges 1200.50 while displaying ৳1,201.\n\nNO TAX RATE: `defaultTaxRatePercent` was REMOVED. Tax Rules (see Catalog) are the only source of tax, and a product with no rule assigned is untaxed. Sending the key does nothing.\n\n`freeShippingThreshold` is the one key that accepts `null` — see the example beside this one. Everything else expresses \"clear this\" by being omitted."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Update Free Shipping Threshold",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/settings",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "settings"
+                  ]
+                },
+                "description": "OWNER/ADMIN. `freeShippingThreshold` has THREE meaningful states, which is why it is the only key here that accepts `null`:\n\n  - a number  -> orders at or above it get free DELIVERY\n  - `0`       -> every order gets free delivery\n  - `null`    -> no free-shipping offer at all\n  - OMITTED   -> leave whatever is stored unchanged\n\nThat last distinction is the point. Under a partial upsert an omitted key means \"unchanged\", so without accepting `null` there is no way to say \"withdraw the offer\" — which is why a merchant who set a threshold could previously never unset it.\n\nEdited in the admin panel under UI -> Checkout Setting, not Store Settings: it is a decision about what an order costs.\n\nFree shipping waives DELIVERY only. A customer choosing collection in person still pays what that pickup location charges.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"freeShippingThreshold\": 2000\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
               },
               "response": []
             }

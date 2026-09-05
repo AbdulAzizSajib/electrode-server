@@ -31,7 +31,7 @@ const getPurchaseOrders = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getPurchaseOrderById = catchAsync(async (req: Request, res: Response) => {
-    const result = await PurchaseOrderService.getPurchaseOrderOrThrow(req.params.id as string);
+    const result = await PurchaseOrderService.getPurchaseOrderById(req.params.id as string);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

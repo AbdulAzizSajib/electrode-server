@@ -1,0 +1,136 @@
+/// A single-product campaign landing page — one product, one scrollable
+/// document, one cash-on-delivery order form at the end of it.
+///
+/// Deliberately NOT a `Page` and NOT a `Campaign`. `Page` is documented as "a
+/// title and one rich-text body, nothing more", and putting an order form
+/// inside it would make /about and a campaign page the same kind of thing.
+/// `Campaign` is a discount schedule with an optional storefront slot — it
+/// prices products, it does not render them. See
+/// add-single-product-landing-page design.md, Decision 1.
+///
+/// NO PRICE LIVES HERE. The page renders `product.price` and
+/// `product.compareAtPrice` — which is already the merchant's "regular vs
+/// offer" pair — and cannot author a price of its own. A second place to write
+/// money is how a shop ends up quoting one number and charging another, which
+/// is the same reason StoreSetting.defaultTaxRatePercent was removed rather
+/// than defaulted. See design.md, Decision 2.
+///
+/// The Json columns below carry every repeating content list. Postgres does not
+/// constrain their shape, so the Zod schemas in landing-page.validation.ts are
+/// the ONLY gate — every write must go through them and no code path may
+/// persist an unvalidated value. This is the same contract StoreSetting's Json
+/// columns carry, for the same reason.
+model LandingPage {
+  id String @id @default(cuid())
+
+  /// The merchant's own name for the campaign, shown in the admin list only.
+  /// Never rendered on the storefront — `headline` is what a shopper reads.
+  title String
+
+  /// Served at `/lp/<slug>` in BOTH site modes. Constrained to
+  /// `^[a-z0-9]+(?:-[a-z0-9]+)*$` in landing-page.validation.ts rather than
+  /// here, because Postgres cannot express it. Unlike Page.slug this is not a
+  /// top-level segment, so it has no reserved-slug list to collide with.
+  slug String @unique
+
+  status LandingPageStatus @default(DRAFT)
+
+  /// The one product this page sells. Restrict, not SetNull: a landing page
+  /// with no product cannot price, cannot quote and cannot order, so a product
+  /// still being sold by a campaign must have that campaign dealt with first.
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// Hero. Only `headline` is required — a page with nothing above the fold is
+  /// not a landing page. The other two are omitted from the render when unset
+  /// rather than reserved as empty space.
+  headline    String
+  subheadline String?
+  badgeText   String?
+
+  /// Semantic HTML from the admin's Tiptap editor. Stored as authored and NOT
+  /// sanitised on write: the guarantee is enforced where the markup meets a
+  /// browser, on the storefront, because sanitising only here would leave
+  /// everything already stored — or written by any other path — trusted
+  /// forever. Same posture as Page.body and Product.description; see the
+  /// storefront's src/lib/sanitize-html.ts.
+  bodyHtml String @db.Text
+
+  /// Zod-validated on write — see the model doc-comment above.
+  /// media:         [{ type: "IMAGE" | "VIDEO", url, thumbnailUrl?, alt? }] (ordered)
+  /// highlights:    [{ icon?, title, text? }]
+  /// faqs:          [{ question, answer }]
+  /// quotes:        [{ name, text, rating?, photoUrl? }]
+  /// trustBadges:   [{ icon?, label }]
+  media       Json?
+  highlights  Json?
+  faqs        Json?
+  quotes      Json?
+  trustBadges Json?
+
+  /// The two Json columns that decide what an order costs and what it must
+  /// carry. Both hold invariants Postgres cannot express, and both are gated
+  /// only by landing-page.validation.ts.
+  ///
+  /// deliveryZones: [{ key, label, price }]
+  ///   1–5 rows with unique keys, seeded `ঢাকার ভিতরে` 60 / `ঢাকার বাইরে` 120.
+  ///   The selected zone's price is CHARGED — a landing page order bypasses
+  ///   quoteShipping entirely and applies neither the shop's free-shipping
+  ///   threshold nor a coupon's shipping waiver, because the page stated a
+  ///   delivery charge and that is what the shopper agreed to. A page must
+  ///   always keep at least one zone: a page matching no zone can charge no
+  ///   delivery, and its product would be undeliverable. See design.md,
+  ///   Decision 3.
+  ///
+  /// orderForm: { fields: { fullName: { label, placeholder?, helper?, required },
+  ///                        phone:    { label, placeholder?, helper? },
+  ///                        address:  { label, placeholder?, helper? } },
+  ///              heading?, subheading?, submitLabel, notice? }
+  ///   Only `fullName.required` is a switch. Phone and address are structurally
+  ///   always shown and always required and cannot be spelled otherwise —
+  ///   phone because the per-phone COD cap and guest order lookup are both
+  ///   keyed on it, address because a COD parcel with no address cannot be
+  ///   delivered. The shop-wide StoreSetting.checkoutConfig does NOT govern
+  ///   this form: it describes six fields this page does not ask for, and a
+  ///   shop that requires a postal code at its normal checkout must still be
+  ///   able to run a three-field campaign page.
+  deliveryZones Json
+  orderForm     Json
+
+  /// Shown in place after a successful order, without navigating away from the
+  /// campaign. Both optional — a page with neither falls back to a default
+  /// confirmation carrying the order number.
+  successHeading String?
+  successMessage String?
+
+  /// SEO. `metaTitle` falls back to `headline` and `metaDescription` to a
+  /// truncated excerpt of the page's own content, so a published campaign never
+  /// has empty metadata.
+  metaTitle       String?
+  metaDescription String?
+  ogImageUrl      String?
+
+  /// A Facebook Pixel id, digits only (`^\d{5,20}$`, enforced in
+  /// landing-page.validation.ts). Stored as an ID, never as markup: the
+  /// storefront writes the pixel bootstrap itself and interpolates this as a
+  /// JSON-encoded string, so merchant input never reaches the page as a tag, a
+  /// URL or a script body. Same posture as theme.font.url, which is rebuilt
+  /// from validated components and is never a substring of merchant input.
+  facebookPixelId String?
+
+  /// Orders the admin list only. Landing pages have no storefront index — each
+  /// is reached by its own URL, from an ad.
+  sortOrder Int @default(0)
+
+  /// Back-relations. `activeForSettings` is at most one row in practice (the
+  /// StoreSetting singleton), but Prisma models the inverse of a nullable FK as
+  /// a list.
+  activeForSettings StoreSetting[]
+  orders            Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([productId])
+}
