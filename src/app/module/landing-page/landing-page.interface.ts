@@ -128,7 +128,7 @@ export type IUpdateLandingPagePayload = Partial<ICreateLandingPagePayload>;
  * What the storefront needs about the product to render the page, resolved
  * server-side.
  *
- * `unitPrice` and `compareAtPrice` come from the Product — a landing page
+ * `unitPrice` and `sellingPrice` come from the Product — a landing page
  * cannot author a price (see LandingPage.prisma). `available` is the summed
  * stock the checkout would actually find, so the page's "out of stock" state
  * and the order endpoint's rejection agree.
@@ -137,8 +137,10 @@ export interface ILandingPageProductSnapshot {
     id: string;
     name: string;
     slug: string;
+    /** The product's `offerPrice` — what a unit actually costs the shopper. */
     unitPrice: number;
-    compareAtPrice: number | null;
+    /** The product's `sellingPrice`, struck through beside it. */
+    sellingPrice: number | null;
     unit: string | null;
     images: { url: string; alt: string | null }[];
     available: number;

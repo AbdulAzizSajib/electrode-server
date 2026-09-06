@@ -1,18 +1,19 @@
 /**
- * Task 4.5 — checkout totals verification.
+ * Checkout totals verification, for the delivery-option pricing path.
  *
- * Replays every past order through the new per-product tax and shipping rules
- * and compares the result with what was actually charged. Where the seeded
- * rules reproduce the old flat values the totals must be identical; anything
- * else is a shopper being charged a different amount than they were.
+ * Replaces the shipping-rule version of this script wholesale. The old one
+ * asserted destination matching — region beats country beats catch-all, an
+ * unmatched destination refused, delivery summed once per distinct rule in the
+ * basket. Every one of those behaviours is gone by design, so the checks are
+ * not adapted but replaced: delivery is now ONE option the shopper picked,
+ * charged ONCE, and nothing is matched against an address.
  *
- * Also exercises the behaviours that have no past order to compare against:
- * specificity, refusal, pickup and tax on a discounted line.
- *
- * Read-only. Run with: npx tsx scripts/verify-checkout-totals.ts
+ * Read-only apart from the store's own settings, which it restores. Run with:
+ *   npm run verify:checkout
  */
 import { prisma } from "../src/app/lib/prisma";
-import { matchPlace, quoteCharges, type IPricingLine } from "../src/app/module/order/order.pricing";
+import { quoteCharges, type IPricingLine } from "../src/app/module/order/order.pricing";
+import { SINGLETON_ID } from "../src/app/module/store-setting/store-setting.constant";
 
 let failures = 0;
 
@@ -21,336 +22,270 @@ const check = (label: string, ok: boolean, detail: string) => {
     if (!ok) failures += 1;
 };
 
+/** A line with no tax rule, so delivery is the only thing under test. */
+const line = (lineTotal: number, id = "probe"): IPricingLine => ({
+    productId: id,
+    productName: `Probe ${id}`,
+    quantity: 1,
+    lineTotal,
+    taxRuleId: null,
+});
+
 const main = async () => {
     const [storeSetting, orders, products] = await Promise.all([
         prisma.storeSetting.findFirst(),
-        prisma.order.findMany({ include: { items: true, shippingAddress: true } }),
-        prisma.product.findMany({
-            select: {
-                id: true,
-                name: true,
-                price: true,
-                taxRuleId: true,
-                shippingRuleId: true,
-            },
-        }),
+        prisma.order.findMany({ include: { items: true } }),
+        prisma.product.findMany({ select: { id: true, name: true, price: true, taxRuleId: true } }),
     ]);
 
-    const fallbackTaxPercent = Number(storeSetting?.defaultTaxRatePercent ?? 0);
     const freeShippingThreshold =
         storeSetting?.freeShippingThreshold == null
             ? null
             : Number(storeSetting.freeShippingThreshold);
 
-    console.log(`\nStore: tax ${fallbackTaxPercent}%, free-shipping ${freeShippingThreshold ?? "off"}`);
+    console.log(`\nStore: free-shipping ${freeShippingThreshold ?? "off"}`);
     console.log(`Products: ${products.length}, past orders: ${orders.length}\n`);
 
-    const productById = new Map(products.map((p) => [p.id, p]));
-
-    // --- 1. Past orders replay -------------------------------------------
+    /* ------------------------------------------------------------------ *
+     * 1. Past orders keep the amount they were charged.
+     *
+     * Not a replay: a historical order's delivery CANNOT be recomputed, and
+     * that is the point. Its option may since have been renamed, repriced or
+     * deleted, and the order is supposed to be immune to all three. So the
+     * check is that the captured columns are self-consistent, not that they
+     * still agree with the current option list.
+     * ------------------------------------------------------------------ */
+    let shopOrders = 0;
     for (const order of orders) {
-        const lines: IPricingLine[] = order.items.map((item) => {
-            const product = productById.get(item.productId);
-            return {
-                productId: item.productId,
-                productName: item.productName,
-                quantity: item.quantity,
-                lineTotal: Number(item.totalPrice),
-                taxRuleId: product?.taxRuleId ?? null,
-                shippingRuleId: product?.shippingRuleId ?? null,
-            };
-        });
-
-        const charges = await quoteCharges({
-            lines,
-            destination: {
-                country: order.shippingAddress?.country,
-                state: order.shippingAddress?.state,
-            },
-            discountAmount: Number(order.discountAmount),
-            deliveryMethod: "DELIVERY",
-            // Not recoverable from the row; the stored shippingAmount already
-            // reflects whatever waiver applied, so compare against that.
-            couponWaivesShipping: Number(order.shippingAmount) === 0,
-            fallbackTaxPercent,
-            freeShippingThreshold,
-            fallbackFlatShippingPrice: Number(order.shippingAmount),
-        });
-
-        const taxMatches = Math.abs(charges.taxAmount - Number(order.taxAmount)) < 0.01;
-        const shipMatches = Math.abs(charges.shippingAmount - Number(order.shippingAmount)) < 0.01;
+        // Landing-page orders and pre-change orders legitimately carry none.
+        if (!order.deliveryOptionKey) continue;
+        shopOrders += 1;
 
         check(
-            `order ${order.orderNumber} tax`,
-            taxMatches,
-            `charged ${Number(order.taxAmount)}, recomputed ${charges.taxAmount}`,
+            `order ${order.orderNumber} captured its option`,
+            Boolean(order.deliveryOptionLabel) && order.deliveryMethod !== null,
+            `key ${order.deliveryOptionKey}, label ${order.deliveryOptionLabel ?? "(none)"}, method ${order.deliveryMethod ?? "(none)"}`,
         );
+
+        const total =
+            Number(order.subtotal) +
+            Number(order.shippingAmount) +
+            Number(order.taxAmount) -
+            Number(order.discountAmount);
         check(
-            `order ${order.orderNumber} shipping`,
-            shipMatches,
-            `charged ${Number(order.shippingAmount)}, recomputed ${charges.shippingAmount}`,
+            `order ${order.orderNumber} total still adds up`,
+            Math.abs(total - Number(order.totalAmount)) < 0.01,
+            `stored ${Number(order.totalAmount)}, recomputed ${Math.round(total * 100) / 100}`,
         );
     }
 
-    if (orders.length === 0) {
-        console.log("(no past orders on this database — the synthetic cases below stand in)\n");
+    if (shopOrders === 0) {
+        console.log("(no orders carry a delivery option yet — the cases below stand in)\n");
     }
 
-    // --- 2. The seeded default rules reproduce the old flat values --------
-    const defaultShipping = await prisma.shippingRule.findFirst({ include: { places: true } });
-    const defaultTax = await prisma.taxRule.findFirst();
-    const cheapestMethod = await prisma.shippingMethod.findFirst({
-        where: { isActive: true },
-        orderBy: { price: "asc" },
-    });
+    /* ------------------------------------------------------------------ *
+     * 2. The pricing path itself, against a known option list.
+     *
+     * The store's real config is swapped for a probe list and restored in the
+     * `finally` below, so these assertions do not depend on how the merchant
+     * happens to have configured delivery today.
+     * ------------------------------------------------------------------ */
+    const storedConfig = storeSetting?.checkoutConfig ?? null;
 
-    if (defaultTax && defaultShipping && products.length > 0) {
-        const product = products[0];
-        const lineTotal = Number(product.price);
-
-        const charges = await quoteCharges({
-            lines: [
-                {
-                    productId: product.id,
-                    productName: product.name,
-                    quantity: 1,
-                    lineTotal,
-                    taxRuleId: product.taxRuleId,
-                    shippingRuleId: product.shippingRuleId,
-                },
-            ],
-            destination: { country: "Bangladesh" },
-            discountAmount: 0,
-            deliveryMethod: "DELIVERY",
-            couponWaivesShipping: false,
-            fallbackTaxPercent,
-            freeShippingThreshold: null,
-            fallbackFlatShippingPrice: 0,
-        });
-
-        const oldTax = Math.round(((lineTotal * fallbackTaxPercent) / 100) * 100) / 100;
-        const oldShipping = Number(cheapestMethod?.price ?? 0);
-
-        check(
-            "seeded tax rule reproduces the old flat rate",
-            Math.abs(charges.taxAmount - oldTax) < 0.01,
-            `old ${oldTax}, new ${charges.taxAmount}`,
-        );
-        check(
-            "seeded shipping rule reproduces the old flat price",
-            Math.abs(charges.shippingAmount - oldShipping) < 0.01,
-            `old ${oldShipping}, new ${charges.shippingAmount}`,
-        );
-    } else {
-        check("seeded default rules exist", false, "no tax rule, shipping rule or product found");
-    }
-
-    // --- 3. Specificity: region beats country beats catch-all ------------
-    const places = [
-        { id: "all", country: null, state: null },
-        { id: "bd", country: "Bangladesh", state: null },
-        { id: "dhaka", country: "Bangladesh", state: "Dhaka" },
-    ];
-
-    check(
-        "region beats country",
-        matchPlace(places, { country: "Bangladesh", state: "Dhaka" })?.id === "dhaka",
-        `matched ${matchPlace(places, { country: "Bangladesh", state: "Dhaka" })?.id}`,
-    );
-    check(
-        "country used when the region has no place",
-        matchPlace(places, { country: "Bangladesh", state: "Khulna" })?.id === "bd",
-        `matched ${matchPlace(places, { country: "Bangladesh", state: "Khulna" })?.id}`,
-    );
-    check(
-        "catch-all used when the country has no place",
-        matchPlace(places, { country: "Nepal" })?.id === "all",
-        `matched ${matchPlace(places, { country: "Nepal" })?.id}`,
-    );
-    check(
-        "matching is case-insensitive",
-        matchPlace(places, { country: "bangladesh", state: "dhaka" })?.id === "dhaka",
-        `matched ${matchPlace(places, { country: "bangladesh", state: "dhaka" })?.id}`,
-    );
-    check(
-        "no match without a catch-all",
-        matchPlace(places.slice(1), { country: "Nepal" }) === null,
-        `matched ${matchPlace(places.slice(1), { country: "Nepal" })?.id ?? "nothing"}`,
-    );
-
-    // --- 4. Tax on a discounted line -------------------------------------
-    const percentRule = await prisma.taxRule.findFirst({ where: { type: "PERCENT" } });
-    if (percentRule) {
-        const rate = Number(percentRule.value);
-        const charges = await quoteCharges({
-            lines: [
-                {
-                    productId: "x",
-                    productName: "Discounted",
-                    quantity: 1,
-                    lineTotal: 1000,
-                    taxRuleId: percentRule.id,
-                    shippingRuleId: null,
-                },
-            ],
-            destination: {},
-            discountAmount: 200,
-            deliveryMethod: "DELIVERY",
-            couponWaivesShipping: false,
-            fallbackTaxPercent,
-            freeShippingThreshold: null,
-            fallbackFlatShippingPrice: 0,
-        });
-
-        const expected = Math.round(((800 * rate) / 100) * 100) / 100;
-        check(
-            "tax follows the discounted price",
-            Math.abs(charges.taxAmount - expected) < 0.01,
-            `${rate}% of 800 = ${expected}, got ${charges.taxAmount}`,
-        );
-    }
-
-    // --- 5. Undeliverable destination, and collection in person ----------
-    //
-    // Both need a rule with no catch-all place, which the seeded default is
-    // not. One is created here and removed again below; no product ever
-    // references it, so nothing in the catalogue is touched.
-    const probe = await prisma.shippingRule.create({
-        data: {
-            name: `__verify_probe_${process.pid}`,
-            places: {
-                create: [
-                    {
-                        name: "Dhaka only",
-                        country: "Bangladesh",
-                        state: "Dhaka",
-                        price: 60,
-                        deliveryDays: 1,
-                        offersPickup: true,
-                        pickupPrice: 20,
-                    },
-                ],
-            },
+    const baseConfig = {
+        fields: {
+            fullName: { show: true, required: true },
+            phone: { show: true, required: true },
+            addressLine1: { show: true, required: true },
+            addressLine2: { show: true, required: false },
+            city: { show: true, required: true },
+            postalCode: { show: true, required: false },
         },
-    });
-
-    const probeLine: IPricingLine = {
-        productId: "probe",
-        productName: "Dhaka-only item",
-        quantity: 1,
-        lineTotal: 100,
-        taxRuleId: null,
-        shippingRuleId: probe.id,
+        showCouponBox: true,
+        showOrderNote: true,
+        allowGuestCheckout: true,
+        notice: "",
     };
 
-    const baseInput = {
+    const setDelivery = async (delivery: unknown) => {
+        await prisma.storeSetting.update({
+            where: { id: SINGLETON_ID },
+            data: { checkoutConfig: { ...baseConfig, delivery } as never },
+        });
+    };
+
+    const base = {
         discountAmount: 0,
         couponWaivesShipping: false,
-        fallbackTaxPercent,
         freeShippingThreshold: null,
-        fallbackFlatShippingPrice: 0,
     };
 
     try {
-        let refusal = "";
-        try {
-            await quoteCharges({
-                lines: [probeLine],
-                destination: { country: "Atlantis" },
-                deliveryMethod: "DELIVERY",
-                ...baseInput,
-            });
-        } catch (error) {
-            refusal = (error as Error).message;
-        }
-        check(
-            "an unmatched destination is refused, not charged 0",
-            refusal.includes("cannot be delivered"),
-            refusal || "the quote returned a price",
-        );
-
-        const delivered = await quoteCharges({
-            lines: [probeLine],
-            destination: { country: "Bangladesh", state: "Dhaka" },
-            deliveryMethod: "DELIVERY",
-            ...baseInput,
-        });
-        check(
-            "a matched place charges its delivery price",
-            delivered.shippingAmount === 60,
-            `expected 60, got ${delivered.shippingAmount}`,
-        );
-
-        const collected = await quoteCharges({
-            lines: [probeLine],
-            destination: { country: "Bangladesh", state: "Dhaka" },
-            deliveryMethod: "PICKUP",
-            ...baseInput,
-        });
-        check(
-            "collection in person is charged at the place's pickup price",
-            collected.shippingAmount === 20,
-            `expected 20, got ${collected.shippingAmount}`,
-        );
-
-        // The seeded default place does not offer collection, so an order
-        // mixing the two cannot be collected.
-        let pickupRefusal = "";
-        try {
-            await quoteCharges({
-                lines: [
-                    probeLine,
-                    {
-                        productId: "other",
-                        productName: "Delivered only",
-                        quantity: 1,
-                        lineTotal: 100,
-                        taxRuleId: null,
-                        shippingRuleId: defaultShipping?.id ?? null,
-                    },
-                ],
-                destination: { country: "Bangladesh", state: "Dhaka" },
-                deliveryMethod: "PICKUP",
-                ...baseInput,
-            });
-        } catch (error) {
-            pickupRefusal = (error as Error).message;
-        }
-        check(
-            "collection is refused when one item cannot be collected",
-            pickupRefusal.includes("not available"),
-            pickupRefusal || "the quote allowed collection",
-        );
-
-        // Two rules in one order are two deliveries, so they add up.
-        const twoRules = await quoteCharges({
-            lines: [
-                probeLine,
-                {
-                    productId: "other",
-                    productName: "Delivered only",
-                    quantity: 1,
-                    lineTotal: 100,
-                    taxRuleId: null,
-                    shippingRuleId: defaultShipping?.id ?? null,
-                },
+        await setDelivery({
+            offersPickup: true,
+            options: [
+                { key: "inside-dhaka", label: "Inside Dhaka", kind: "DELIVERY", price: 60, days: 2 },
+                { key: "outside-dhaka", label: "Outside Dhaka", kind: "DELIVERY", price: 120, days: 4 },
+                { key: "mirpur-shop", label: "Mirpur shop", kind: "PICKUP", price: 20, days: 1 },
             ],
-            destination: { country: "Bangladesh", state: "Dhaka" },
-            deliveryMethod: "DELIVERY",
-            ...baseInput,
+        });
+
+        const inside = await quoteCharges({
+            lines: [line(1000)],
+            deliveryOptionKey: "inside-dhaka",
+            ...base,
         });
         check(
-            "two shipping rules in one order are charged once each",
-            twoRules.shippingAmount === 60 + Number(defaultShipping?.places[0]?.price ?? 0),
-            `expected ${60 + Number(defaultShipping?.places[0]?.price ?? 0)}, got ${twoRules.shippingAmount}`,
+            "the chosen option is charged at its own price",
+            inside.shippingAmount === 60,
+            `expected 60, got ${inside.shippingAmount}`,
+        );
+        check(
+            "the resolved option is reported back for the order to capture",
+            inside.delivery?.optionKey === "inside-dhaka" &&
+                inside.delivery?.optionLabel === "Inside Dhaka" &&
+                inside.delivery?.method === "DELIVERY",
+            JSON.stringify(inside.delivery),
+        );
+
+        // The whole point of the change: the basket no longer influences it.
+        const manyLines = await quoteCharges({
+            lines: [line(1000, "a"), line(2000, "b"), line(3000, "c")],
+            deliveryOptionKey: "inside-dhaka",
+            ...base,
+        });
+        check(
+            "delivery is charged ONCE however many products are in the basket",
+            manyLines.shippingAmount === 60,
+            `expected 60 for three lines, got ${manyLines.shippingAmount}`,
+        );
+
+        const pickup = await quoteCharges({
+            lines: [line(1000)],
+            deliveryOptionKey: "mirpur-shop",
+            ...base,
+        });
+        check(
+            "a pickup point is priced from the option, not from a delivery price",
+            pickup.shippingAmount === 20 && pickup.delivery?.method === "PICKUP",
+            `expected 20/PICKUP, got ${pickup.shippingAmount}/${pickup.delivery?.method}`,
+        );
+
+        // Collection is a different service, not a discounted delivery — a
+        // waiver that zeroes delivery must not give the collection fee away.
+        const waivedPickup = await quoteCharges({
+            lines: [line(1000)],
+            deliveryOptionKey: "mirpur-shop",
+            ...base,
+            couponWaivesShipping: true,
+        });
+        check(
+            "a free-delivery coupon does not waive a collection fee",
+            waivedPickup.shippingAmount === 20,
+            `expected 20, got ${waivedPickup.shippingAmount}`,
+        );
+
+        const waivedDelivery = await quoteCharges({
+            lines: [line(1000)],
+            deliveryOptionKey: "inside-dhaka",
+            ...base,
+            couponWaivesShipping: true,
+        });
+        check(
+            "a free-delivery coupon does waive a delivery charge, and says what it was",
+            waivedDelivery.shippingAmount === 0 && waivedDelivery.shippingBeforeWaiver === 60,
+            `charged ${waivedDelivery.shippingAmount}, before waiver ${waivedDelivery.shippingBeforeWaiver}`,
+        );
+
+        let unknown = "";
+        try {
+            await quoteCharges({ lines: [line(1000)], deliveryOptionKey: "no-such-option", ...base });
+        } catch (error) {
+            unknown = (error as Error).message;
+        }
+        check(
+            "an unknown option key is refused, not charged 0",
+            unknown.includes("no longer available") && unknown.includes("choose again"),
+            unknown || "the quote returned a price",
+        );
+
+        // Switching collection off must be enforced in pricing, not only in the
+        // UI — otherwise an older request body could still reach a pickup price.
+        await setDelivery({
+            offersPickup: false,
+            options: [
+                { key: "inside-dhaka", label: "Inside Dhaka", kind: "DELIVERY", price: 60, days: 2 },
+                { key: "mirpur-shop", label: "Mirpur shop", kind: "PICKUP", price: 20, days: 1 },
+            ],
+        });
+
+        let pickupOff = "";
+        try {
+            await quoteCharges({ lines: [line(1000)], deliveryOptionKey: "mirpur-shop", ...base });
+        } catch (error) {
+            pickupOff = (error as Error).message;
+        }
+        check(
+            "a pickup point is refused while collection in person is switched off",
+            pickupOff.includes("not being offered"),
+            pickupOff || "the quote allowed collection",
+        );
+
+        // A store that has configured nothing must refuse, and must say it is a
+        // store setup problem rather than blaming the shopper's input.
+        await setDelivery({ offersPickup: false, options: [] });
+
+        let unconfigured = "";
+        try {
+            await quoteCharges({ lines: [line(1000)], deliveryOptionKey: "inside-dhaka", ...base });
+        } catch (error) {
+            unconfigured = (error as Error).message;
+        }
+        check(
+            "a store with no delivery options refuses, as a configuration problem",
+            unconfigured.includes("has not set up delivery"),
+            unconfigured || "the quote returned a price",
+        );
+
+        /* -------------------------------------------------------------- *
+         * 3. A landing-page order is priced by its own zone and is
+         *    unaffected by any of the above — including by the empty list
+         *    still in force here, which is the strongest form of the check.
+         * -------------------------------------------------------------- */
+        const override = await quoteCharges({
+            lines: [line(1000)],
+            ...base,
+            shippingOverride: { amount: 99, label: "ঢাকার ভিতরে" },
+        });
+        check(
+            "a landing-page order prices from its own zone even with no store options",
+            override.shippingAmount === 99 && override.delivery === null,
+            `charged ${override.shippingAmount}, delivery ${JSON.stringify(override.delivery)}`,
+        );
+
+        const overrideWaived = await quoteCharges({
+            lines: [line(100000)],
+            ...base,
+            couponWaivesShipping: true,
+            freeShippingThreshold: 1,
+            shippingOverride: { amount: 99, label: "ঢাকার ভিতরে" },
+        });
+        check(
+            "no waiver applies to a landing page's own delivery charge",
+            overrideWaived.shippingAmount === 99,
+            `expected 99, got ${overrideWaived.shippingAmount}`,
         );
     } finally {
-        await prisma.shippingRule.delete({ where: { id: probe.id } });
+        // Put the merchant's real configuration back, whatever happened above.
+        if (storeSetting) {
+            await prisma.storeSetting.update({
+                where: { id: SINGLETON_ID },
+                data: { checkoutConfig: storedConfig as never },
+            });
+        }
     }
 
-    console.log(
-        `\n${failures === 0 ? "All checks passed." : `${failures} check(s) FAILED.`}\n`,
-    );
+    console.log(`\n${failures === 0 ? "All checks passed." : `${failures} check(s) FAILED.`}\n`);
 
     await prisma.$disconnect();
     process.exit(failures === 0 ? 0 : 1);

@@ -24,9 +24,10 @@ export interface IStockReportRow {
     hasQuantityMismatch: boolean;
     lowStockThreshold: number;
     isLowStock: boolean;
-    price: number | null;
-    costPrice: number | null;
-    /** `onHand × costPrice`, or null when the item has no cost price recorded. Never 0 as a stand-in. */
+    offerPrice: number | null;
+    /** Supplier cost. Legitimate in this shape — the stock report is admin-only. */
+    purchasePrice: number | null;
+    /** `onHand × purchasePrice`, or null when the item has no purchase price recorded. Never 0 as a stand-in. */
     costValue: number | null;
     retailValue: number | null;
     warehouses: Array<{ warehouseId: string; warehouseName: string; quantity: number; reserved: number }>;

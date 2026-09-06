@@ -2,6 +2,7 @@ import { Router } from "express";
 import { AnalyticsRoutes } from "../module/analytics/analytics.route";
 import { AuditLogRoutes } from "../module/audit-log/audit-log.route";
 import { AuthRoutes } from "../module/auth/auth.route";
+import { BackupRoutes } from "../module/backup/backup.route";
 import { BannerRoutes } from "../module/banner/banner.route";
 import { BlogPostRoutes } from "../module/blog-post/blog-post.route";
 import { BrandRoutes } from "../module/brand/brand.route";
@@ -25,7 +26,6 @@ import { ReturnNestedRoutes, ReturnRoutes } from "../module/return/return.route"
 import { AttributeRoutes } from "../module/attribute/attribute.route";
 import { BundleDealRoutes } from "../module/bundle-deal/bundle-deal.route";
 import { CollectionRoutes } from "../module/collection/collection.route";
-import { ShippingRuleRoutes } from "../module/shipping-rule/shipping-rule.route";
 import { TagRoutes } from "../module/tag/tag.route";
 import { TaxRuleRoutes } from "../module/tax-rule/tax-rule.route";
 import { TestimonialRoutes } from "../module/testimonial/testimonial.route";
@@ -49,7 +49,6 @@ router.use("/categories", CategoryRoutes);
 router.use("/brands", BrandRoutes);
 router.use("/attributes", AttributeRoutes);
 router.use("/tax-rules", TaxRuleRoutes);
-router.use("/shipping-rules", ShippingRuleRoutes);
 router.use("/collections", CollectionRoutes);
 router.use("/bundle-deals", BundleDealRoutes);
 router.use("/tags", TagRoutes);
@@ -103,6 +102,9 @@ router.use("/settings", StoreSettingRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);
+// OWNER only, not ADMIN — a backup carries every customer and credential row,
+// and a restore rewrites the whole shop. See backup.route.ts.
+router.use("/backup", BackupRoutes);
 router.use("/analytics", AnalyticsRoutes);
 // Beside /analytics, not on top of it: the dashboard answers six fixed
 // questions over a fixed window; reports take an arbitrary range, filters,

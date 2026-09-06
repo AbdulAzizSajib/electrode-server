@@ -15,8 +15,8 @@ const bannerProductSelect = {
     id: true,
     name: true,
     slug: true,
-    price: true,
-    compareAtPrice: true,
+    offerPrice: true,
+    sellingPrice: true,
     images: {
         where: { isPrimary: true },
         take: 1,
@@ -54,8 +54,8 @@ const toPublicBanner = (banner: BannerWithProduct): IPublicBanner => {
               id: product.id,
               name: product.name,
               slug: product.slug,
-              price: product.price,
-              compareAtPrice: product.compareAtPrice,
+              offerPrice: product.offerPrice,
+              sellingPrice: product.sellingPrice,
               image: product.images[0]?.url ?? null,
           }
         : null;
@@ -63,8 +63,15 @@ const toPublicBanner = (banner: BannerWithProduct): IPublicBanner => {
     return {
         ...rest,
         product: productSummary,
-        resolvedPrice: productSummary ? productSummary.price : rest.price,
-        resolvedDiscountPrice: productSummary ? productSummary.compareAtPrice : rest.discountPrice,
+        /*
+         * The banner's own `price`/`discountPrice` columns keep their names —
+         * they are a banner's authored fallback, not one of the product's three
+         * prices, and renaming them is out of scope. Only the source fields on
+         * the linked product changed: what a shopper pays is `offerPrice`, and
+         * the struck-through figure beside it is `sellingPrice`.
+         */
+        resolvedPrice: productSummary ? productSummary.offerPrice : rest.price,
+        resolvedDiscountPrice: productSummary ? productSummary.sellingPrice : rest.discountPrice,
         resolvedLink: productSummary ? `/products/${productSummary.slug}` : (rest.link ?? null),
     };
 };

@@ -32,8 +32,8 @@ const itemsCte = Prisma.sql`
             NULL::text            AS "variantId",
             p."name"              AS "itemName",
             p."sku"               AS "sku",
-            p."price"             AS "price",
-            p."costPrice"         AS "costPrice",
+            p."offerPrice"        AS "offerPrice",
+            p."purchasePrice"     AS "purchasePrice",
             p."stockQuantity"     AS "cachedQuantity",
             p."lowStockThreshold" AS "lowStockThreshold",
             p."categoryId"        AS "categoryId",
@@ -46,8 +46,8 @@ const itemsCte = Prisma.sql`
             v."id",
             p."name" || ' / ' || v."name",
             v."sku",
-            COALESCE(v."price", p."price"),
-            COALESCE(v."costPrice", p."costPrice"),
+            COALESCE(v."offerPrice", p."offerPrice"),
+            COALESCE(v."purchasePrice", p."purchasePrice"),
             v."stockQuantity",
             p."lowStockThreshold",
             p."categoryId",
@@ -113,8 +113,9 @@ interface IRawStockRow {
     variantId: string | null;
     itemName: string;
     sku: string | null;
-    price: Prisma.Decimal | null;
-    costPrice: Prisma.Decimal | null;
+    offerPrice: Prisma.Decimal | null;
+    /** Supplier cost. Legitimate here — this report is admin-only. */
+    purchasePrice: Prisma.Decimal | null;
     cachedQuantity: number;
     lowStockThreshold: number;
     onHand: number;
@@ -125,7 +126,7 @@ interface IRawStockRow {
 const fetchRows = async (query: StockReportQuery, offset: number, limit: number) => {
     const rows = await prisma.$queryRaw<IRawStockRow[]>`
         ${itemsCte}${stockCte(query.warehouseId)}
-        SELECT r."productId", r."variantId", r."itemName", r."sku", r."price", r."costPrice",
+        SELECT r."productId", r."variantId", r."itemName", r."sku", r."offerPrice", r."purchasePrice",
                r."cachedQuantity", r."lowStockThreshold", r."onHand", r."reserved", r."available"
         FROM rows r
         ${buildFilters(query)}
@@ -176,8 +177,8 @@ const attachWarehouseSplit = async (
     }
 
     return rows.map((row) => {
-        const price = num(row.price);
-        const costPrice = num(row.costPrice);
+        const offerPrice = num(row.offerPrice);
+        const purchasePrice = num(row.purchasePrice);
         const hasQuantityMismatch = !warehouseId && row.cachedQuantity !== row.onHand;
 
         return {
@@ -192,12 +193,12 @@ const attachWarehouseSplit = async (
             hasQuantityMismatch,
             lowStockThreshold: row.lowStockThreshold,
             isLowStock: row.available <= row.lowStockThreshold,
-            price,
-            costPrice,
-            // null, never 0: an item with no cost price is unvalued, and a zero
-            // would quietly drag the average and the total down.
-            costValue: costPrice === null ? null : round2(row.onHand * costPrice),
-            retailValue: price === null ? null : round2(row.onHand * price),
+            offerPrice,
+            purchasePrice,
+            // null, never 0: an item with no purchase price is unvalued, and a
+            // zero would quietly drag the average and the total down.
+            costValue: purchasePrice === null ? null : round2(row.onHand * purchasePrice),
+            retailValue: offerPrice === null ? null : round2(row.onHand * offerPrice),
             warehouses: (splitByItem.get(key(row.productId, row.variantId)) ?? []).sort((a, b) =>
                 a.warehouseName.localeCompare(b.warehouseName),
             ),
@@ -223,11 +224,11 @@ const fetchSummary = async (query: StockReportQuery): Promise<IStockReportSummar
         SELECT
             COUNT(*)                                                       AS "itemCount",
             SUM(r."onHand")                                                AS "totalUnits",
-            SUM(r."onHand" * r."costPrice")                                AS "totalCostValue",
-            SUM(r."onHand" * r."price")                                    AS "totalRetailValue",
+            SUM(r."onHand" * r."purchasePrice")                            AS "totalCostValue",
+            SUM(r."onHand" * r."offerPrice")                               AS "totalRetailValue",
             COUNT(*) FILTER (WHERE r."available" <= r."lowStockThreshold") AS "lowStockCount",
-            COUNT(*) FILTER (WHERE r."costPrice" IS NULL AND r."onHand" > 0) AS "unvaluedItemCount",
-            COALESCE(SUM(r."onHand") FILTER (WHERE r."costPrice" IS NULL), 0) AS "unvaluedUnitCount",
+            COUNT(*) FILTER (WHERE r."purchasePrice" IS NULL AND r."onHand" > 0) AS "unvaluedItemCount",
+            COALESCE(SUM(r."onHand") FILTER (WHERE r."purchasePrice" IS NULL), 0) AS "unvaluedUnitCount",
             COUNT(*) FILTER (WHERE r."cachedQuantity" <> r."onHand")       AS "mismatchedItemCount"
         FROM rows r
         ${buildFilters(query)}

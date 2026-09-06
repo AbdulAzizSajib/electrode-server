@@ -109,7 +109,7 @@ const trustBadgesSchema = z
  *
  *  1. **At least one zone.** A page with no zone can charge no delivery and its
  *     product would be undeliverable — the same rule, for the same reason, that
- *     ShippingRule applies to its places.
+ *     the store's own delivery options cannot be saved empty.
  *  2. **Unique keys.** The key is what the browser sends back and what the
  *     server prices by. Two zones sharing one would make which price is charged
  *     depend on array order, which is not something a merchant can see.

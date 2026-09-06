@@ -34,7 +34,6 @@ const line = (over: Partial<IPricingLine> = {}): IPricingLine =>
         quantity: 1,
         lineTotal: 1000,
         taxRuleId: null,
-        shippingRuleId: null,
         ...over,
     }) as IPricingLine;
 

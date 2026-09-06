@@ -145,7 +145,7 @@ const resolveExistingCart = async (userId: string | undefined, guestTokenCookie:
 
 const computeCartSubtotal = (items: ICartItemForDiscount[]) =>
     items.reduce((sum, item) => {
-        const unitPrice = Number(item.variant?.price ?? item.product.price);
+        const unitPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
         return sum + unitPrice * item.quantity;
     }, 0);
 

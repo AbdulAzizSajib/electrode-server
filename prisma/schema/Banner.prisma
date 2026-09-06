@@ -16,7 +16,7 @@ model Banner {
   description String?
 
   /// Only meaningful when `productId` is null. A product-linked banner always
-  /// serves the linked Product's live price/compareAtPrice, so these columns
+  /// serves the linked Product's live offerPrice/sellingPrice, so these columns
   /// are ignored for it. Kept for product-less banners (bundles, category-wide
   /// sales) that still need a price to display.
   price         Decimal? @db.Decimal(10, 2)

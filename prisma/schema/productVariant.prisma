@@ -12,9 +12,11 @@ model ProductVariant {
 
   sku String @unique
 
-  price          Decimal? @db.Decimal(12, 2)
-  compareAtPrice Decimal? @db.Decimal(12, 2)
-  costPrice      Decimal? @db.Decimal(12, 2)
+  /// As on Product, but all three are optional here: an absent value means the
+  /// variant is priced by its parent product rather than overriding it.
+  offerPrice    Decimal? @db.Decimal(12, 2)
+  sellingPrice  Decimal? @db.Decimal(12, 2)
+  purchasePrice Decimal? @db.Decimal(12, 2)
 
   stockQuantity Int @default(0)
 

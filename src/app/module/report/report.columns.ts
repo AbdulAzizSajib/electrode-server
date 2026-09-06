@@ -35,9 +35,12 @@ export const STOCK_COLUMNS: ICsvColumn<IStockReportRow>[] = [
     { header: "Available", value: (row) => row.available },
     { header: "Low stock threshold", value: (row) => row.lowStockThreshold },
     { header: "Low stock", value: (row) => row.isLowStock },
-    { header: "Cost price", value: (row) => row.costPrice },
+    // "Selling price" used to head the column fed by `price` — which is the
+    // offer price, not the regular one. That mislabelling is the confusion this
+    // rename exists to remove, so the headers follow the new vocabulary.
+    { header: "Purchase price", value: (row) => row.purchasePrice },
     { header: "Cost value", value: (row) => row.costValue },
-    { header: "Selling price", value: (row) => row.price },
+    { header: "Offer price", value: (row) => row.offerPrice },
     { header: "Retail value", value: (row) => row.retailValue },
     { header: "Cached quantity", value: (row) => row.cachedQuantity },
     { header: "Quantity mismatch", value: (row) => row.hasQuantityMismatch },

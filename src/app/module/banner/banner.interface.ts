@@ -37,8 +37,8 @@ export interface IBannerProductSummary {
     name: string;
     slug: string;
     /** Decimal — serializes to a string in JSON, like every other price in this API. */
-    price: Prisma.Decimal;
-    compareAtPrice: Prisma.Decimal | null;
+    offerPrice: Prisma.Decimal;
+    sellingPrice: Prisma.Decimal | null;
     /** The product's primary image, or null if none is flagged primary. */
     image: string | null;
 }

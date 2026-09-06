@@ -439,8 +439,8 @@ const buildProductSnapshot = async (productId: string): Promise<ILandingPageProd
                 id: true,
                 name: true,
                 slug: true,
-                price: true,
-                compareAtPrice: true,
+                offerPrice: true,
+                sellingPrice: true,
                 unit: true,
                 status: true,
                 images: {
@@ -466,8 +466,10 @@ const buildProductSnapshot = async (productId: string): Promise<ILandingPageProd
         id: product.id,
         name: product.name,
         slug: product.slug,
-        unitPrice: Number(product.price),
-        compareAtPrice: product.compareAtPrice === null ? null : Number(product.compareAtPrice),
+        // `unitPrice` keeps its name — it is this snapshot's own field, and what
+        // a landing page charges per unit is the product's offer price.
+        unitPrice: Number(product.offerPrice),
+        sellingPrice: product.sellingPrice === null ? null : Number(product.sellingPrice),
         unit: product.unit,
         images: product.images.map((image) => ({ url: image.url, alt: image.altText })),
         available: Math.max(0, available),
@@ -583,14 +585,16 @@ const quoteLandingPageOrder = async (
 
     const product = await prisma.product.findUnique({
         where: { id: landingPage.productId },
-        select: { id: true, name: true, price: true, taxRuleId: true, shippingRuleId: true },
+        select: { id: true, name: true, offerPrice: true, taxRuleId: true },
     });
 
     if (!product) {
         throw new AppError(status.NOT_FOUND, "This landing page's product is no longer available");
     }
 
-    const lineTotal = roundMoney(Number(product.price) * input.quantity);
+    // Charged from `offerPrice`: the shopper pays the offer, not the
+    // struck-through regular price.
+    const lineTotal = roundMoney(Number(product.offerPrice) * input.quantity);
 
     const charges = await quoteCharges({
         lines: [

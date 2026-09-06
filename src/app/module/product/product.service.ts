@@ -62,7 +62,6 @@ const PRODUCT_DETAIL_INCLUDE = {
     collections: { include: { collection: true } },
     tags: { include: { tag: true } },
     taxRule: true,
-    shippingRule: { include: { places: true } },
     bundleDeal: true,
 };
 
@@ -98,10 +97,10 @@ const PRIMARY_IMAGE_FIRST: Prisma.ProductImageOrderByWithRelationInput[] = [
 const ADMIN_PRODUCT_LIST_SELECT = {
     id: true,
     name: true,
-    /** Supplier cost — the "purchase" column. */
-    costPrice: true,
-    price: true,
-    compareAtPrice: true,
+    /** Supplier cost. Admin-only, which is what this list is. */
+    purchasePrice: true,
+    offerPrice: true,
+    sellingPrice: true,
     stockQuantity: true,
     /** Not displayed on its own; it is what makes the low-stock alert possible. */
     lowStockThreshold: true,
@@ -128,7 +127,7 @@ const ADMIN_PRODUCT_LIST_SELECT = {
  * Every product scalar a PUBLIC response may carry.
  *
  * Spelled out as a `select` because `include` returns every scalar column, and
- * one of them — `costPrice` — is the supplier cost. It has never been rendered
+ * one of them — `purchasePrice` — is the supplier cost. It has never been rendered
  * by the storefront, but it was being sent to every anonymous caller: the same
  * column the public `sortBy` allowlist exists to protect, handed over directly.
  * Closing the ordering channel while leaving the field in the payload would
@@ -149,8 +148,9 @@ const PUBLIC_PRODUCT_SCALARS = {
     status: true,
     categoryId: true,
     brandId: true,
-    price: true,
-    compareAtPrice: true,
+    // `purchasePrice` is deliberately NOT here — see the note above.
+    offerPrice: true,
+    sellingPrice: true,
     stockQuantity: true,
     lowStockThreshold: true,
     weight: true,
@@ -202,15 +202,17 @@ const PUBLIC_PRODUCT_DETAIL_SELECT = {
     category: true,
     brand: true,
     images: { orderBy: { sortOrder: "asc" as const } },
-    // Variants carry their own costPrice, so they are projected too rather
+    // Variants carry their own purchasePrice, so they are projected too rather
     // than selected wholesale.
     variants: {
         select: {
             id: true,
             name: true,
             sku: true,
-            price: true,
-            compareAtPrice: true,
+            // As above: no `purchasePrice`. This is the second of the two
+            // projections that guard it, and the easier one to overlook.
+            offerPrice: true,
+            sellingPrice: true,
             stockQuantity: true,
             attributes: true,
             image: true,
@@ -228,11 +230,14 @@ const PUBLIC_PRODUCT_DETAIL_SELECT = {
     collections: { where: { collection: { isVisible: true } }, include: { collection: true } },
     tags: { include: { tag: true } },
     /*
-     * Deliberately NOT projected: `taxRule` and `shippingRule`. They are
-     * commercial policy, not product description — a shopper is told what tax
-     * and delivery cost at checkout, where it is computed, and does not need the
-     * rule itself. Keeping them out follows the same reasoning that excludes
-     * `costPrice` from PUBLIC_PRODUCT_SCALARS above.
+     * Deliberately NOT projected: `taxRule`. It is commercial policy, not
+     * product description — a shopper is told what tax costs at checkout, where
+     * it is computed, and does not need the rule itself. Keeping it out follows
+     * the same reasoning that excludes `purchasePrice` from PUBLIC_PRODUCT_SCALARS
+     * above.
+     *
+     * There is no delivery counterpart to exclude any more: delivery is a
+     * store-wide list the shopper picks from at checkout, not a product field.
      *
      * `bundleDeal` IS included: "buy 2 get 1 free" is an offer the shopper must
      * see to act on.
@@ -267,6 +272,46 @@ const ensureUniqueProductSku = async (sku: string, excludeId?: string) => {
 
     if (existing) {
         throw new AppError(status.CONFLICT, `SKU "${sku}" is already in use`);
+    }
+};
+
+/**
+ * Rejects an update whose prices contradict the ones already stored.
+ *
+ * `updateProductZodSchema` can only compare the fields a request actually
+ * carries, so a payload that raises `offerPrice` past a `sellingPrice` it never
+ * mentions passes validation while producing a product whose struck-through
+ * "was" is cheaper than its live price. The stored row is the missing half of
+ * the comparison, so the merged result is what gets checked.
+ *
+ * The rule is not applied retroactively: a product already violating it is only
+ * caught when someone next edits it, which is the moment they can fix it. See
+ * design.md Decision 5.
+ */
+const ensurePricesStayConsistent = (
+    existing: { offerPrice: Prisma.Decimal; sellingPrice: Prisma.Decimal | null; purchasePrice: Prisma.Decimal | null },
+    payload: IUpdateProductPayload,
+) => {
+    const merged = {
+        offerPrice: payload.offerPrice ?? Number(existing.offerPrice),
+        sellingPrice:
+            payload.sellingPrice ?? (existing.sellingPrice === null ? null : Number(existing.sellingPrice)),
+        purchasePrice:
+            payload.purchasePrice ?? (existing.purchasePrice === null ? null : Number(existing.purchasePrice)),
+    };
+
+    if (merged.sellingPrice !== null && merged.sellingPrice < merged.offerPrice) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Regular price (${merged.sellingPrice}) cannot be below the offer price (${merged.offerPrice}). The regular price is the higher, struck-through one.`,
+        );
+    }
+
+    if (merged.purchasePrice !== null && merged.offerPrice <= merged.purchasePrice) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Offer price (${merged.offerPrice}) must be above the purchase price (${merged.purchasePrice}) — otherwise this product sells at a loss.`,
+        );
     }
 };
 
@@ -473,10 +518,15 @@ const ensureVariantReferencesResolve = (
 const toVariantData = (variant: IProductVariantInput) => ({
     name: variant.name,
     sku: variant.sku,
-    price: variant.price,
-    compareAtPrice: variant.compareAtPrice,
-    costPrice: variant.costPrice,
-    stockQuantity: variant.stockQuantity,
+    offerPrice: variant.offerPrice,
+    sellingPrice: variant.sellingPrice,
+    purchasePrice: variant.purchasePrice,
+    /*
+     * No `stockQuantity`. A new variant starts at the column default of 0 and
+     * only moves when a StockMovement moves it; an existing variant keeps
+     * whatever the ledger has put there, so a catalog edit can no longer
+     * overwrite it. See remove-catalog-authored-stock design.md.
+     */
     attributes: variant.attributes,
     image: variant.image,
     status: variant.status,
@@ -798,10 +848,12 @@ const deriveProductOptions = <T extends { variants?: VariantWithOptionValues[] }
  * Per `api/marketing` spec this is automatic on read, not a separate
  * customer-facing endpoint or action.
  */
-const attachCampaignPricing = async <T extends { id: string; price: Prisma.Decimal }>(
+const attachCampaignPricing = async <T extends { id: string; offerPrice: Prisma.Decimal }>(
     products: T[],
 ) => {
-    const priceByProductId = new Map(products.map((p) => [p.id, Number(p.price)]));
+    // Discounts apply to what the shopper would otherwise pay, so the base is
+    // `offerPrice` — not the struck-through `sellingPrice`.
+    const priceByProductId = new Map(products.map((p) => [p.id, Number(p.offerPrice)]));
     const discounts = await CampaignService.getActiveDiscountsForProducts(
         products.map((p) => p.id),
         priceByProductId,
@@ -813,7 +865,7 @@ const attachCampaignPricing = async <T extends { id: string; price: Prisma.Decim
             return { ...product, campaignPrice: null, activeCampaign: null };
         }
 
-        const basePrice = Number(product.price);
+        const basePrice = Number(product.offerPrice);
         const campaignPrice =
             discount.discountType === "PERCENTAGE"
                 ? basePrice * (1 - discount.discountValue / 100)
@@ -905,8 +957,14 @@ const getPublicProducts = async (queryParams: IPublicProductQuery) => {
         where.isFeatured = isFeatured;
     }
 
+    /*
+     * The parameter names stay `minPrice`/`maxPrice` — they are numbers, not
+     * column names, so renaming them would break saved filtered listings for no
+     * gain. What they filter on is `offerPrice`: a shopper stating a budget
+     * means the amount they would actually pay. See design.md Decision 4.
+     */
     if (minPrice || maxPrice) {
-        where.price = {
+        where.offerPrice = {
             ...(minPrice ? { gte: Number(minPrice) } : {}),
             ...(maxPrice ? { lte: Number(maxPrice) } : {}),
         };
@@ -1008,7 +1066,9 @@ const searchProducts = async (term: string, limit?: number): Promise<ISearchedPr
             p.id,
             p.name,
             p.slug,
-            p.price::text AS price,
+            -- Quoted deliberately: unlike the old all-lowercase price column,
+            -- an unquoted camelCase name folds to offerprice and fails to resolve.
+            p."offerPrice"::text AS "offerPrice",
             b.name AS "brandName",
             (
                 SELECT i.url
@@ -1058,7 +1118,7 @@ const searchProducts = async (term: string, limit?: number): Promise<ISearchedPr
         id: row.id,
         name: row.name,
         slug: row.slug,
-        price: row.price,
+        offerPrice: row.offerPrice,
         image: row.image,
         brandName: row.brandName,
     }));
@@ -1095,7 +1155,7 @@ const RELATED_MAX_LIMIT = 24;
 const getRelatedProducts = async (slug: string, limit?: number) => {
     const source = await prisma.product.findFirst({
         where: { slug, status: ProductStatus.ACTIVE },
-        select: { id: true, categoryId: true, brandId: true, price: true },
+        select: { id: true, categoryId: true, brandId: true, offerPrice: true },
     });
 
     if (!source) {
@@ -1104,7 +1164,7 @@ const getRelatedProducts = async (slug: string, limit?: number) => {
 
     const take = Math.min(Math.max(Number(limit) || RELATED_DEFAULT_LIMIT, 1), RELATED_MAX_LIMIT);
 
-    const basePrice = Number(source.price);
+    const basePrice = Number(source.offerPrice);
     const minPrice = basePrice * (1 - RELATED_PRICE_BAND);
     const maxPrice = basePrice * (1 + RELATED_PRICE_BAND);
 
@@ -1123,7 +1183,7 @@ const getRelatedProducts = async (slug: string, limit?: number) => {
                     JOIN "ProductCategory" spc ON spc."categoryId" = pc."categoryId"
                     WHERE pc."productId" = p."id" AND spc."productId" = ${source.id}
                  ) THEN ${RELATED_SCORE_SHARED_CATEGORY} ELSE 0 END
-          + CASE WHEN p."price" BETWEEN ${minPrice} AND ${maxPrice}
+          + CASE WHEN p."offerPrice" BETWEEN ${minPrice} AND ${maxPrice}
                  THEN ${RELATED_SCORE_PRICE_BAND} ELSE 0 END
         ) DESC,
         p."isFeatured" DESC,
@@ -1555,6 +1615,10 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
     if (payload.sku && payload.sku !== existing.sku) {
         await ensureUniqueProductSku(payload.sku, id);
     }
+
+    // A partial payload is only half the comparison — the stored prices are the
+    // other half. Checked before anything is written.
+    ensurePricesStayConsistent(existing, payload);
 
     if (payload.options && payload.options.length > 0) {
         ensureOptionsAreCoherent(payload.options);

@@ -69,7 +69,7 @@ const createProduct = catchAsync(async (req: Request, res: Response) => {
  *
  * The `sortBy` allowlist is the point: `QueryBuilder.sort()` has no whitelist,
  * so an unvalidated `sortBy` lets an anonymous caller order the catalog by a
- * column that appears in no public response (`costPrice`).
+ * column that appears in no public response (`purchasePrice`).
  */
 const getPublicProducts = catchAsync(async (req: Request, res: Response) => {
     const parsed = publicProductQueryZodSchema.safeParse(req.query);

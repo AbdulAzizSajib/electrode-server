@@ -34,12 +34,25 @@ const applyDenormalizedStockDelta = async (
             where: { id: variantId },
             data: { stockQuantity: { increment: delta } },
         });
-    } else {
-        await tx.product.update({
-            where: { id: productId },
-            data: { stockQuantity: { increment: delta } },
-        });
     }
+
+    /*
+     * The product total is incremented either way — including for a
+     * variant-scoped movement, which also belongs to the product that owns the
+     * variant. It is the sum of everything held for the product, so a variable
+     * product's total is the sum across its variants.
+     *
+     * Previously this was an either/or, leaving `Product.stockQuantity` at 0
+     * forever for a variable product. That was invisible only because product
+     * create let a merchant type a number straight into the column; with the
+     * ledger as the sole writer, an unmaintained total would read 0 and the
+     * storefront — which derives `inStock` from it — would call every variable
+     * product out of stock. See remove-catalog-authored-stock design.md.
+     */
+    await tx.product.update({
+        where: { id: productId },
+        data: { stockQuantity: { increment: delta } },
+    });
 };
 
 /**

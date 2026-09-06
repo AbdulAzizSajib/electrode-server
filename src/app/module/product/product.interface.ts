@@ -25,10 +25,11 @@ export interface IProductVariantInput {
     id?: string;
     name: string;
     sku: string;
-    price?: number;
-    compareAtPrice?: number;
-    costPrice?: number;
-    stockQuantity?: number;
+    /** All three optional: absent means this variant is priced by its product. */
+    offerPrice?: number;
+    sellingPrice?: number;
+    purchasePrice?: number;
+    /** No `stockQuantity` — the `Stock` ledger owns it. See product.validation.ts. */
     attributes?: Prisma.InputJsonValue;
     image?: string;
     status?: boolean;
@@ -98,17 +99,19 @@ export interface ICreateProductPayload {
     status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
     categoryId?: string;
     brandId?: string;
-    price: number;
-    compareAtPrice?: number;
-    costPrice?: number;
-    stockQuantity?: number;
+    /** What the shopper is charged — the only required price. */
+    offerPrice: number;
+    /** The regular price, shown struck through. Null when no offer is running. */
+    sellingPrice?: number;
+    /** Supplier cost. Admin-only — never projected into a public response. */
+    purchasePrice?: number;
+    /** No `stockQuantity` — the `Stock` ledger owns it. See product.validation.ts. */
     lowStockThreshold?: number;
     weight?: number;
     isFeatured?: boolean;
     seoTitle?: string;
     seoDescription?: string;
     taxRuleId?: string;
-    shippingRuleId?: string;
     /** Null clears the offer; omitted leaves it as it was. */
     bundleDealId?: string | null;
 
@@ -149,7 +152,7 @@ export interface ISearchedProduct {
     name: string;
     slug: string;
     /** Prisma returns Decimal columns as strings; kept as-is, like every other product payload. */
-    price: string;
+    offerPrice: string;
     /** Primary image url, or null when the product has no images. */
     image: string | null;
     /** Brand name only — not the brand record. Null when the product has no brand. */

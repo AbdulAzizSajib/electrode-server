@@ -11,7 +11,7 @@
 
 - [x] 2.1 Add a `DeliveryMethod` enum (`DELIVERY`, `PICKUP`) to `server/prisma/schema/enums.prisma`
 - [x] 2.2 Add nullable `deliveryMethod`, `deliveryOptionKey` and `deliveryOptionLabel` to `Order` in `order.prisma`, with a comment explaining the key/label split (grouping across a rename versus what the shopper agreed to) and why all three are nullable — `npx prisma validate` passes
-- [ ] 2.3 Generate the migration; it must add only — no drops in this step
+- [x] 2.3 Generate the migration; it must add only — no drops in this step
 
 ## 3. Pricing and order acceptance
 
@@ -28,51 +28,51 @@
 
 ## 4. Backfill
 
-- [ ] 4.1 Write `server/scripts/backfill-delivery-options.ts`: read every `ShippingPlace`, dedupe by name, map `offersPickup` places to `PICKUP` options priced at `pickupPrice` and the rest to `DELIVERY` options priced at `price`, carry `deliveryDays`, generate a slug key per option, and write the result into `checkoutConfig.delivery.options`
-- [ ] 4.2 Make it idempotent and non-destructive: re-running must not duplicate options, and it must refuse to overwrite a `delivery.options` list that a merchant has already edited
-- [ ] 4.3 Set `offersPickup` to true only when at least one migrated option is a pickup point
-- [ ] 4.4 Report what it wrote, and name any place it dropped as a duplicate, so a merchant can check nothing was lost silently
-- [ ] 4.5 Run it and compare the resulting list in Checkout Settings against the existing shipping rules
+- [x] 4.1 Write `server/scripts/backfill-delivery-options.ts`: read every `ShippingPlace`, dedupe by name, map `offersPickup` places to `PICKUP` options priced at `pickupPrice` and the rest to `DELIVERY` options priced at `price`, carry `deliveryDays`, generate a slug key per option, and write the result into `checkoutConfig.delivery.options`. Registered as `npm run backfill:delivery-options`; the derived config is re-parsed through `checkoutConfigSchema` before writing, since this is the one write path into `checkoutConfig` that bypasses the settings PATCH
+- [x] 4.2 Make it idempotent and non-destructive: re-running must not duplicate options, and it must refuse to overwrite a `delivery.options` list that a merchant has already edited. One check does both — a non-empty list is left alone, because a merchant's edits and a previous run are indistinguishable
+- [x] 4.3 Set `offersPickup` to true only when at least one migrated option is a pickup point
+- [x] 4.4 Report what it wrote, and name any place it dropped as a duplicate, so a merchant can check nothing was lost silently
+- [x] 4.5 Run it and compare the resulting list in Checkout Settings against the existing shipping rules. Migrated the single place "Outside Dhaka" (৳120, 0 days) from rule "Default 2" to one DELIVERY option `outside-dhaka` with pickup off, matching the source exactly; a second run confirmed it changes nothing. The store had never saved checkout settings, so the defaults were written alongside — a NULL config is an unconfigured store, not a malformed one, and is resolved the same way every reader already resolves it
 
 ## 5. Admin — Checkout Settings owns delivery
 
-- [ ] 5.1 Add a "Delivery" section to `admin/src/features/ui/checkout-settings/checkout-settings-page.tsx`: a reorderable list of options, each with label, price, days and a Delivery/Pickup point choice, plus add and remove
-- [ ] 5.2 Add the "Offer collection in person" checkbox, and disable or warn on it when no option is marked as a pickup point, matching the server rule from 1.2 so the form says no before the API does
-- [ ] 5.3 Generate the `key` for a newly added option in the client and never rewrite it on rename
-- [ ] 5.4 Mirror the duplicate-label and empty-list checks in the form so the message lands beside the offending row
-- [ ] 5.5 Update `admin/src/lib/api/store-settings.ts` for the new payload shape
+- [x] 5.1 Add a "Delivery" section to `admin/src/features/ui/checkout-settings/checkout-settings-page.tsx`: a reorderable list of options, each with label, price, days and a Delivery/Pickup point choice, plus add and remove. Built on the shared `EditorSection`/`EditorRow`/`moveItem` the other settings editors already use, so reordering and removal behave identically to Header Links and Footer Links
+- [x] 5.2 Add the "Offer collection in person" checkbox, and disable or warn on it when no option is marked as a pickup point, matching the server rule from 1.2 so the form says no before the API does. Also handled the reverse direction the rule implies: removing the last pickup point, or retyping it as a delivery area, turns collection off with it rather than leaving a saved state that can no longer be saved
+- [x] 5.3 Generate the `key` for a newly added option in the client and never rewrite it on rename. Positional (`option-N`), not slugified from the label — the label is empty at the moment a row is added, and the key only has to be unique and stable, never descriptive
+- [x] 5.4 Mirror the duplicate-label and empty-list checks in the form so the message lands beside the offending row. Save is blocked while any row is in error, so the 400 is never reached
+- [x] 5.5 Update `admin/src/lib/api/store-settings.ts` for the new payload shape. The types were already mirrored by 1.6, but `DEFAULT_CHECKOUT_CONFIG` was missing the `delivery` key it declares as required — a real type error that `tsc -p tsconfig.app.json` surfaces and a bare `tsc --noEmit` does not, since this project builds through references
 
 ## 6. Admin — remove the old surface
 
-- [ ] 6.1 Delete `admin/src/features/catalog/shipping-rules/` (page, form page, labels)
-- [ ] 6.2 Delete `admin/src/lib/api/shipping-rules.ts` and its entries in `lib/api/query-keys.ts`
-- [ ] 6.3 Remove the shipping-rules route from `routes/app-router.tsx` and the nav entry from `routes/nav-config.ts`
-- [ ] 6.4 Remove the shipping-rule picker from `features/catalog/products/product-form-page.tsx` and `shippingRuleId` from `lib/api/products.ts`
-- [ ] 6.5 `grep -rn "shipping-rule\|shippingRule" admin/src` must return zero matches
+- [x] 6.1 Delete `admin/src/features/catalog/shipping-rules/` (page, form page, labels)
+- [x] 6.2 Delete `admin/src/lib/api/shipping-rules.ts` and its entries in `lib/api/query-keys.ts`
+- [x] 6.3 Remove the shipping-rules route from `routes/app-router.tsx` and the nav entry from `routes/nav-config.ts` — plus the `Route` icon import the nav entry was the only user of
+- [x] 6.4 Remove the shipping-rule picker from `features/catalog/products/product-form-page.tsx` and `shippingRuleId` from `lib/api/products.ts`. The picker was `required: true`, so this also drops the rule that a product could not be saved without a delivery policy — which is the intended consequence, not a side effect: delivery is store-wide now and is not a property of a product
+- [x] 6.5 `grep -rn "shipping-rule\|shippingRule" admin/src` must return zero matches — passes. The last match was a comment in `features/ui/banners/banner-labels.ts` citing the deleted `shipping-rule-labels.ts` as an example of the same file-splitting pattern; repointed at `bundle-deal-labels.ts`, which still exists
 
 ## 7. Storefront checkout
 
-- [ ] 7.1 Add the delivery chooser to `frontend/src/components/checkout/CheckoutForm.tsx`: when `offersPickup` is on, a Delivery/Collection step first, then the matching list; when off, the delivery areas alone with no first step
-- [ ] 7.2 Send the selected option key on both the quote request and the order payload, so the quoted amount and the charged amount come from the same choice
-- [ ] 7.3 Stop sending the City field as `state` for pricing
-- [ ] 7.4 Hide the delivery address fields when a pickup point is selected, and restore them with their required-field rules when the shopper switches back
-- [ ] 7.5 Show the option's price and estimated days beside each choice
-- [ ] 7.6 Handle the "option no longer exists" refusal by re-reading settings and asking the shopper to choose again
-- [ ] 7.7 Update `frontend/src/types/order.ts` for the new payload and the order's delivery fields
+- [x] 7.1 Add the delivery chooser to `frontend/src/components/checkout/CheckoutForm.tsx`: when `offersPickup` is on, a Delivery/Collection step first, then the matching list; when off, the delivery areas alone with no first step. The first step is also skipped when collection is on but no pickup point is configured — there is no choice to present. A single option in the shown list is auto-selected, since ticking the only box is a step and not a choice
+- [x] 7.2 Send the selected option key on both the quote request and the order payload, so the quoted amount and the charged amount come from the same choice. The key is also part of the idempotency fingerprint: changing the option makes it a different order, which must not resolve to the one already placed at the old price
+- [x] 7.3 Stop sending the City field as `state` for pricing — `state` is gone from the quote request and the guest order payload entirely, along with the whole address from the quote, since nothing prices from an address any more
+- [x] 7.4 Hide the delivery address fields when a pickup point is selected, and restore them with their required-field rules when the shopper switches back. `validateGuest` drops the address rules on the same condition, matching the server's `collectMissingCheckoutFields`, so the form and the API agree on what a collection order needs
+- [x] 7.5 Show the option's price and estimated days beside each choice, and name the chosen option on the summary's delivery line rather than a generic "Delivery"
+- [x] 7.6 Handle the "option no longer exists" refusal by re-reading settings and asking the shopper to choose again. Settings arrive as a server-rendered prop, so re-reading is `router.refresh()`; it fires once per offending key, because the refusal survives until the shopper picks again and refreshing on every render of it would loop
+- [x] 7.7 Update `frontend/src/types/order.ts` for the new payload and the order's delivery fields
 
 ## 8. Order views
 
-- [ ] 8.1 Show the chosen option's label on the admin order detail page, and mark a collection order as a collection so it is not dispatched to a courier
-- [ ] 8.2 Show the same on the storefront's order confirmation and order history
+- [x] 8.1 Show the chosen option's label on the admin order detail page, and mark a collection order as a collection so it is not dispatched to a courier. The label replaces the generic "Shipping" totals row, and a collection order gets a "Collection — do not dispatch" card plus an address card retitled "Contact details" whose empty state reads as expected rather than as missing data. `ORDER_DETAIL_INCLUDE` needed no change — it is an `include`, so the three new scalars already come back; its comment claiming the delivery choice lives on `shippingAddress.state` was stale and is corrected to say that is the landing-page path only
+- [x] 8.2 Show the same on the storefront's order confirmation and order history — one edit to `OrderSummaryCard`, which all three views (signed-in confirmation, guest confirmation, guest tracking) already share, so they cannot drift. A collection order shows "Collecting from" in place of "Delivering to", since it may carry no address at all
 
 ## 9. API docs and verification
 
-- [ ] 9.1 Remove the `/shipping-rules` folder from all three Postman collections (`server/`, `admin/`, `frontend/`)
-- [ ] 9.2 Update the settings PATCH example body with `checkoutConfig.delivery`, and the checkout quote and place-order bodies with the selected option key
-- [ ] 9.3 `npm run verify:postman` passes
-- [ ] 9.4 Update `scripts/verify-checkout-totals.ts` for the new pricing path — delivery charged once, pickup priced from the option, unknown key refused
-- [ ] 9.5 Update `verify-catalog-change.ts`, `verify-currency-and-content.ts` and `verify-landing-page.ts` for the removed product field and the unchanged landing-page path
-- [ ] 9.6 `npm run verify:settings`, `verify:checkout`, `verify:catalog` and `verify:landing-page` all pass
+- [x] 9.1 Remove the `/shipping-rules` folder from all three Postman collections (`server/`, `admin/`, `frontend/`) — done together with 11.2, because `verify-postman-routes.ts` compares the collection against the LIVE route files: removing the folder while the routes still existed would have failed 9.3, and vice versa. The two are one atomic step
+- [x] 9.2 Update the settings PATCH example body with `checkoutConfig.delivery`, and the checkout quote and place-order bodies with the selected option key. Also removed `shippingRuleId` from the product example bodies, dropped the `shippingRule*` collection variables, rewrote the quote/place-order descriptions for the new contract, and replaced the guest quote's inline `country`/`state` body — that shape no longer exists
+- [x] 9.3 `npm run verify:postman` passes — 234 routes, down from 240 by exactly the six deleted shipping-rule endpoints
+- [x] 9.4 Update `scripts/verify-checkout-totals.ts` for the new pricing path — delivery charged once, pickup priced from the option, unknown key refused. Rewritten rather than adapted: every assertion it held (specificity, unmatched-destination refusal, summing per rule) describes behaviour this change deletes. The new one swaps in a probe option list and restores the merchant's real config in a `finally`, verified byte-identical afterwards
+- [x] 9.5 Update `verify-catalog-change.ts`, `verify-currency-and-content.ts` and `verify-landing-page.ts` for the removed product field and the unchanged landing-page path. `verify-landing-page.ts` had two assertions reading fields that no longer exist (`shipping.matches`, `pickupAmount`) — a genuine break that `tsc` could not catch, since `tsconfig.json` includes only `src`. Also retired `scripts/backfill-delivery-options.ts` and its npm script: its source tables are gone, so it can no longer run and would crash on a store with an empty list
+- [x] 9.6 `npm run verify:settings`, `verify:checkout`, `verify:catalog` and `verify:landing-page` all pass
 
 ## 10. End-to-end check
 
@@ -85,7 +85,7 @@
 
 ## 11. Drop the old model
 
-- [ ] 11.1 After a soak, remove `ShippingRule` and `ShippingPlace` from `server/prisma/schema/ShippingRule.prisma` and `shippingRuleId` from `product.prisma`; generate the drop migration
-- [ ] 11.2 Delete `server/src/app/module/shipping-rule/` and its mount in `app/routes/index.ts`
-- [ ] 11.3 Remove `shippingRuleId` from `product.interface.ts`, `product.validation.ts` and `product.service.ts`
-- [ ] 11.4 `grep -rn "shippingRule\|ShippingPlace\|matchPlace" server/src frontend/src admin/src` (excluding generated Prisma output) must return zero matches
+- [x] 11.1 After a soak, remove `ShippingRule` and `ShippingPlace` from `server/prisma/schema/ShippingRule.prisma` and `shippingRuleId` from `product.prisma`; generate the drop migration. **The soak was waived by explicit user decision** — the tradeoff was stated and accepted: from this migration on, recovering the old rules means restoring from backup rather than reverting the release. Constraint names and row counts were confirmed against the live database first (1 rule, 1 place, 2 linked products — all already carried across by the backfill)
+- [x] 11.2 Delete `server/src/app/module/shipping-rule/` and its mount in `app/routes/index.ts`
+- [x] 11.3 Remove `shippingRuleId` from `product.interface.ts`, `product.validation.ts` and `product.service.ts` — plus the `shippingRule` relation in `PRODUCT_DETAIL_INCLUDE` and the product select in `landing-page.service.ts`
+- [x] 11.4 `grep -rn "shippingRule\|ShippingPlace\|matchPlace" server/src frontend/src admin/src` (excluding generated Prisma output) must return zero matches — passes

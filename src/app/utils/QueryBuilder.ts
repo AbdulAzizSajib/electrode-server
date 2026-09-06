@@ -311,7 +311,7 @@ TInclude = Record<string, unknown>
      */
     select(projection : Record<string, unknown>) : this{
         // Replaces rather than merges. A merge would let a caller-supplied
-        // `?fields=costPrice` (see `fields()` above) union itself back in and
+        // `?fields=purchasePrice` (see `fields()` above) union itself back in and
         // re-expose exactly what the projection exists to withhold.
         this.query.select = projection as Record<string, boolean | Record<string, unknown>>;
         this.selectFields = undefined;

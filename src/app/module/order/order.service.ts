@@ -54,8 +54,11 @@ const ORDER_DETAIL_INCLUDE = {
      * is what makes the admin able to LINK to a page that still exists; the
      * captured title is what keeps a deleted campaign's orders readable.
      *
-     * Which delivery area the shopper chose is not here: it is on
-     * `shippingAddress.state`, already included above.
+     * Which delivery option a SHOP order chose is not here either: it is on the
+     * order's own `deliveryMethod` / `deliveryOptionKey` / `deliveryOptionLabel`
+     * columns, which this `include` returns as scalars without being named. A
+     * LANDING-PAGE order leaves those null and carries its chosen zone on
+     * `shippingAddress.state` instead, since its zones are the page's own.
      */
     landingPage: { select: { id: true, title: true, slug: true } },
 };
@@ -250,14 +253,23 @@ const deductStockForOrderLines = async (
     await tx.stockMovement.createMany({ data: movements });
 
     // Denormalized totals, batched the same way — variant-scoped lines update
-    // ProductVariant, the rest update Product (see applyDenormalizedStockDelta,
-    // which this mirrors for the single-row case).
+    // ProductVariant, and EVERY line updates its Product (see
+    // applyDenormalizedStockDelta, which this mirrors for the single-row case).
+    //
+    // The product total counts variant lines too: it is the sum of everything
+    // held for the product, so selling a variant lowers it. Deducting only the
+    // variant here — while receiving credits both — would let a variable
+    // product's total climb forever.
     const variantDeltas = new Map<string, number>();
     const productDeltas = new Map<string, number>();
     for (const line of lines) {
-        const target = line.variantId ? variantDeltas : productDeltas;
-        const key = line.variantId ?? line.productId;
-        target.set(key, (target.get(key) ?? 0) + line.quantity);
+        if (line.variantId) {
+            variantDeltas.set(
+                line.variantId,
+                (variantDeltas.get(line.variantId) ?? 0) + line.quantity,
+            );
+        }
+        productDeltas.set(line.productId, (productDeltas.get(line.productId) ?? 0) + line.quantity);
     }
 
     if (variantDeltas.size > 0) {
@@ -755,7 +767,10 @@ const placeOrder = async (
             );
         }
 
-        const unitPrice = Number(item.variant?.price ?? item.product.price);
+        // Charged from the offer price. `unitPrice`/`totalPrice` below are
+        // OrderItem's own captured columns and keep their names — an order
+        // records what was charged, not which catalogue field it came from.
+        const unitPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
         const totalPrice = unitPrice * item.quantity;
         subtotal += totalPrice;
 
@@ -1028,7 +1043,7 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         productId: line.productId,
         productName: line.product.name,
         quantity: line.quantity,
-        lineTotal: Number(line.variant?.price ?? line.product.price) * line.quantity,
+        lineTotal: Number(line.variant?.offerPrice ?? line.product.offerPrice) * line.quantity,
         taxRuleId: line.product.taxRuleId,
     }));
 

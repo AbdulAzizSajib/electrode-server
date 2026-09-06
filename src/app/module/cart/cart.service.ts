@@ -15,7 +15,7 @@ const CART_INCLUDE = {
                     id: true,
                     name: true,
                     slug: true,
-                    price: true,
+                    offerPrice: true,
                     status: true,
                     images: { where: { isPrimary: true }, take: 1 },
                 },

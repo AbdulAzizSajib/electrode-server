@@ -18,7 +18,6 @@ import { AttributeService } from "../src/app/module/attribute/attribute.service"
 import { BundleDealService } from "../src/app/module/bundle-deal/bundle-deal.service";
 import { CollectionService } from "../src/app/module/collection/collection.service";
 import { ProductService } from "../src/app/module/product/product.service";
-import { ShippingRuleService } from "../src/app/module/shipping-rule/shipping-rule.service";
 import { TaxRuleService } from "../src/app/module/tax-rule/tax-rule.service";
 
 let failures = 0;
@@ -55,7 +54,6 @@ const main = async () => {
         productIds: [] as string[],
         attributeIds: [] as string[],
         taxRuleIds: [] as string[],
-        shippingRuleIds: [] as string[],
         collectionIds: [] as string[],
         bundleDealIds: [] as string[],
     };
@@ -203,18 +201,6 @@ const main = async () => {
         });
         created.taxRuleIds.push(replacementTax.id);
 
-        const shippingRule = await ShippingRuleService.createShippingRule(actor.id, {
-            name: `${PREFIX} Shipping`,
-            places: [{ name: "Anywhere", price: 50, deliveryDays: 2 }],
-        });
-        created.shippingRuleIds.push(shippingRule.id);
-
-        const replacementShipping = await ShippingRuleService.createShippingRule(actor.id, {
-            name: `${PREFIX} Shipping Replacement`,
-            places: [{ name: "Anywhere", price: 60, deliveryDays: 3 }],
-        });
-        created.shippingRuleIds.push(replacementShipping.id);
-
         const collection = await CollectionService.createCollection(actor.id, {
             name: `${PREFIX} Collection`,
         });
@@ -240,7 +226,6 @@ const main = async () => {
             categoryId: category?.id,
             brandId: brand?.id,
             taxRuleId: taxRule.id,
-            shippingRuleId: shippingRule.id,
             collectionIds: [collection.id],
             bundleDealId: bundleDeal.id,
             tags: ["verify-keyword", "Verify-Keyword", " verify-keyword "],
@@ -279,7 +264,6 @@ const main = async () => {
             categoryId: category?.id,
             brandId: brand?.id,
             taxRuleId: taxRule.id,
-            shippingRuleId: shippingRule.id,
             options: [{ attributeId: attribute.id, valueIds: [red.id, green.id] }],
             variants: [
                 { name: "Verify Red", sku: `${PREFIX}-red`, price: 500, stockQuantity: 11, optionValueIndexes: [0] },
@@ -442,15 +426,6 @@ const main = async () => {
             taxRefusal ?? "the deletion proceeded",
         );
 
-        const shippingRefusal = await refusal(() =>
-            ShippingRuleService.deleteShippingRule(actor.id, shippingRule.id),
-        );
-        check(
-            "9.7 deleting a shipping rule in use is refused, with a count",
-            Boolean(shippingRefusal) && /\d/.test(shippingRefusal ?? ""),
-            shippingRefusal ?? "the deletion proceeded",
-        );
-
         const usingTax = await prisma.product.count({ where: { taxRuleId: taxRule.id } });
         await TaxRuleService.deleteTaxRule(actor.id, taxRule.id, replacementTax.id);
         const movedToReplacement = await prisma.product.count({
@@ -463,16 +438,15 @@ const main = async () => {
             `${usingTax} product(s) used it, ${movedToReplacement} now use the replacement`,
         );
 
-        await ShippingRuleService.deleteShippingRule(actor.id, shippingRule.id, replacementShipping.id);
-        created.shippingRuleIds = created.shippingRuleIds.filter((id) => id !== shippingRule.id);
-        const orphanedShipping = await prisma.product.count({
-            where: { id: { in: created.productIds }, shippingRuleId: null },
-        });
-        check(
-            "9.7 no product is left without a shipping rule",
-            orphanedShipping === 0,
-            `${orphanedShipping} product(s) without one`,
-        );
+        /*
+         * There is no shipping-rule counterpart to any of this any more. A rule
+         * in use could not be deleted without reassigning its products, because
+         * a product with no rule could not be delivered; delivery is now a
+         * store-wide list that belongs to no product, so deleting an option
+         * orphans nothing. What replaces this check lives in
+         * verify-checkout-totals.ts: an order placed under an option that is
+         * later deleted keeps the label and amount it captured.
+         */
 
         // ---------------------------------------------------------------
         // 9.8 — deleting a grouping does not damage its products
@@ -548,9 +522,6 @@ const main = async () => {
         }
         for (const id of created.taxRuleIds) {
             await prisma.taxRule.delete({ where: { id } }).catch(() => undefined);
-        }
-        for (const id of created.shippingRuleIds) {
-            await prisma.shippingRule.delete({ where: { id } }).catch(() => undefined);
         }
         await prisma.tag.deleteMany({ where: { name: { contains: "verify-keyword" } } });
         await prisma.auditLog.deleteMany({

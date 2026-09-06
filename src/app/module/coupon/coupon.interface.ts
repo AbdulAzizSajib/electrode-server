@@ -26,8 +26,9 @@ export interface IApplyCouponPayload {
 export interface ICartItemForDiscount {
     productId: string;
     quantity: number;
-    product: { price: unknown };
-    variant: { price: unknown } | null;
+    /** A cart line is priced from the offer price — what the shopper is charged. */
+    product: { offerPrice: unknown };
+    variant: { offerPrice: unknown } | null;
 }
 
 /** Minimal shape `CouponService`'s validation logic needs from a Coupon (+ its CouponProduct scoping). */

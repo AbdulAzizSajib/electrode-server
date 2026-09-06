@@ -54,7 +54,6 @@ const line = (lineTotal: number, quantity = 1): IPricingLine => ({
     quantity,
     lineTotal,
     taxRuleId: null,
-    shippingRuleId: null,
 });
 
 const INSIDE = DEFAULT_DELIVERY_ZONES[0];
@@ -160,17 +159,20 @@ const main = async () => {
     );
 
     check(
-        "no ShippingPlace is reported as matched under an override",
-        overThreshold.shipping.matches.length === 0 && overThreshold.pickupAmount === null,
-        `matches=${overThreshold.shipping.matches.length}, pickup=${overThreshold.pickupAmount}`,
+        "no store delivery option is reported under an override",
+        overThreshold.delivery === null,
+        // Null is the honest answer rather than a gap: the page's zone is not
+        // one of the store's options, and reporting one would put a
+        // landing-page order into that option's counts.
+        `delivery=${JSON.stringify(overThreshold.delivery)}`,
     );
 
     console.log("\n--- 3. The override did not leak into the normal checkout ---\n");
 
     /*
-     * The same basket WITHOUT an override must still go through quoteShipping,
-     * which refuses a line carrying no shipping rule. If the override had
-     * become a default — or if quoteShipping were being skipped for everyone —
+     * The same basket WITHOUT an override must still go through quoteDelivery,
+     * which refuses an option key that resolves to nothing. If the override had
+     * become a default — or if quoteDelivery were being skipped for everyone —
      * this would quietly return 0 and the merchant would be paying for
      * delivery. The throw is the proof that the normal path is untouched.
      */
@@ -179,9 +181,8 @@ const main = async () => {
     try {
         await quoteCharges({
             lines: [line(990)],
-            destination: {},
+            deliveryOptionKey: "__no_such_option__",
             discountAmount: 0,
-            deliveryMethod: "DELIVERY",
             couponWaivesShipping: false,
             freeShippingThreshold: null,
         });
@@ -191,8 +192,10 @@ const main = async () => {
     }
 
     check(
-        "without an override, a line with no shipping rule is still refused",
-        refused && refusalMessage.includes("cannot be delivered"),
+        "without an override, an unresolvable delivery option is still refused",
+        refused &&
+            (refusalMessage.includes("no longer available") ||
+                refusalMessage.includes("has not set up delivery")),
         refused ? refusalMessage : "quoteCharges returned instead of throwing",
     );
 

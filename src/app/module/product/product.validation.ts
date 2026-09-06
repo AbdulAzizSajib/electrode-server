@@ -16,14 +16,67 @@ const productOptionZodSchema = z.object({
     name: z.string().max(100).optional(),
 });
 
+/**
+ * The rule relating the three prices, applied wherever they are authored.
+ *
+ * `sellingPrice` is the regular price shown struck through, so a value below
+ * `offerPrice` would render a "was" cheaper than the "now" — backwards, and
+ * exactly the mistake the old Shopify-style names invited. `offerPrice` at or
+ * below `purchasePrice` is a sale at a loss, which is never what a merchant
+ * filling in a form meant to type.
+ *
+ * Both errors name the two fields involved: told only "prices are
+ * inconsistent", a merchant cannot tell which of two numbers to change. The
+ * issue is attached to the field the merchant is most likely to want to
+ * correct.
+ *
+ * Absent values are skipped rather than treated as zero — on an update the
+ * caller may be sending one price and leaving the others alone. The service
+ * merges a partial payload over the stored row before validating, so a rule
+ * that looks unenforced here is still enforced there. See design.md Decision 5.
+ */
+const addPriceConsistencyIssues = (
+    prices: { offerPrice?: number | null; sellingPrice?: number | null; purchasePrice?: number | null },
+    ctx: z.RefinementCtx,
+    path: (string | number)[] = [],
+) => {
+    const { offerPrice, sellingPrice, purchasePrice } = prices;
+
+    if (offerPrice == null) return;
+
+    if (sellingPrice != null && sellingPrice < offerPrice) {
+        ctx.addIssue({
+            code: "custom",
+            path: [...path, "sellingPrice"],
+            message: `Regular price (${sellingPrice}) cannot be below the offer price (${offerPrice}). The regular price is the higher, struck-through one.`,
+        });
+    }
+
+    if (purchasePrice != null && offerPrice <= purchasePrice) {
+        ctx.addIssue({
+            code: "custom",
+            path: [...path, "offerPrice"],
+            message: `Offer price (${offerPrice}) must be above the purchase price (${purchasePrice}) — otherwise this product sells at a loss.`,
+        });
+    }
+};
+
 const productVariantZodSchema = z.object({
     id: z.string().optional(),
     name: z.string().min(1).max(150),
     sku: z.string().min(1).max(100),
-    price: z.number().nonnegative().optional(),
-    compareAtPrice: z.number().nonnegative().optional(),
-    costPrice: z.number().nonnegative().optional(),
-    stockQuantity: z.number().int().nonnegative().optional(),
+    /** All three optional: absent means the variant is priced by its product. */
+    offerPrice: z.number().nonnegative().optional(),
+    sellingPrice: z.number().nonnegative().optional(),
+    purchasePrice: z.number().nonnegative().optional(),
+    /*
+     * No `stockQuantity` here, and none on the product below. A variant's stock
+     * is owned by the `Stock` ledger and only ever moves through a
+     * `StockMovement` — receive a purchase order, adjust stock, or sell one.
+     * Accepting it here let the catalog assert a quantity no ledger row backed,
+     * so the storefront advertised stock that checkout then rejected.
+     * See remove-catalog-authored-stock design.md.
+     */
     attributes: z.record(z.string(), z.unknown()).optional(),
     image: z.url("Variant image must be a valid URL").optional(),
     status: z.boolean().optional(),
@@ -73,7 +126,7 @@ const productAttributeZodSchema = z.object({
     value: z.string().min(1).max(200),
 });
 
-export const createProductZodSchema = z.object({
+const productBaseZodSchema = z.object({
     name: z.string().min(2).max(200),
     slug: z.string().min(2).max(220).optional(),
     sku: z.string().min(1).max(100).optional(),
@@ -83,10 +136,17 @@ export const createProductZodSchema = z.object({
     status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(),
     categoryId: z.string().optional(),
     brandId: z.string().optional(),
-    price: z.number().nonnegative(),
-    compareAtPrice: z.number().nonnegative().optional(),
-    costPrice: z.number().nonnegative().optional(),
-    stockQuantity: z.number().int().nonnegative().optional(),
+    /** What the shopper is charged — the only price a product must have. */
+    offerPrice: z.number().nonnegative(),
+    /** The regular price, shown struck through. Omitted when nothing is on offer. */
+    sellingPrice: z.number().nonnegative().optional(),
+    /** Supplier cost. Admin-only; never reaches a public response. */
+    purchasePrice: z.number().nonnegative().optional(),
+    /*
+     * `stockQuantity` is deliberately absent — see the note on
+     * `productVariantZodSchema` above. `lowStockThreshold` stays: it is a
+     * setting (when to warn), not a quantity, so nothing else owns it.
+     */
     lowStockThreshold: z.number().int().nonnegative().optional(),
     weight: z.number().nonnegative().optional(),
     isFeatured: z.boolean().optional(),
@@ -94,13 +154,14 @@ export const createProductZodSchema = z.object({
     seoDescription: z.string().max(500).optional(),
 
     /*
-     * Which named rules price this product's tax and delivery. Optional here
-     * because a product created before rules existed has them backfilled, but
-     * the service treats a product without them as incomplete — one cannot be
-     * taxed, the other cannot be delivered.
+     * Which named rule prices this product's tax. Optional here because a
+     * product created before rules existed has it backfilled, but the service
+     * treats a product without one as incomplete — it cannot be taxed.
+     *
+     * There is no delivery counterpart. Delivery is a store-wide list the
+     * shopper picks from at checkout, so it is not a product field at all.
      */
     taxRuleId: z.string().optional(),
-    shippingRuleId: z.string().optional(),
     /** Null clears the offer; omitted leaves it as it was. */
     bundleDealId: z.string().nullable().optional(),
 
@@ -130,7 +191,42 @@ export const createProductZodSchema = z.object({
     imageSlots: z.array(imageSlotZodSchema).optional(),
 });
 
-export const updateProductZodSchema = createProductZodSchema.partial();
+/**
+ * Checks the product's own three prices and each variant's own three.
+ *
+ * A variant is judged against its own values, not against its product's: a
+ * variant that overrides only `offerPrice` inherits nothing to compare it to,
+ * and comparing across the two would reject legitimate per-variant pricing.
+ */
+const checkPrices = (
+    payload: {
+        offerPrice?: number | null;
+        sellingPrice?: number | null;
+        purchasePrice?: number | null;
+        variants?: { offerPrice?: number | null; sellingPrice?: number | null; purchasePrice?: number | null }[];
+    },
+    ctx: z.RefinementCtx,
+) => {
+    addPriceConsistencyIssues(payload, ctx);
+    payload.variants?.forEach((variant, index) => {
+        addPriceConsistencyIssues(variant, ctx, ["variants", index]);
+    });
+};
+
+export const createProductZodSchema = productBaseZodSchema.superRefine(checkPrices);
+
+/*
+ * Refined separately rather than as `createProductZodSchema.partial()`: once a
+ * schema carries a refinement it is no longer an object schema, so `.partial()`
+ * is not available on it. The base is made partial first, then the same check
+ * is attached.
+ *
+ * On a partial payload this only catches contradictions visible within the
+ * request itself. A payload that raises `offerPrice` above a `sellingPrice` it
+ * does not mention still has to be caught against the stored row, which the
+ * service does before writing. See design.md Decision 5.
+ */
+export const updateProductZodSchema = productBaseZodSchema.partial().superRefine(checkPrices);
 
 /**
  * Query params for `GET /products/search`.
@@ -161,7 +257,7 @@ export const searchProductsZodSchema = z.object({
  *
  * This exists because `QueryBuilder.sort()` puts `sortBy` straight into
  * Prisma's `orderBy` with no whitelist of its own, so without this an
- * anonymous caller could order the catalog by `costPrice` and read off every
+ * anonymous caller could order the catalog by `purchasePrice` and read off every
  * product's margin ranking — a column that appears in no public response.
  *
  * Deliberately NOT applied to the admin listing: an admin is already entitled
@@ -169,7 +265,7 @@ export const searchProductsZodSchema = z.object({
  */
 export const PUBLIC_PRODUCT_SORT_FIELDS = [
     "createdAt",
-    "price",
+    "offerPrice",
     "name",
     "averageRating",
     "totalSold",

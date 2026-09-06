@@ -8,8 +8,8 @@
 /// prices products, it does not render them. See
 /// add-single-product-landing-page design.md, Decision 1.
 ///
-/// NO PRICE LIVES HERE. The page renders `product.price` and
-/// `product.compareAtPrice` — which is already the merchant's "regular vs
+/// NO PRICE LIVES HERE. The page renders `product.offerPrice` and
+/// `product.sellingPrice` — which is already the merchant's "regular vs
 /// offer" pair — and cannot author a price of its own. A second place to write
 /// money is how a shop ends up quoting one number and charging another, which
 /// is the same reason StoreSetting.defaultTaxRatePercent was removed rather

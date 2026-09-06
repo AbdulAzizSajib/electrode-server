@@ -28,10 +28,10 @@ export type DeliveryMethod = "DELIVERY" | "PICKUP";
 /**
  * Enough of a checkout line to price it.
  *
- * Note what is no longer here: `shippingRuleId`. Delivery is a store-wide
- * choice the shopper makes, so nothing about the basket influences what it
- * costs — which is why delivery is now charged once per order rather than once
- * per distinct rule in it.
+ * Note what is no longer here: any per-product delivery policy. Delivery is a
+ * store-wide choice the shopper makes, so nothing about the basket influences
+ * what it costs — which is why delivery is now charged once per order rather
+ * than once per distinct policy in it.
  */
 export interface IPricingLine {
     productId: string;
