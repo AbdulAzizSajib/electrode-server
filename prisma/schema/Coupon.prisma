@@ -12,6 +12,19 @@ model Coupon {
   maximumDiscountAmount Decimal? @db.Decimal(12, 2)
 
   usageLimit Int?
+
+  /// DEPRECATED as a source of truth — do not read this to decide anything.
+  ///
+  /// Redemptions are counted from `Order.couponCode` on orders that still
+  /// stand (coupon.service.ts's `countCouponRedemptions`), and the admin read
+  /// reports that derived figure under this field's name. The column is still
+  /// incremented on placement so nothing that reads the table directly sees a
+  /// frozen zero, but it is never decremented: a cancelled order leaves it
+  /// overstated, which is exactly the drift that made it unusable.
+  ///
+  /// Kept rather than dropped so a rollback of this change has its counter
+  /// still moving. Drop it once that is no longer a concern — a column written
+  /// and never read is how this one drifted unnoticed in the first place.
   usageCount Int  @default(0)
 
   perCustomerLimit Int?

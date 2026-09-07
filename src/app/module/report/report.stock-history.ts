@@ -22,6 +22,11 @@ const INBOUND_TYPES: StockMovementType[] = [
     StockMovementType.PURCHASE,
     StockMovementType.RETURN,
     StockMovementType.TRANSFER_IN,
+    // A cancelled order's stock going back on the shelf. This list is an
+    // allow-list — anything absent counts as OUTBOUND — so a new inbound type
+    // that is not added here is silently subtracted, and the in/out figures
+    // stop reconciling with the closing balance.
+    StockMovementType.CANCELLATION,
 ];
 
 const isInbound = (type: StockMovementType) => INBOUND_TYPES.includes(type);

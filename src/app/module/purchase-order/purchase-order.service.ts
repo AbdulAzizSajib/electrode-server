@@ -18,6 +18,7 @@ import {
     sumPaymentsByPurchaseOrder,
 } from "../supplier-payment/supplier-payment.service";
 import {
+    IAmendPurchaseOrderPayload,
     ICreatePurchaseOrderPayload,
     IPurchaseOrderItemInput,
     IReceivePurchaseOrderPayload,
@@ -273,6 +274,162 @@ const updatePurchaseOrder = async (userId: string, id: string, payload: IUpdateP
     });
 
     return updated;
+};
+
+/**
+ * Amends what a purchase order still has outstanding.
+ *
+ * `updatePurchaseOrder` refuses all editing from the first receipt, and line
+ * items were never in its payload at all — so a wrong quantity discovered
+ * mid-delivery had no correction, and the only route was a second purchase
+ * order that double-counts the commitment to the supplier. Worse, the frozen
+ * `totalAmount` is what `assertPayable` compares supplier payments against, so
+ * an understated order permanently capped what could be recorded as paid.
+ *
+ * What stays immutable is what has already ARRIVED. A receipt moved real stock
+ * and set a cost basis from what was actually charged; rewriting it would make
+ * the ledger disagree with the goods on the shelf. So a line may be amended
+ * down to — never below — its `receivedQuantity`, and only a line that has
+ * received nothing may be removed.
+ *
+ * The whole amendment is one transaction against a re-read of the order: a
+ * receipt landing between the check and the write would otherwise let an
+ * amendment computed against stale quantities overwrite it.
+ */
+const amendPurchaseOrderItems = async (
+    userId: string,
+    id: string,
+    payload: IAmendPurchaseOrderPayload,
+) => {
+    const existing = await getPurchaseOrderOrThrow(id);
+
+    if (existing.status === PurchaseOrderStatus.CANCELLED) {
+        throw new AppError(status.BAD_REQUEST, "Cannot amend a cancelled purchase order");
+    }
+
+    await assertVariantsBelongToProducts(payload.items);
+
+    const amended = await prisma.$transaction(async (tx) => {
+        // Re-read inside the transaction: `receivedQuantity` is what every
+        // guard below turns on, and a concurrent receipt must not be amended
+        // away by a request that was composed before it landed.
+        const current = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id } });
+        const currentById = new Map(current.map((item) => [item.id, item]));
+
+        const keptIds = new Set(
+            payload.items.filter((item) => item.id).map((item) => item.id as string),
+        );
+
+        for (const item of current) {
+            if (keptIds.has(item.id)) continue;
+
+            if (item.receivedQuantity > 0) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Cannot remove a line that has already received stock — ${item.receivedQuantity} unit(s) have arrived against it`,
+                );
+            }
+
+            await tx.purchaseOrderItem.delete({ where: { id: item.id } });
+        }
+
+        for (const item of payload.items) {
+            if (!item.id) {
+                await tx.purchaseOrderItem.create({
+                    data: {
+                        purchaseOrderId: id,
+                        productId: item.productId,
+                        variantId: item.variantId ?? null,
+                        quantity: item.quantity,
+                        unitCost: item.unitCost,
+                        totalCost: item.quantity * item.unitCost,
+                    },
+                });
+                continue;
+            }
+
+            const line = currentById.get(item.id);
+            if (!line) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Purchase order item ${item.id} does not belong to this purchase order`,
+                );
+            }
+
+            if (item.quantity < line.receivedQuantity) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `Cannot reduce this line to ${item.quantity} — ${line.receivedQuantity} unit(s) have already been received against it`,
+                );
+            }
+
+            await tx.purchaseOrderItem.update({
+                where: { id: line.id },
+                data: {
+                    productId: item.productId,
+                    variantId: item.variantId ?? null,
+                    quantity: item.quantity,
+                    unitCost: item.unitCost,
+                    totalCost: item.quantity * item.unitCost,
+                },
+            });
+        }
+
+        const subtotal = payload.items.reduce(
+            (sum, item) => sum + item.quantity * item.unitCost,
+            0,
+        );
+        const totalAmount = subtotal + Number(existing.shippingCost) + Number(existing.taxAmount);
+
+        /*
+         * An order's total caps what may be recorded as paid against it
+         * (`assertPayable`). Amending below money already handed over would
+         * strand that payment on a document that no longer accounts for it —
+         * the same hazard `assertNoSupplierPayments` guards on cancellation.
+         */
+        const paid = await tx.supplierPayment.aggregate({
+            where: { purchaseOrderId: id },
+            _sum: { amount: true },
+        });
+        const alreadyPaid = Number(paid._sum.amount ?? 0);
+
+        if (Math.round(totalAmount * 100) < Math.round(alreadyPaid * 100)) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `This amendment would bring the order total to ${totalAmount}, below the ${alreadyPaid} already recorded as paid to the supplier`,
+            );
+        }
+
+        // Receipts may now cover every remaining line, or no longer do — the
+        // status is a consequence of the quantities, so it is recomputed rather
+        // than left describing the order as it was before the amendment.
+        const refreshed = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id } });
+        const fullyReceived =
+            refreshed.length > 0 && refreshed.every((item) => item.receivedQuantity >= item.quantity);
+        const anyReceived = refreshed.some((item) => item.receivedQuantity > 0);
+
+        return tx.purchaseOrder.update({
+            where: { id },
+            data: {
+                subtotal,
+                totalAmount,
+                status: fullyReceived
+                    ? PurchaseOrderStatus.RECEIVED
+                    : anyReceived
+                      ? PurchaseOrderStatus.PARTIALLY_RECEIVED
+                      : existing.status,
+                receivedAt: fullyReceived ? (existing.receivedAt ?? new Date()) : null,
+            },
+            include: PURCHASE_ORDER_INCLUDE,
+        });
+    });
+
+    await AuditLogService.record(userId, AuditAction.UPDATE, "PurchaseOrder", id, {
+        oldData: existing,
+        newData: amended,
+    });
+
+    return amended;
 };
 
 const deletePurchaseOrder = async (userId: string, id: string) => {
@@ -570,6 +727,7 @@ export const PurchaseOrderService = {
     getPurchaseOrderById,
     getPurchaseOrderOrThrow,
     updatePurchaseOrder,
+    amendPurchaseOrderItems,
     deletePurchaseOrder,
     receivePurchaseOrder,
 };

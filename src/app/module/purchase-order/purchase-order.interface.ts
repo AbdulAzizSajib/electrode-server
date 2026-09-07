@@ -29,6 +29,25 @@ export interface IUpdatePurchaseOrderPayload {
     status?: "DRAFT" | "ORDERED" | "CANCELLED";
 }
 
+/**
+ * One line of an amendment. An existing line is named by `id`; a line without
+ * one is added.
+ *
+ * Lines absent from the array are removed — but only if they have received
+ * nothing, since a receipt moved real stock and established a cost basis.
+ */
+export interface IAmendPurchaseOrderItemInput {
+    id?: string;
+    productId: string;
+    variantId?: string;
+    quantity: number;
+    unitCost: number;
+}
+
+export interface IAmendPurchaseOrderPayload {
+    items: IAmendPurchaseOrderItemInput[];
+}
+
 export interface IReceivePurchaseOrderItemInput {
     purchaseOrderItemId: string;
     /** Quantity being received in this receipt (may be less than the remaining unreceived quantity — partial receipt). */

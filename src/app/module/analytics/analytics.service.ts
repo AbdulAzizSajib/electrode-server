@@ -7,6 +7,7 @@ import {
     IDashboardSummary,
     IOrderStatusBreakdown,
     IPaymentBreakdown,
+    IPulse,
     IReturnsRefundsSummary,
     ITimeSeriesPoint,
     ITopProduct,
@@ -267,6 +268,62 @@ const getReturnsRefunds = async (range: IDashboardRange): Promise<IReturnsRefund
     };
 };
 
+/** Orders that still need someone to act on them — what the sidebar badge counts. */
+const PENDING_ORDER_STATUSES: OrderStatus[] = [
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PROCESSING,
+];
+
+/**
+ * The change-probe every open admin tab polls on a short interval.
+ *
+ * Deliberately unlike the reports above: no `range`, no time series, no
+ * per-order aggregation. Each piece is a `count` over an indexed column or a
+ * single `findFirst` on `createdAt desc`, so the whole thing stays cheap enough
+ * to call every few seconds per signed-in staff member.
+ *
+ * `unreadNotificationCount` is per-user because `Notification` rows are
+ * per-user — `notifyOwnersAndAdmins` fans a platform alert out into one row
+ * each, so a shared count would be wrong for everyone.
+ *
+ * The low-stock count repeats `getDashboardSummary`'s in-JS threshold filter
+ * for the same reason it exists there: Prisma can't compare `stockQuantity`
+ * against `lowStockThreshold` in a `where`. It selects only the two numbers it
+ * compares rather than the dashboard's fuller row.
+ */
+const getPulse = async (userId: string): Promise<IPulse> => {
+    const [latestOrder, orderCount, pendingOrderCount, unreadNotificationCount, inStockProducts] =
+        await Promise.all([
+            prisma.order.findFirst({
+                where: SALES_ORDER_WHERE,
+                orderBy: { createdAt: "desc" },
+                select: { id: true, orderNumber: true, totalAmount: true, createdAt: true },
+            }),
+            prisma.order.count({ where: SALES_ORDER_WHERE }),
+            prisma.order.count({ where: { status: { in: PENDING_ORDER_STATUSES } } }),
+            prisma.notification.count({ where: { userId, isRead: false } }),
+            prisma.product.findMany({
+                where: { status: ProductStatus.ACTIVE, stockQuantity: { gt: 0 } },
+                select: { stockQuantity: true, lowStockThreshold: true },
+            }),
+        ]);
+
+    return {
+        latestOrder: latestOrder && {
+            id: latestOrder.id,
+            orderNumber: latestOrder.orderNumber,
+            totalAmount: round2(Number(latestOrder.totalAmount)),
+            createdAt: latestOrder.createdAt.toISOString(),
+        },
+        orderCount,
+        pendingOrderCount,
+        unreadNotificationCount,
+        lowStockCount: inStockProducts.filter((p) => p.stockQuantity <= p.lowStockThreshold).length,
+        lastEventAt: latestOrder?.createdAt.toISOString() ?? null,
+    };
+};
+
 export const AnalyticsService = {
     getDashboardSummary,
     getTopProducts,
@@ -274,4 +331,5 @@ export const AnalyticsService = {
     getOrderStatusBreakdown,
     getPaymentBreakdown,
     getReturnsRefunds,
+    getPulse,
 };

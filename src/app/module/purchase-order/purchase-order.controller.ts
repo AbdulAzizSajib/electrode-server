@@ -41,6 +41,21 @@ const getPurchaseOrderById = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const amendPurchaseOrderItems = catchAsync(async (req: Request, res: Response) => {
+    const result = await PurchaseOrderService.amendPurchaseOrderItems(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Purchase order items amended successfully",
+        data: result,
+    });
+});
+
 const updatePurchaseOrder = catchAsync(async (req: Request, res: Response) => {
     const result = await PurchaseOrderService.updatePurchaseOrder(
         req.user.userId,
@@ -87,6 +102,7 @@ export const PurchaseOrderController = {
     getPurchaseOrders,
     getPurchaseOrderById,
     updatePurchaseOrder,
+    amendPurchaseOrderItems,
     deletePurchaseOrder,
     receivePurchaseOrder,
 };

@@ -3,6 +3,7 @@ import { RoleName } from "../../constants/role.constant";
 import AppError from "../../errorHelpers/AppError";
 import {
     AddressType,
+    AuditAction,
     NotificationType,
     OrderStatus,
     PaymentMethod,
@@ -16,6 +17,7 @@ import { prisma } from "../../lib/prisma";
 import { currencyFormatOf, formatMoney } from "../../utils/formatMoney";
 import { normalizePhone } from "../../utils/phone";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
@@ -1023,6 +1025,16 @@ const placeOrder = async (
         ),
     ).catch((error) => console.error("Low-stock notification failed after checkout:", error));
 
+    // Staff-facing counterpart to the customer's order-confirmation notification:
+    // without this a placed order leaves no trace anywhere an admin looks, so the
+    // panel has nothing to alert on. Not awaited, for the same reason as above.
+    void NotificationService.notifyOwnersAndAdmins(
+        NotificationType.ORDER,
+        "New order placed",
+        `Order ${created.orderNumber} was placed for ${created.totalAmount}.`,
+        { link: `/orders/${created.id}` },
+    ).catch((error) => console.error("New-order staff notification failed after checkout:", error));
+
     return { order: withoutItemCosts(created), isReplay: false };
 };
 
@@ -1176,7 +1188,13 @@ const getOrderById = async (userId: string, role: RoleName, orderId: string) => 
         return withoutItemCosts(order);
     }
 
-    return order;
+    /*
+     * Staff only: the transitions this order may still make, so the admin
+     * offers exactly what the service will accept. Derived from the same map
+     * the guard enforces — a UI listing the statuses independently is how a
+     * completed return became re-completable in the returns module.
+     */
+    return { ...order, allowedTransitions: allowedOrderTransitions(order.status) };
 };
 
 /**
@@ -1215,6 +1233,181 @@ const getGuestOrderByNumberAndPhone = async (orderNumber: string, phone: string)
 const CUSTOMER_CANCELLABLE_STATUSES: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
 
 /**
+ * Order states from which cancelling still returns stock to the shelf.
+ *
+ * Past these the goods have left the building, and getting them back is what
+ * the return flow is for — a cancellation that restocked a delivered order
+ * would credit stock nobody has.
+ */
+const RESTOCKABLE_ON_CANCEL_STATUSES: OrderStatus[] = [
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PROCESSING,
+];
+
+/**
+ * Where an order may go next, from where it is.
+ *
+ * Previously the only check was that the status was actually changing, so
+ * `CANCELLED -> DELIVERED` and `COMPLETED -> PENDING` were both accepted. That
+ * matters beyond tidiness: stock and money side effects key off these
+ * transitions, and a transition that could never happen physically produces
+ * side effects nothing can reconcile.
+ *
+ * `CANCELLED` and `COMPLETED` are terminal. `DELIVERED` may still move to
+ * `COMPLETED` (the order settles) or `CANCELLED` is NOT offered from it —
+ * goods with the customer come back through a return, not a cancellation.
+ */
+const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+    [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.CANCELLED],
+    [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
+    [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
+    [OrderStatus.CANCELLED]: [],
+    [OrderStatus.COMPLETED]: [],
+};
+
+/** The transitions still available from `from` — the admin offers exactly these. */
+const allowedOrderTransitions = (from: OrderStatus): OrderStatus[] =>
+    ORDER_STATUS_TRANSITIONS[from] ?? [];
+
+const assertOrderTransitionAllowed = (from: OrderStatus, to: OrderStatus) => {
+    if (!allowedOrderTransitions(from).includes(to)) {
+        const allowed = allowedOrderTransitions(from);
+        throw new AppError(
+            status.BAD_REQUEST,
+            allowed.length === 0
+                ? `A ${from} order is final and cannot be moved to ${to}`
+                : `Cannot move an order from ${from} to ${to} — allowed from here: ${allowed.join(", ")}`,
+        );
+    }
+};
+
+/**
+ * Returns a cancelled order's stock to the shelves it came off.
+ *
+ * Placing an order deducts real stock. Cancelling it used to write only the
+ * status and a history row, so the goods sat in the warehouse while the system
+ * believed they were gone — every cancellation permanently shrinking sellable
+ * inventory, with nothing reporting it.
+ *
+ * The warehouses come from the order's own `SALE` movements rather than being
+ * chosen here: `deductStockForOrderLines` may split one line across several
+ * warehouses when no single one covers it, and only those movements record how
+ * it actually split. Picking a warehouse instead would move stock between
+ * buildings on paper.
+ *
+ * Idempotent by construction: it reverses only what has not already been
+ * reversed, comparing `SALE` movements against `CANCELLATION` ones for the same
+ * order. The terminal-status guard normally prevents a second cancellation,
+ * but stock is not something to protect with only one guard.
+ */
+const restockCancelledOrder = async (tx: Prisma.TransactionClient, orderId: string) => {
+    const movements = await tx.stockMovement.findMany({
+        where: {
+            referenceId: orderId,
+            type: { in: [StockMovementType.SALE, StockMovementType.CANCELLATION] },
+        },
+        select: {
+            type: true,
+            productId: true,
+            variantId: true,
+            warehouseId: true,
+            quantity: true,
+        },
+    });
+
+    // Net per (product, variant, warehouse): what the sale took, less anything
+    // a previous cancellation already gave back. Quantities are stored signed
+    // by the writers, so compare magnitudes.
+    const key = (productId: string, variantId: string | null, warehouseId: string | null) =>
+        `${productId}:${variantId ?? ""}:${warehouseId ?? ""}`;
+
+    const outstanding = new Map<
+        string,
+        { productId: string; variantId: string | null; warehouseId: string | null; quantity: number }
+    >();
+
+    for (const movement of movements) {
+        const mapKey = key(movement.productId, movement.variantId, movement.warehouseId);
+        const entry = outstanding.get(mapKey) ?? {
+            productId: movement.productId,
+            variantId: movement.variantId,
+            warehouseId: movement.warehouseId,
+            quantity: 0,
+        };
+
+        entry.quantity +=
+            movement.type === StockMovementType.SALE
+                ? Math.abs(movement.quantity)
+                : -Math.abs(movement.quantity);
+
+        outstanding.set(mapKey, entry);
+    }
+
+    const toRestore = [...outstanding.values()].filter((entry) => entry.quantity > 0);
+
+    if (toRestore.length === 0) {
+        return;
+    }
+
+    const newMovements: Prisma.StockMovementCreateManyInput[] = [];
+
+    for (const entry of toRestore) {
+        // A movement whose warehouse was cleared (Warehouse delete sets it
+        // null) cannot be credited to a shelf. Skipped rather than guessed:
+        // inventing a warehouse would move stock somewhere it never was, and
+        // the report script surfaces what is left unrestored.
+        if (!entry.warehouseId) continue;
+
+        const existingStock = await tx.stock.findFirst({
+            where: {
+                warehouseId: entry.warehouseId,
+                productId: entry.productId,
+                variantId: entry.variantId,
+            },
+        });
+
+        if (existingStock) {
+            await tx.stock.update({
+                where: { id: existingStock.id },
+                data: { quantity: { increment: entry.quantity } },
+            });
+        } else {
+            await tx.stock.create({
+                data: {
+                    warehouseId: entry.warehouseId,
+                    productId: entry.productId,
+                    variantId: entry.variantId,
+                    quantity: entry.quantity,
+                },
+            });
+        }
+
+        newMovements.push({
+            productId: entry.productId,
+            variantId: entry.variantId,
+            warehouseId: entry.warehouseId,
+            type: StockMovementType.CANCELLATION,
+            quantity: entry.quantity,
+            referenceId: orderId,
+        });
+
+        await StockService.applyDenormalizedStockDelta(
+            tx,
+            entry.productId,
+            entry.variantId,
+            entry.quantity,
+        );
+    }
+
+    if (newMovements.length > 0) {
+        await tx.stockMovement.createMany({ data: newMovements });
+    }
+};
+
+/**
  * Customer self-service cancellation — deliberately a separate endpoint from
  * the staff-only `updateOrderStatus` above (see design.md's "Self-cancel is
  * a separate endpoint" decision) rather than widening that one's role gate.
@@ -1237,6 +1430,11 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
     const cancelled = await prisma.$transaction(async (tx) => {
         await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
 
+        // In the same transaction as the status change: a cancellation that
+        // half-restocks leaves the ledger disagreeing with the order that
+        // caused it, which is worse than the bug this fixes.
+        await restockCancelledOrder(tx, orderId);
+
         await tx.orderStatusHistory.create({
             data: {
                 orderId,
@@ -1250,6 +1448,13 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
             where: { id: orderId },
             include: ORDER_DETAIL_INCLUDE,
         });
+    });
+
+    // Customer-initiated, but it moves stock exactly as the staff path does —
+    // so it belongs in the same trail, attributed to the customer's own user.
+    await AuditLogService.record(userId, AuditAction.UPDATE, "Order", orderId, {
+        oldData: order,
+        newData: cancelled,
     });
 
     await NotificationService.createNotification(
@@ -1281,8 +1486,23 @@ const updateOrderStatus = async (
         throw new AppError(status.BAD_REQUEST, `Order is already ${payload.status}`);
     }
 
+    assertOrderTransitionAllowed(order.status, payload.status);
+
     const updated = await prisma.$transaction(async (tx) => {
         await tx.order.update({ where: { id: orderId }, data: { status: payload.status } });
+
+        /*
+         * Cancelling before fulfilment returns the goods to the shelf — they
+         * never left. Past that the transition map above does not offer
+         * CANCELLED at all, so this condition is belt-and-braces rather than
+         * the only thing standing between a delivered order and phantom stock.
+         */
+        if (
+            payload.status === OrderStatus.CANCELLED &&
+            RESTOCKABLE_ON_CANCEL_STATUSES.includes(order.status)
+        ) {
+            await restockCancelledOrder(tx, orderId);
+        }
 
         await tx.orderStatusHistory.create({
             data: {
@@ -1298,6 +1518,17 @@ const updateOrderStatus = async (
             where: { id: orderId },
             include: ORDER_DETAIL_INCLUDE,
         });
+    });
+
+    /*
+     * A status change here can return stock to the shelf. `OrderStatusHistory`
+     * already records the transition for the customer-facing timeline; this
+     * records it for the admin trail, alongside every other inventory-moving
+     * correction, with the before/after state a later reconciliation needs.
+     */
+    await AuditLogService.record(changedByUserId, AuditAction.UPDATE, "Order", orderId, {
+        oldData: order,
+        newData: updated,
     });
 
     // Customer.userId is nullable (SetNull if the underlying User is ever deleted) — no
@@ -1322,4 +1553,6 @@ export const OrderService = {
     getGuestOrderByNumberAndPhone,
     cancelOwnOrder,
     updateOrderStatus,
+    /** Exposed so the admin offers exactly the transitions this service will accept. */
+    allowedOrderTransitions,
 };

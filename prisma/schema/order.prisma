@@ -104,4 +104,12 @@ model Order {
   @@index([guestIp, createdAt])
   /// Serves the per-landing-page order count and revenue on the admin list.
   @@index([landingPageId])
+  /// Serves the coupon redemption count, which runs on every checkout that
+  /// carries a code. `Coupon.usageCount` used to answer that from a stored
+  /// counter, but a cancelled order never decremented it — so the global limit
+  /// counted cancellations forever while `perCustomerLimit`, which has always
+  /// been derived from these same rows, did not. Deriving both makes them agree
+  /// by construction, and this index is what makes deriving affordable: without
+  /// it the count is a sequential scan of every order ever placed.
+  @@index([couponCode, status])
 }

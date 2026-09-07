@@ -1,0 +1,29 @@
+-- Records stock returned to the shelf because an order was cancelled before it
+-- shipped — the reversal of the SALE that placing the order wrote.
+-- See openspec/changes/add-admin-correction-paths (design.md Decision 2).
+--
+-- Deliberately a new value rather than reusing an existing one. ADJUSTMENT
+-- means a human recounted the shelf; RETURN means goods came back from a
+-- customer. In a cancellation the goods never left. The stock history is what
+-- an admin reads to explain a discrepancy, and overloading either type would
+-- make every later reconciliation ambiguous — and the movements report groups
+-- by type, so a note would not be filterable.
+--
+-- Purely additive: adding a value to an enum takes no table lock and rewrites
+-- no rows. Existing rows and queries are unaffected, and nothing writes this
+-- value until the restock-on-cancel path lands.
+--
+-- Not transactional on older PostgreSQL: ALTER TYPE ... ADD VALUE cannot run
+-- inside a transaction block before PG 12. This project targets a version where
+-- it can, but if this migration is ever replayed against an older server it
+-- must be applied on its own.
+--
+-- NOTE: any DROP INDEX statements `prisma migrate dev` generates alongside this
+-- must be removed before committing. Those are the pg_trgm GIN indexes created
+-- by raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan.
+
+-- AlterEnum
+ALTER TYPE "StockMovementType" ADD VALUE 'CANCELLATION';

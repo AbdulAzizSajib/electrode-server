@@ -20,3 +20,21 @@ export const createAttributeZodSchema = z.object({
 });
 
 export const updateAttributeZodSchema = createAttributeZodSchema.partial();
+
+/**
+ * One value added to an existing attribute.
+ *
+ * Deliberately not `attributeValueZodSchema`: that one accepts an `id`, which
+ * here would read as "update this value" and be ignored. The attribute is taken
+ * from the path, so the body is the value and nothing else.
+ */
+export const createAttributeValueZodSchema = z.object({
+    label: z.string().min(1, "A value needs a label").max(100),
+    swatch: z.string().max(50).optional(),
+});
+
+/** A rename, a recolour, or both. `swatch: null` clears it. */
+export const updateAttributeValueZodSchema = z.object({
+    label: z.string().min(1, "A value needs a label").max(100).optional(),
+    swatch: z.string().max(50).nullable().optional(),
+});

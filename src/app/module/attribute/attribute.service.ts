@@ -8,7 +8,9 @@ import { AuditLogService } from "../audit-log/audit-log.service";
 import {
     IAttributeValueInput,
     ICreateAttributePayload,
+    ICreateAttributeValuePayload,
     IUpdateAttributePayload,
+    IUpdateAttributeValuePayload,
 } from "./attribute.interface";
 
 /** Values in the merchant's authored order — never alphabetical. */
@@ -241,6 +243,166 @@ const deleteAttribute = async (userId: string, id: string, options: { force?: bo
     return { attribute: existing, affectedProducts: affected };
 };
 
+/**
+ * Loads a value, refusing one that belongs to a different attribute.
+ *
+ * The id alone would be enough to find the row, but taking the attribute from
+ * the path and checking it means a mistyped url edits nothing rather than
+ * silently renaming a colour on some other attribute.
+ */
+const findValueOrThrow = async (attributeId: string, valueId: string) => {
+    const value = await prisma.attributeValue.findUnique({ where: { id: valueId } });
+
+    if (!value || value.attributeId !== attributeId) {
+        throw new AppError(status.NOT_FOUND, "Value not found on this attribute");
+    }
+
+    return value;
+};
+
+/** Rejects a label a sibling value already uses, compared case-insensitively. */
+const ensureLabelIsFree = async (attributeId: string, label: string, excludeId?: string) => {
+    const clash = await prisma.attributeValue.findFirst({
+        where: {
+            attributeId,
+            label: { equals: label.trim(), mode: "insensitive" },
+            ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+        select: { label: true },
+    });
+
+    if (clash) {
+        throw new AppError(status.CONFLICT, `This attribute already has "${clash.label}"`);
+    }
+};
+
+/**
+ * Adds one value to an existing attribute, leaving its siblings alone.
+ *
+ * This exists so the product form can offer "add a colour" without holding the
+ * whole attribute: `updateAttribute` treats its `values` array as the complete
+ * set and deletes whatever is missing from it, which makes a partial payload —
+ * or a payload built from a list fetched a minute ago — quietly destructive.
+ */
+const createAttributeValue = async (
+    userId: string,
+    attributeId: string,
+    payload: ICreateAttributeValuePayload,
+) => {
+    const attribute = await prisma.attribute.findUnique({ where: { id: attributeId } });
+
+    if (!attribute) {
+        throw new AppError(status.NOT_FOUND, "Attribute not found");
+    }
+
+    await ensureLabelIsFree(attributeId, payload.label);
+
+    // Appended, not inserted: the merchant's authored order is meaningful
+    // (S -> M -> XL), and the Attributes page is where it gets rearranged.
+    const last = await prisma.attributeValue.findFirst({
+        where: { attributeId },
+        orderBy: { position: "desc" },
+        select: { position: true },
+    });
+
+    const value = await prisma.attributeValue.create({
+        data: {
+            attributeId,
+            label: payload.label.trim(),
+            position: (last?.position ?? -1) + 1,
+            swatch: payload.swatch ?? null,
+        },
+    });
+
+    await AuditLogService.record(userId, AuditAction.CREATE, "AttributeValue", value.id, {
+        newData: value,
+    });
+
+    return value;
+};
+
+/**
+ * Renames or recolours one value in place.
+ *
+ * Editing rather than replacing is what keeps every product already selling it
+ * selling it still: the row keeps its id, so no variant loses its selection.
+ * That also means the rename is shop-wide, which is the merchant's to weigh —
+ * the admin says so before it is sent.
+ */
+const updateAttributeValue = async (
+    userId: string,
+    attributeId: string,
+    valueId: string,
+    payload: IUpdateAttributeValuePayload,
+) => {
+    const existing = await findValueOrThrow(attributeId, valueId);
+
+    if (payload.label !== undefined) {
+        await ensureLabelIsFree(attributeId, payload.label, valueId);
+    }
+
+    const value = await prisma.attributeValue.update({
+        where: { id: valueId },
+        data: {
+            ...(payload.label !== undefined ? { label: payload.label.trim() } : {}),
+            ...(payload.swatch !== undefined ? { swatch: payload.swatch } : {}),
+        },
+    });
+
+    await AuditLogService.record(userId, AuditAction.UPDATE, "AttributeValue", valueId, {
+        oldData: existing,
+        newData: value,
+    });
+
+    return value;
+};
+
+/**
+ * Deletes one value, refusing while products still sell it unless confirmed.
+ *
+ * Same guard, and for the same reason, as removing one through
+ * `updateAttribute`: the delete cascades to every variant defined by this
+ * value, and a variant with no selections reads to a shopper as "Sold out" on a
+ * product that has stock. The refusal names the count so the admin can ask.
+ */
+const deleteAttributeValue = async (
+    userId: string,
+    attributeId: string,
+    valueId: string,
+    options: { force?: boolean } = {},
+) => {
+    const existing = await findValueOrThrow(attributeId, valueId);
+
+    // An attribute with no values leaves a checkbox group with nothing to tick
+    // — the dead end `createAttribute`'s min-1 rule exists to prevent. Deleting
+    // the attribute itself is the Attributes page's job, and says so.
+    const siblings = await prisma.attributeValue.count({ where: { attributeId } });
+
+    if (siblings <= 1) {
+        throw new AppError(
+            status.CONFLICT,
+            "An attribute needs at least one value. Delete the attribute instead.",
+        );
+    }
+
+    const affected = await countProductsUsingValues([valueId]);
+
+    if (affected > 0 && !options.force) {
+        throw new AppError(
+            status.CONFLICT,
+            `${affected} product${affected === 1 ? " still sells" : "s still sell"} "${existing.label}". Confirm to remove it anyway.`,
+        );
+    }
+
+    await prisma.attributeValue.delete({ where: { id: valueId } });
+
+    await AuditLogService.record(userId, AuditAction.DELETE, "AttributeValue", valueId, {
+        oldData: existing,
+    });
+
+    return { value: existing, affectedProducts: affected };
+};
+
 const getAttributes = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.attribute, queryParams, {
         searchableFields: ["name"],
@@ -277,4 +439,7 @@ export const AttributeService = {
     getAttributes,
     getAttributeById,
     getAllAttributes,
+    createAttributeValue,
+    updateAttributeValue,
+    deleteAttributeValue,
 };

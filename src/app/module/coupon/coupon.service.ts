@@ -24,6 +24,29 @@ const CART_WITH_ITEMS_INCLUDE = {
 /** Cancelled orders don't consume a customer's coupon redemption. */
 const NON_CONSUMING_ORDER_STATUSES: OrderStatus[] = [OrderStatus.CANCELLED];
 
+/**
+ * How many times a coupon has been redeemed on orders that still stand.
+ *
+ * The single definition of "used" for both the global `usageLimit` and the
+ * per-customer one — pass `customerId` for the latter. They were previously
+ * computed two different ways: the global limit read a stored counter that
+ * cancellation never decremented, the per-customer one counted these rows. So a
+ * cancelled order freed a customer's own allowance while permanently consuming
+ * the shop's.
+ *
+ * `Order.couponCode` is where a redemption is recorded (order.service.ts's
+ * `placeOrder`), and codes are normalized on write, so this compares against
+ * the stored form.
+ */
+const countCouponRedemptions = async (code: string, customerId?: string) =>
+    prisma.order.count({
+        where: {
+            couponCode: code,
+            status: { notIn: NON_CONSUMING_ORDER_STATUSES },
+            ...(customerId ? { customerId } : {}),
+        },
+    });
+
 const normalizeCode = (code: string) => code.trim().toUpperCase();
 
 const ensureUniqueCode = async (code: string, excludeId?: string) => {
@@ -57,13 +80,47 @@ const createCoupon = async (payload: ICreateCouponPayload) => {
     });
 };
 
+/**
+ * Replaces each row's stored `usageCount` with the redemptions actually
+ * standing behind it.
+ *
+ * The admin shows "used / limit", and enforcement now counts orders rather than
+ * reading the column. Leaving the stored figure on the way out would show a
+ * merchant a coupon at 100/100 that still redeems — the drift made visible
+ * instead of fixed. One grouped query for the page, not one per row.
+ */
+const withDerivedUsage = async <T extends { code: string }>(rows: T[]) => {
+    if (rows.length === 0) return rows;
+
+    const grouped = await prisma.order.groupBy({
+        by: ["couponCode"],
+        where: {
+            couponCode: { in: rows.map((row) => row.code) },
+            status: { notIn: NON_CONSUMING_ORDER_STATUSES },
+        },
+        _count: { _all: true },
+    });
+
+    const usageByCode = new Map(grouped.map((row) => [row.couponCode as string, row._count._all]));
+
+    return rows.map((row) => ({ ...row, usageCount: usageByCode.get(row.code) ?? 0 }));
+};
+
 const getAdminCoupons = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.coupon, queryParams, {
         searchableFields: ["code", "description"],
         filterableFields: ["status", "type"],
     });
 
-    return queryBuilder.search().filter().sort().paginate().include(COUPON_INCLUDE).execute();
+    const result = await queryBuilder
+        .search()
+        .filter()
+        .sort()
+        .paginate()
+        .include(COUPON_INCLUDE)
+        .execute();
+
+    return { ...result, data: await withDerivedUsage(result.data as { code: string }[]) };
 };
 
 const getCouponOrThrow = async (id: string) => {
@@ -187,18 +244,29 @@ const validateCouponForCart = async (
     if (coupon.expiresAt && coupon.expiresAt < now) {
         throw new AppError(status.BAD_REQUEST, "This coupon has expired");
     }
-    if (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) {
-        throw new AppError(status.BAD_REQUEST, "This coupon has reached its usage limit");
+    /*
+     * Counted from the orders that still stand, not read from
+     * `Coupon.usageCount`. That counter was incremented on placement and
+     * decremented nowhere, so a cancelled order consumed the global allowance
+     * forever — while `perCustomerLimit` below, derived from these same rows,
+     * released it. The two limits disagreed by construction, and the only
+     * workaround was inflating `usageLimit` to cover phantom usage, which
+     * corrupts the number the merchant actually wants to enforce.
+     *
+     * Both are now judged the same way, so they cannot drift apart. Served by
+     * the `[couponCode, status]` index (see order.prisma) since this runs on
+     * every checkout carrying a code.
+     */
+    if (coupon.usageLimit !== null) {
+        const redemptions = await countCouponRedemptions(coupon.code);
+
+        if (redemptions >= coupon.usageLimit) {
+            throw new AppError(status.BAD_REQUEST, "This coupon has reached its usage limit");
+        }
     }
 
     if (coupon.perCustomerLimit !== null && customerId) {
-        const usedByCustomer = await prisma.order.count({
-            where: {
-                customerId,
-                couponCode: coupon.code,
-                status: { notIn: NON_CONSUMING_ORDER_STATUSES },
-            },
-        });
+        const usedByCustomer = await countCouponRedemptions(coupon.code, customerId);
         if (usedByCustomer >= coupon.perCustomerLimit) {
             throw new AppError(
                 status.BAD_REQUEST,

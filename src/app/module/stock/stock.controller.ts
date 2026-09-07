@@ -28,6 +28,21 @@ const adjustStock = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const reassignStockVariant = catchAsync(async (req: Request, res: Response) => {
+    const result = await StockService.reassignStockVariant(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Stock reassigned successfully",
+        data: result,
+    });
+});
+
 const getStockMovements = catchAsync(async (req: Request, res: Response) => {
     const { data, meta } = await StockService.getStockMovements(
         req.query as unknown as IQueryParams,
@@ -45,5 +60,6 @@ const getStockMovements = catchAsync(async (req: Request, res: Response) => {
 export const StockController = {
     getStock,
     adjustStock,
+    reassignStockVariant,
     getStockMovements,
 };

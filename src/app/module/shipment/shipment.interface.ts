@@ -5,6 +5,7 @@ export interface ICreateShipmentPayload {
 }
 
 export type IUpdateShipmentPayload = Partial<ICreateShipmentPayload> & {
-    shippedAt?: string;
-    deliveredAt?: string;
+    /** Absent leaves the value alone; `null` clears it; a date sets it. A wrongly-stamped date must be removable. */
+    shippedAt?: string | null;
+    deliveredAt?: string | null;
 };

@@ -43,6 +43,42 @@ const SALE_REVERSING_STATUSES: PaymentStatus[] = [
  * product to the *top* of an ascending "best selling" listing, so this is
  * correctness rather than defensiveness (design.md Decision 2).
  */
+/**
+ * Moves `Product.totalSold` for a payment whose status is changing from `from`
+ * to `to`, and does nothing when that transition does not change whether the
+ * sale counts.
+ *
+ * The payment's own status is the single source of truth here, which is what
+ * makes this idempotent: replaying `PAID -> REFUNDED` a second time reads
+ * `wasPaid: false` and moves nothing. Every writer that changes a payment's
+ * status must go through this rather than pairing its own status write with a
+ * bare `applyTotalSoldDelta` — a caller that decrements while ALSO writing
+ * `REFUNDED` directly leaves the counter and the status disagreeing about
+ * whether the reversal has already happened, and the floor-at-zero clamp below
+ * then makes the resulting drift unrecoverable rather than merely wrong.
+ */
+const applyTotalSoldForPaymentTransition = async (
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    from: PaymentStatus,
+    to: PaymentStatus,
+) => {
+    const wasPaid = isPaidStatus(from);
+    const isNowPaid = isPaidStatus(to);
+
+    if (!wasPaid && isNowPaid) {
+        await applyTotalSoldDelta(tx, orderId, 1);
+        return;
+    }
+
+    // Only a payment that had actually been PAID decrements: one refunded
+    // straight from PENDING never incremented, and decrementing it would push
+    // the counter below the true figure.
+    if (wasPaid && SALE_REVERSING_STATUSES.includes(to)) {
+        await applyTotalSoldDelta(tx, orderId, -1);
+    }
+};
+
 const applyTotalSoldDelta = async (
     tx: Prisma.TransactionClient,
     orderId: string,
@@ -212,14 +248,7 @@ const updatePaymentStatus = async (
             },
         });
 
-        if (!wasPaid && isNowPaid) {
-            await applyTotalSoldDelta(tx, orderId, 1);
-        } else if (wasPaid && SALE_REVERSING_STATUSES.includes(payload.status)) {
-            // Only a payment that had actually been PAID decrements: one
-            // refunded straight from PENDING never incremented, and
-            // decrementing it would push the counter below the true figure.
-            await applyTotalSoldDelta(tx, orderId, -1);
-        }
+        await applyTotalSoldForPaymentTransition(tx, orderId, existing.status, payload.status);
 
         return updated;
     });
@@ -239,4 +268,6 @@ export const PaymentService = {
     updatePaymentStatus,
     getOrderPayments,
     applyTotalSoldDelta,
+    /** Every writer that changes a payment's status must move the counter through this — see its doc comment. */
+    applyTotalSoldForPaymentTransition,
 };

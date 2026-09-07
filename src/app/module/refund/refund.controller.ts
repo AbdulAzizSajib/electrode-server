@@ -6,12 +6,42 @@ import { sendResponse } from "../../shared/sendResponse";
 import { RefundService } from "./refund.service";
 
 const createRefund = catchAsync(async (req: Request, res: Response) => {
-    const result = await RefundService.createRefund(req.params.id as string, req.body);
+    const result = await RefundService.createRefund(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,
         message: "Refund created successfully",
+        data: result,
+    });
+});
+
+const updateRefund = catchAsync(async (req: Request, res: Response) => {
+    const result = await RefundService.updateRefund(
+        req.user.userId,
+        req.params.refundId as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Refund updated successfully",
+        data: result,
+    });
+});
+
+const voidRefund = catchAsync(async (req: Request, res: Response) => {
+    const result = await RefundService.voidRefund(req.user.userId, req.params.refundId as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Refund voided successfully",
         data: result,
     });
 });
@@ -31,4 +61,6 @@ const getRefunds = catchAsync(async (req: Request, res: Response) => {
 export const RefundController = {
     createRefund,
     getRefunds,
+    updateRefund,
+    voidRefund,
 };

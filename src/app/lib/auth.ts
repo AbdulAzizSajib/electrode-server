@@ -94,15 +94,13 @@ export const auth = betterAuth({
         bearer(),
         emailOTP({
             overrideDefaultEmailVerification: true,
-            async sendVerificationOTP({
-                email,
-                otp,
-                type,
-            }: {
-                email: string;
-                otp: string;
-                type: "email-verification" | "forget-password" | "sign-in";
-            }) {
+            // The parameter type is deliberately left to be inferred from
+            // better-auth's own signature. It was previously spelled out here
+            // with three `type` values, which silently went stale when the
+            // library added a fourth ("change-email") - the annotation then no
+            // longer matched what better-auth passes, and `tsc` (so `pnpm
+            // build`) failed. Inferring keeps this in step with the library.
+            async sendVerificationOTP({ email, otp, type }) {
                 if (type === "email-verification") {
                     const user = await prisma.user.findUnique({
                         where: { email },
@@ -140,6 +138,18 @@ export const auth = betterAuth({
                             templateData: { name: user.name, otp },
                         });
                     }
+                } else if (type === "change-email") {
+                    // `email` here is the NEW address being claimed, which has
+                    // no user row of its own yet - the row still holds the old
+                    // address. So this looks nothing up and greets the reader
+                    // generically rather than leaking whose account is being
+                    // changed to an address not yet proven to be theirs.
+                    sendEmail({
+                        to: email,
+                        subject: "Confirm your new email address",
+                        templateName: "otp",
+                        templateData: { name: "there", otp },
+                    });
                 }
             },
             expiresIn: 5 * 60,

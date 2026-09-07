@@ -78,6 +78,17 @@ const getReturnsRefunds = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const getPulse = catchAsync(async (req: Request, res: Response) => {
+    const result = await AnalyticsService.getPulse(req.user.userId);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Pulse fetched successfully",
+        data: result,
+    });
+});
+
 export const AnalyticsController = {
     getDashboardSummary,
     getTopProducts,
@@ -85,4 +96,5 @@ export const AnalyticsController = {
     getOrderStatusBreakdown,
     getPaymentBreakdown,
     getReturnsRefunds,
+    getPulse,
 };

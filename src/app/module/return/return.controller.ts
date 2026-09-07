@@ -52,7 +52,11 @@ const getReturnById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateReturnStatus = catchAsync(async (req: Request, res: Response) => {
-    const result = await ReturnService.updateReturnStatus(req.params.id as string, req.body);
+    const result = await ReturnService.updateReturnStatus(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,

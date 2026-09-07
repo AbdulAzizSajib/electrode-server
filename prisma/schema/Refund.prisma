@@ -13,6 +13,28 @@ model Refund {
 
   status RefundStatus @default(PENDING)
 
+  /// What this refund overwrote, so voiding it can put things back exactly.
+  ///
+  /// Issuing a refund is a compound action: it moves the settled `Payment` to
+  /// REFUNDED/PARTIALLY_REFUNDED and completes the `ReturnRequest` it settles.
+  /// Restoring a FIXED status on void would be wrong — a return already
+  /// COMPLETED for its own reasons must not be reopened, and a payment refunded
+  /// from PENDING must not come back as PAID.
+  ///
+  /// Recorded here rather than inferred from the audit log: `AuditLogService`
+  /// swallows its own write failures by design, so an entry is not guaranteed
+  /// to exist, and a void that silently guessed would be worse than one that
+  /// refused. Null on refunds created before this column, and on those that
+  /// touched neither record — `voidRefund` treats null as "nothing to restore".
+  priorPaymentStatus PaymentStatus?
+  priorReturnStatus  ReturnStatus?
+
+  /// Which ReturnRequest this refund completed, when it completed one.
+  /// Deliberately not a relation: the link is behavioural (see
+  /// refund.interface.ts), and a FK here would imply an ownership the data
+  /// model does not have. Used only to reverse `priorReturnStatus` on void.
+  completedReturnRequestId String?
+
   processedAt DateTime?
 
   createdAt DateTime @default(now())

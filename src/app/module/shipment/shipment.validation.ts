@@ -21,6 +21,12 @@ export const updateShipmentZodSchema = z.object({
     trackingNumber: z.string().max(100).optional(),
     carrier: z.string().max(100).optional(),
     status: shipmentStatusEnum.optional(),
-    shippedAt: z.iso.datetime().optional(),
-    deliveredAt: z.iso.datetime().optional(),
+    /*
+     * Nullable as well as optional, so an omitted field and an explicitly
+     * cleared one are different requests. They used to be indistinguishable —
+     * both arrived as `undefined`, which Prisma reads as "leave alone" — so a
+     * delivery date stamped on the wrong order was permanent.
+     */
+    shippedAt: z.iso.datetime().nullable().optional(),
+    deliveredAt: z.iso.datetime().nullable().optional(),
 });

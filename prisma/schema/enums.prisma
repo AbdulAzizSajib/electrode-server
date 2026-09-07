@@ -120,6 +120,16 @@ enum StockMovementType {
   LOSS
   TRANSFER_IN
   TRANSFER_OUT
+
+  /// Stock returned to the shelf because an order was cancelled before it
+  /// shipped — the reversal of the SALE that placing the order wrote.
+  ///
+  /// Deliberately not ADJUSTMENT (which means a human recounted the shelf) and
+  /// not RETURN (which means goods came back from a customer). Here the goods
+  /// never left. The stock history is what an admin reads to explain a
+  /// discrepancy, so overloading either would make every later reconciliation
+  /// ambiguous. Inbound — see INBOUND_TYPES in report.stock-history.ts.
+  CANCELLATION
 }
 
 enum CouponType {

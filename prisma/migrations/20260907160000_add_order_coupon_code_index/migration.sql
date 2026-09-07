@@ -1,0 +1,31 @@
+-- Serves the coupon redemption count that replaces `Coupon.usageCount`.
+-- See openspec/changes/add-admin-correction-paths (design.md Decision 3).
+--
+-- `usageCount` was incremented when an order was placed and decremented
+-- nowhere, so a cancelled order consumed the global allowance forever — while
+-- `perCustomerLimit`, which has always been derived by counting non-cancelled
+-- orders, released it. The two limits disagreed by construction. Deriving both
+-- from the same rows removes the drift rather than adding a way to repair it.
+--
+-- That count runs on every checkout carrying a code. The per-customer count is
+-- already served by the customerId index; a global count over couponCode has no
+-- such help and would sequentially scan every order ever placed. This index is
+-- what makes the derived read affordable.
+--
+-- Built WITHOUT `CONCURRENTLY`, deliberately. Prisma wraps each migration in a
+-- transaction and PostgreSQL refuses `CREATE INDEX CONCURRENTLY` inside one, so
+-- using it here would make the migration fail outright rather than merely lock.
+-- A plain build takes a SHARE lock on Order for its duration — writes wait,
+-- reads do not. At this table's size that is seconds; if Order has grown large
+-- enough for that to matter, build the index by hand with CONCURRENTLY first
+-- and this migration becomes a no-op via IF NOT EXISTS.
+--
+-- NOTE: any DROP INDEX statements `prisma migrate dev` generates alongside this
+-- must be removed before committing. Those are the pg_trgm GIN indexes created
+-- by raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan.
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Order_couponCode_status_idx" ON "Order"("couponCode", "status");

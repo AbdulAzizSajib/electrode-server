@@ -70,12 +70,21 @@ const updateShipment = async (orderId: string, payload: IUpdateShipmentPayload) 
 
     const { shippedAt, deliveredAt, ...rest } = payload;
 
+    /*
+     * Three cases, not two: absent leaves the value alone, null clears it, a
+     * date sets it. The previous `value ? new Date(value) : undefined` collapsed
+     * the first two — anything falsy became "leave alone" — so a `deliveredAt`
+     * stamped on the wrong order could never be removed.
+     */
+    const timestamp = (value: string | null | undefined) =>
+        value === undefined ? undefined : value === null ? null : new Date(value);
+
     return prisma.shipment.update({
         where: { id: shipment.id },
         data: {
             ...rest,
-            shippedAt: shippedAt ? new Date(shippedAt) : undefined,
-            deliveredAt: deliveredAt ? new Date(deliveredAt) : undefined,
+            shippedAt: timestamp(shippedAt),
+            deliveredAt: timestamp(deliveredAt),
         },
     });
 };

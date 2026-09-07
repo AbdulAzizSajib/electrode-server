@@ -6,7 +6,7 @@ import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { NotificationService } from "../notification/notification.service";
-import { IAdjustStockPayload, ILowStockCheckResult } from "./stock.interface";
+import { IAdjustStockPayload, ILowStockCheckResult, IReassignStockPayload } from "./stock.interface";
 
 const STOCK_INCLUDE = {
     warehouse: { select: { id: true, name: true, code: true } },
@@ -166,6 +166,161 @@ const adjustStock = async (userId: string, stockId: string, payload: IAdjustStoc
     return updated;
 };
 
+/**
+ * Moves quantity from one stock row onto the same product's variant-scoped row,
+ * correcting stock that was received against the wrong variant — or against no
+ * variant at all.
+ *
+ * This exists because that mistake is otherwise unrecoverable from the admin.
+ * Stock is held per (warehouse, product, variant) and orders deduct against the
+ * variant bought, so units sitting on a `variantId: null` row of a variable
+ * product can never be sold: the product reads out of stock however much
+ * arrived, and `adjustStock` can only change a row's quantity, never which
+ * variant it belongs to. Removing the stock and re-receiving it is not an
+ * answer either — that rewrites the cost basis a receipt established.
+ *
+ * Not modelled as two adjustments. An ADJUSTMENT means the quantity on hand
+ * changed; nothing changed here except which variant the same physical units
+ * are filed under, and recording a -50/+50 pair would misreport a correction as
+ * a loss and a gain in the stock history. TRANSFER_OUT/TRANSFER_IN say exactly
+ * that the same units moved, and the pair shares a `referenceId` so the two
+ * halves can be read back as one correction.
+ *
+ * The whole move is one transaction: a half-applied reassignment would either
+ * destroy stock or invent it.
+ */
+const reassignStockVariant = async (
+    userId: string,
+    stockId: string,
+    payload: IReassignStockPayload,
+) => {
+    const source = await prisma.stock.findUnique({
+        where: { id: stockId },
+        include: { product: { select: { name: true } } },
+    });
+
+    if (!source) {
+        throw new AppError(status.NOT_FOUND, "Stock record not found");
+    }
+
+    if (source.variantId === payload.variantId) {
+        throw new AppError(status.BAD_REQUEST, "This stock is already assigned to that variant");
+    }
+
+    const variant = await prisma.productVariant.findUnique({
+        where: { id: payload.variantId },
+        select: { id: true, productId: true, name: true },
+    });
+
+    // Guarded rather than assumed: a variant of some other product would create
+    // stock the owning product never received, which is the same class of
+    // silent corruption this endpoint exists to undo.
+    if (!variant || variant.productId !== source.productId) {
+        throw new AppError(status.BAD_REQUEST, "Variant does not belong to this product");
+    }
+
+    /*
+     * Reserved units back a customer order that has already been placed against
+     * this row. Moving them would leave that order pointing at stock the row no
+     * longer has, so only what is genuinely unspoken-for can move.
+     */
+    const movable = source.quantity - source.reservedQuantity;
+    if (payload.quantity > movable) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Cannot move ${payload.quantity} — this row holds ${source.quantity} with ${source.reservedQuantity} reserved, so only ${movable} can be reassigned`,
+        );
+    }
+
+    const note =
+        payload.note ??
+        `Reassigned to variant "${variant.name}" — stock had been received against ${source.variantId ? "the wrong variant" : "no variant"}`;
+
+    const result = await prisma.$transaction(async (tx) => {
+        await tx.stock.update({
+            where: { id: source.id },
+            data: { quantity: { decrement: payload.quantity } },
+        });
+
+        // Same find-or-create as purchase-order receiving, and for the same
+        // reason: Postgres treats NULL as distinct in a unique index, so the
+        // compound unique cannot be used in an upsert `where` here.
+        const destination = await tx.stock.findFirst({
+            where: {
+                warehouseId: source.warehouseId,
+                productId: source.productId,
+                variantId: payload.variantId,
+            },
+        });
+
+        const updatedDestination = destination
+            ? await tx.stock.update({
+                  where: { id: destination.id },
+                  data: { quantity: { increment: payload.quantity } },
+                  include: STOCK_INCLUDE,
+              })
+            : await tx.stock.create({
+                  data: {
+                      warehouseId: source.warehouseId,
+                      productId: source.productId,
+                      variantId: payload.variantId,
+                      quantity: payload.quantity,
+                  },
+                  include: STOCK_INCLUDE,
+              });
+
+        await tx.stockMovement.createMany({
+            data: [
+                {
+                    productId: source.productId,
+                    variantId: source.variantId,
+                    warehouseId: source.warehouseId,
+                    type: StockMovementType.TRANSFER_OUT,
+                    quantity: payload.quantity,
+                    referenceId: source.id,
+                    note,
+                },
+                {
+                    productId: source.productId,
+                    variantId: payload.variantId,
+                    warehouseId: source.warehouseId,
+                    type: StockMovementType.TRANSFER_IN,
+                    quantity: payload.quantity,
+                    referenceId: source.id,
+                    note,
+                },
+            ],
+        });
+
+        /*
+         * Only the variant mirrors move. `Product.stockQuantity` is the sum
+         * across the product's variants and the units never left the product,
+         * so passing this through `applyDenormalizedStockDelta` — which credits
+         * the product on every call — would double-count the move as a gain.
+         */
+        if (source.variantId) {
+            await tx.productVariant.update({
+                where: { id: source.variantId },
+                data: { stockQuantity: { decrement: payload.quantity } },
+            });
+        }
+
+        await tx.productVariant.update({
+            where: { id: payload.variantId },
+            data: { stockQuantity: { increment: payload.quantity } },
+        });
+
+        return updatedDestination;
+    });
+
+    await AuditLogService.record(userId, AuditAction.UPDATE, "Stock", source.id, {
+        oldData: source,
+        newData: result,
+    });
+
+    return result;
+};
+
 const getStockMovements = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.stockMovement, queryParams, {
         filterableFields: ["productId", "variantId", "warehouseId", "type"],
@@ -186,6 +341,7 @@ const getStockMovements = async (queryParams: IQueryParams) => {
 export const StockService = {
     getStock,
     adjustStock,
+    reassignStockVariant,
     getStockMovements,
     applyDenormalizedStockDelta,
     checkLowStock,

@@ -1,10 +1,17 @@
 import status from "http-status";
 import { RoleName } from "../../constants/role.constant";
 import AppError from "../../errorHelpers/AppError";
-import { NotificationType, ReturnStatus, StockMovementType } from "../../../generated/prisma/client";
+import {
+    AuditAction,
+    NotificationType,
+    Prisma,
+    ReturnStatus,
+    StockMovementType,
+} from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
@@ -22,6 +29,51 @@ const RETURN_INCLUDE_WITH_CUSTOMER = {
 
 /** Return requests in these statuses don't hold a claim on the ordered quantity (rejected/cancelled free it back up). */
 const NON_CONSUMING_STATUSES: ReturnStatus[] = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
+
+/**
+ * Where a return may go next, from where it is.
+ *
+ * `COMPLETED` and `CANCELLED` have no successors: they are terminal. That is
+ * not tidiness — completing a return RESTOCKS physical goods, so a return that
+ * can be moved back and completed again restocks the same delivery twice,
+ * inventing inventory the storefront will then sell. The restock guard below
+ * (`existing.status !== COMPLETED`) is the second line of defence; this is the
+ * first, and it is the one that also stops the status itself from lying about
+ * what happened.
+ *
+ * `REJECTED` keeps a way back to `APPROVED` because rejecting is a judgement an
+ * admin can reconsider before any goods move — nothing physical has happened
+ * yet, unlike completion.
+ */
+const RETURN_STATUS_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
+    [ReturnStatus.REQUESTED]: [ReturnStatus.APPROVED, ReturnStatus.REJECTED, ReturnStatus.CANCELLED],
+    [ReturnStatus.APPROVED]: [ReturnStatus.RECEIVED, ReturnStatus.REJECTED, ReturnStatus.CANCELLED],
+    [ReturnStatus.RECEIVED]: [ReturnStatus.PROCESSING, ReturnStatus.COMPLETED, ReturnStatus.CANCELLED],
+    [ReturnStatus.PROCESSING]: [ReturnStatus.COMPLETED, ReturnStatus.CANCELLED],
+    [ReturnStatus.REJECTED]: [ReturnStatus.APPROVED, ReturnStatus.CANCELLED],
+    [ReturnStatus.COMPLETED]: [],
+    [ReturnStatus.CANCELLED]: [],
+};
+
+/** The transitions an admin may still make from `from` — the UI offers exactly these. */
+const allowedReturnTransitions = (from: ReturnStatus): ReturnStatus[] =>
+    RETURN_STATUS_TRANSITIONS[from] ?? [];
+
+const assertReturnTransitionAllowed = (from: ReturnStatus, to: ReturnStatus) => {
+    if (from === to) {
+        throw new AppError(status.BAD_REQUEST, `Return is already ${to}`);
+    }
+
+    if (!allowedReturnTransitions(from).includes(to)) {
+        const allowed = allowedReturnTransitions(from);
+        throw new AppError(
+            status.BAD_REQUEST,
+            allowed.length === 0
+                ? `A ${from} return is final and cannot be moved to ${to}`
+                : `Cannot move a return from ${from} to ${to} — allowed from here: ${allowed.join(", ")}`,
+        );
+    }
+};
 
 const isStaffRole = (role: RoleName) =>
     role === RoleName.OWNER || role === RoleName.ADMIN || role === RoleName.STAFF;
@@ -142,7 +194,13 @@ const getReturnById = async (userId: string, role: RoleName, returnId: string) =
         }
     }
 
-    return returnRequest;
+    /*
+     * Where this return may go next, so the admin offers exactly the
+     * transitions the service will accept. Derived from the same map the guard
+     * enforces rather than restated client-side: a UI that lists the statuses
+     * independently is how a completed return came to be re-completable.
+     */
+    return { ...returnRequest, allowedTransitions: allowedReturnTransitions(returnRequest.status) };
 };
 
 /**
@@ -152,46 +210,55 @@ const getReturnById = async (userId: string, role: RoleName, returnId: string) =
  * already restocks inventory (per `api/post-purchase` spec). Also applies
  * the same delta to the denormalized `Product`/`ProductVariant.stockQuantity`
  * total, same as every other `Stock`-changing path in this codebase.
+ *
+ * Takes a transaction client rather than opening its own, so the refund path —
+ * which completes a return as part of a larger transaction — restocks through
+ * exactly this code instead of a second copy of it. Two implementations of
+ * "what completing a return does to stock" is how the two paths came to
+ * disagree in the first place.
  */
-const restockCompletedReturn = async (
+const restockReturnedItems = async (
+    tx: Prisma.TransactionClient,
     returnId: string,
     warehouseId: string,
     items: { productId: string; variantId: string | null; quantity: number }[],
 ) => {
-    await prisma.$transaction(async (tx) => {
-        for (const item of items) {
-            const existingStock = await tx.stock.findFirst({
-                where: { warehouseId, productId: item.productId, variantId: item.variantId },
+    for (const item of items) {
+        const existingStock = await tx.stock.findFirst({
+            where: { warehouseId, productId: item.productId, variantId: item.variantId },
+        });
+
+        if (existingStock) {
+            await tx.stock.update({
+                where: { id: existingStock.id },
+                data: { quantity: { increment: item.quantity } },
             });
-
-            if (existingStock) {
-                await tx.stock.update({
-                    where: { id: existingStock.id },
-                    data: { quantity: { increment: item.quantity } },
-                });
-            } else {
-                await tx.stock.create({
-                    data: { warehouseId, productId: item.productId, variantId: item.variantId, quantity: item.quantity },
-                });
-            }
-
-            await tx.stockMovement.create({
-                data: {
-                    productId: item.productId,
-                    variantId: item.variantId,
-                    warehouseId,
-                    type: StockMovementType.RETURN,
-                    quantity: item.quantity,
-                    referenceId: returnId,
-                },
+        } else {
+            await tx.stock.create({
+                data: { warehouseId, productId: item.productId, variantId: item.variantId, quantity: item.quantity },
             });
-
-            await StockService.applyDenormalizedStockDelta(tx, item.productId, item.variantId, item.quantity);
         }
-    });
+
+        await tx.stockMovement.create({
+            data: {
+                productId: item.productId,
+                variantId: item.variantId,
+                warehouseId,
+                type: StockMovementType.RETURN,
+                quantity: item.quantity,
+                referenceId: returnId,
+            },
+        });
+
+        await StockService.applyDenormalizedStockDelta(tx, item.productId, item.variantId, item.quantity);
+    }
 };
 
-const updateReturnStatus = async (returnId: string, payload: IUpdateReturnStatusPayload) => {
+const updateReturnStatus = async (
+    userId: string,
+    returnId: string,
+    payload: IUpdateReturnStatusPayload,
+) => {
     const existing = await prisma.returnRequest.findUnique({
         where: { id: returnId },
         include: RETURN_INCLUDE_WITH_CUSTOMER,
@@ -201,18 +268,29 @@ const updateReturnStatus = async (returnId: string, payload: IUpdateReturnStatus
         throw new AppError(status.NOT_FOUND, "Return request not found");
     }
 
-    if (payload.status === ReturnStatus.COMPLETED) {
-        if (!payload.warehouseId) {
-            throw new AppError(
-                status.BAD_REQUEST,
-                "warehouseId is required to complete a return (it determines where the returned stock is received)",
-            );
-        }
+    assertReturnTransitionAllowed(existing.status, payload.status);
 
-        if (existing.status !== ReturnStatus.COMPLETED) {
-            await restockCompletedReturn(
+    if (payload.status === ReturnStatus.COMPLETED && !payload.warehouseId) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "warehouseId is required to complete a return (it determines where the returned stock is received)",
+        );
+    }
+
+    /*
+     * The restock and the status change commit together. Previously the
+     * restock ran in its own transaction and the status update followed
+     * separately: a failure in between left the stock added but the return not
+     * COMPLETED, so the same goods could be restocked again on the next
+     * attempt. The transition guard above now refuses that second attempt, but
+     * the two writes still belong to one event and are committed as one.
+     */
+    const updated = await prisma.$transaction(async (tx) => {
+        if (payload.status === ReturnStatus.COMPLETED && existing.status !== ReturnStatus.COMPLETED) {
+            await restockReturnedItems(
+                tx,
                 returnId,
-                payload.warehouseId,
+                payload.warehouseId as string,
                 existing.items.map((item) => ({
                     productId: item.orderItem.productId,
                     variantId: item.orderItem.variantId,
@@ -220,12 +298,19 @@ const updateReturnStatus = async (returnId: string, payload: IUpdateReturnStatus
                 })),
             );
         }
-    }
 
-    const updated = await prisma.returnRequest.update({
-        where: { id: returnId },
-        data: { status: payload.status },
-        include: RETURN_INCLUDE,
+        return tx.returnRequest.update({
+            where: { id: returnId },
+            data: { status: payload.status },
+            include: RETURN_INCLUDE,
+        });
+    });
+
+    // A status change here can restock physical goods — exactly the event
+    // someone will later need to reconstruct when a count does not match.
+    await AuditLogService.record(userId, AuditAction.UPDATE, "ReturnRequest", returnId, {
+        oldData: existing,
+        newData: updated,
     });
 
     if (existing.customer.userId) {
@@ -245,4 +330,7 @@ export const ReturnService = {
     getReturns,
     getReturnById,
     updateReturnStatus,
+    /** Shared with the refund path, which completes a return inside its own transaction — see restockReturnedItems. */
+    restockReturnedItems,
+    allowedReturnTransitions,
 };

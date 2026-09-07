@@ -84,6 +84,7 @@ export const stockHistoryQuerySchema = assertRangeOrder(
                 "LOSS",
                 "TRANSFER_IN",
                 "TRANSFER_OUT",
+                "CANCELLATION",
             ])
             .optional(),
     }),

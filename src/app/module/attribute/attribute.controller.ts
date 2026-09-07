@@ -5,7 +5,9 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import {
     ICreateAttributePayload,
+    ICreateAttributeValuePayload,
     IUpdateAttributePayload,
+    IUpdateAttributeValuePayload,
 } from "./attribute.interface";
 import { AttributeService } from "./attribute.service";
 
@@ -102,6 +104,63 @@ const getAllAttributes = catchAsync(async (_req: Request, res: Response) => {
     });
 });
 
+/*
+ * Value-scoped handlers. These sit beside the whole-attribute ones rather than
+ * replacing them: the Attributes page still authors an attribute's values as
+ * one ordered list, while the product form needs to add or edit exactly one
+ * without holding the rest.
+ */
+
+const createAttributeValue = catchAsync(async (req: Request, res: Response) => {
+    const result = await AttributeService.createAttributeValue(
+        req.user.userId,
+        req.params.id as string,
+        req.body as ICreateAttributeValuePayload,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Value added successfully",
+        data: result,
+    });
+});
+
+const updateAttributeValue = catchAsync(async (req: Request, res: Response) => {
+    const result = await AttributeService.updateAttributeValue(
+        req.user.userId,
+        req.params.id as string,
+        req.params.valueId as string,
+        req.body as IUpdateAttributeValuePayload,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Value updated successfully",
+        data: result,
+    });
+});
+
+const deleteAttributeValue = catchAsync(async (req: Request, res: Response) => {
+    const result = await AttributeService.deleteAttributeValue(
+        req.user.userId,
+        req.params.id as string,
+        req.params.valueId as string,
+        { force: isForced(req) },
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message:
+            result.affectedProducts > 0
+                ? `Value deleted. ${result.affectedProducts} product(s) lost this choice.`
+                : "Value deleted successfully",
+        data: result.value,
+    });
+});
+
 export const AttributeController = {
     createAttribute,
     updateAttribute,
@@ -109,4 +168,7 @@ export const AttributeController = {
     getAttributes,
     getAttributeById,
     getAllAttributes,
+    createAttributeValue,
+    updateAttributeValue,
+    deleteAttributeValue,
 };

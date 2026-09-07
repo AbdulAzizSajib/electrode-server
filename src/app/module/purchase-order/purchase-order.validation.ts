@@ -30,6 +30,15 @@ export const updatePurchaseOrderZodSchema = z.object({
     status: z.enum(["DRAFT", "ORDERED", "CANCELLED"]).optional(),
 });
 
+const amendPurchaseOrderItemZodSchema = purchaseOrderItemZodSchema.extend({
+    /** Present for an existing line; absent adds a new one. */
+    id: z.string().optional(),
+});
+
+export const amendPurchaseOrderZodSchema = z.object({
+    items: z.array(amendPurchaseOrderItemZodSchema).min(1),
+});
+
 const receivePurchaseOrderItemZodSchema = z.object({
     purchaseOrderItemId: z.string(),
     quantity: z.number().int().positive(),

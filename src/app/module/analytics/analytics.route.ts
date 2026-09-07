@@ -14,4 +14,7 @@ router.get("/order-status-breakdown", AnalyticsController.getOrderStatusBreakdow
 router.get("/payment-breakdown", AnalyticsController.getPaymentBreakdown);
 router.get("/returns-refunds", AnalyticsController.getReturnsRefunds);
 
+// Polled every few seconds by each open admin tab — see AnalyticsService.getPulse.
+router.get("/pulse", AnalyticsController.getPulse);
+
 export const AnalyticsRoutes = router;

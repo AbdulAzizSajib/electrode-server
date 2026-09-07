@@ -3897,6 +3897,142 @@
                             "response": []
                         },
                         {
+                            "name": "Admin - Add Value to Attribute",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/attributes/{{attributeColourId}}/values",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "attributes",
+                                        "{{attributeColourId}}",
+                                        "values"
+                                    ]
+                                },
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n  \"label\": \"Navy\",\n  \"swatch\": \"#001f5b\"\n}"
+                                },
+                                "description": "Adds ONE value, leaving its siblings alone.\n\nUse this rather than `PATCH /attributes/:id` from anywhere that does not own the attribute's whole value list — the product form, for one. That PATCH reconciles against the `values` array it is given and DELETES whatever is missing from it, so a payload built from a list fetched minutes ago silently drops any value another admin added meanwhile.\n\nThe value is appended after the existing ones; reordering stays the Attributes page's job."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Admin - Add Value to Attribute (duplicate label, expect 409)",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/attributes/{{attributeColourId}}/values",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "attributes",
+                                        "{{attributeColourId}}",
+                                        "values"
+                                    ]
+                                },
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n  \"label\": \"navy\"\n}"
+                                },
+                                "description": "Two values that read as the same choice are refused, compared case-insensitively — \"Navy\" and \"navy\" would leave a merchant with two checkboxes they cannot tell apart."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Admin - Update Attribute Value (rename / recolour)",
+                            "request": {
+                                "method": "PATCH",
+                                "header": [
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/attributes/{{attributeColourId}}/values/{{attributeValueRedId}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "attributes",
+                                        "{{attributeColourId}}",
+                                        "values",
+                                        "{{attributeValueRedId}}"
+                                    ]
+                                },
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n  \"label\": \"Crimson\",\n  \"swatch\": \"#b00020\"\n}"
+                                },
+                                "description": "Renames or recolours one value in place. Omitted fields are left as they are; `\"swatch\": null` clears it.\n\nThe row keeps its id, so every product already selling this value goes on selling it. That also means the rename is shop-wide, which the admin says out loud before sending it."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Admin - Delete Attribute Value in use (expect 409)",
+                            "request": {
+                                "method": "DELETE",
+                                "header": [],
+                                "url": {
+                                    "raw": "{{base_url}}/attributes/{{attributeColourId}}/values/{{attributeValueRedId}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "attributes",
+                                        "{{attributeColourId}}",
+                                        "values",
+                                        "{{attributeValueRedId}}"
+                                    ]
+                                },
+                                "description": "Refused while products still sell it, and the refusal names how many. Deleting cascades to every variant defined by this value, and a variant left with no selections reads to a shopper as \"Sold out\" on a product that has stock.\n\nThe last value on an attribute is refused outright, with no force on the other side of it: an attribute with no values leaves a checkbox group with nothing to tick. Delete the attribute instead."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Admin - Delete Attribute Value (confirmed)",
+                            "request": {
+                                "method": "DELETE",
+                                "header": [],
+                                "url": {
+                                    "raw": "{{base_url}}/attributes/{{attributeColourId}}/values/{{attributeValueRedId}}?force=1",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "attributes",
+                                        "{{attributeColourId}}",
+                                        "values",
+                                        "{{attributeValueRedId}}"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "force",
+                                            "value": "1"
+                                        }
+                                    ]
+                                },
+                                "description": "`?force=1` confirms the removal the 409 above described."
+                            },
+                            "response": []
+                        },
+                        {
                             "name": "Admin - Delete Attribute (confirmed)",
                             "request": {
                                 "method": "DELETE",

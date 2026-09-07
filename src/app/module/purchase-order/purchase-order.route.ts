@@ -4,6 +4,7 @@ import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
 import { PurchaseOrderController } from "./purchase-order.controller";
 import {
+    amendPurchaseOrderZodSchema,
     createPurchaseOrderZodSchema,
     receivePurchaseOrderZodSchema,
     updatePurchaseOrderZodSchema,
@@ -24,6 +25,18 @@ router.patch(
     "/:id",
     validateRequest(updatePurchaseOrderZodSchema),
     PurchaseOrderController.updatePurchaseOrder,
+);
+/*
+ * Separate from PATCH /:id, which owns the scalar fields and refuses any edit
+ * once receiving has begun. This one is the opposite shape: it stays available
+ * after a partial receipt, because what it may change is precisely what has NOT
+ * yet arrived. A permissive PATCH could not express that distinction — see
+ * design.md Decision 1.
+ */
+router.patch(
+    "/:id/items",
+    validateRequest(amendPurchaseOrderZodSchema),
+    PurchaseOrderController.amendPurchaseOrderItems,
 );
 router.delete("/:id", PurchaseOrderController.deletePurchaseOrder);
 router.post(
