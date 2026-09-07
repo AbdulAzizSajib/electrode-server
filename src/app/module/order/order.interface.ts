@@ -153,4 +153,10 @@ export interface IOrderItemData {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    /**
+     * Cost basis at placement — supplier cost, never shown to a customer.
+     * Null when the item has none recorded: an unknown cost is not a cost of
+     * zero, and anything deriving margin from it must tell the two apart.
+     */
+    unitCost?: number | null;
 }

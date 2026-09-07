@@ -1742,6 +1742,39 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
 };
 
 /**
+ * Refuses a hard delete while a landing page still sells this product.
+ *
+ * `LandingPage.productId` is `Restrict` for the reason stated on the model: a
+ * page with no product cannot price, cannot quote and cannot order, so the
+ * campaign has to be dealt with first. That constraint fires either way — the
+ * only question is whether the admin gets told which campaign to go delete, or
+ * gets Postgres naming a foreign key it has never heard of.
+ *
+ * Guards the DELETE path only. Archiving leaves the row in place, so the FK is
+ * never involved, and a campaign pointing at an archived product already
+ * degrades on its own: `isOrderable` goes false in landing-page.service.ts and
+ * the page stops taking orders without anything here intervening.
+ */
+const ensureNoLandingPageSellsProduct = async (productId: string) => {
+    const pages = await prisma.landingPage.findMany({
+        where: { productId },
+        select: { title: true },
+        orderBy: { createdAt: "asc" },
+    });
+
+    if (pages.length === 0) return;
+
+    const titles = pages.map((page) => `"${page.title}"`).join(", ");
+
+    throw new AppError(
+        status.CONFLICT,
+        pages.length === 1
+            ? `Product is sold by the landing page ${titles}. Delete that campaign first, then delete the product.`
+            : `Product is sold by the landing pages ${titles}. Delete those campaigns first, then delete the product.`,
+    );
+};
+
+/**
  * Deletes a product, or archives it when historical records depend on it.
  *
  * `OrderItem` and `PurchaseOrderItem` both reference Product with the default
@@ -1750,6 +1783,12 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
  * represent. So when either exists we soft-delete instead — set the status to
  * ARCHIVED, which already hides the product from every public query — and
  * report back which path was taken so the caller can phrase its response.
+ *
+ * `LandingPage` is the third `Restrict` on Product, but it is NOT a reason to
+ * archive: a campaign is live content the merchant can delete, not history that
+ * has to be preserved. So it refuses instead — see
+ * `ensureNoLandingPageSellsProduct`, checked only on the path that would
+ * actually hit the constraint.
  */
 const deleteProduct = async (userId: string, id: string) => {
     const existing = await prisma.product.findUnique({ where: { id } });
@@ -1782,6 +1821,8 @@ const deleteProduct = async (userId: string, id: string) => {
 
         return { product: archived, archived: true as const, orderItemCount, purchaseOrderItemCount };
     }
+
+    await ensureNoLandingPageSellsProduct(id);
 
     const deleted = await prisma.product.delete({ where: { id } });
     await AuditLogService.record(userId, AuditAction.DELETE, "Product", id, { oldData: existing });

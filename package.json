@@ -26,6 +26,7 @@
     "verify:checkout": "tsx scripts/verify-checkout-totals.ts",
     "verify:settings": "tsx scripts/verify-site-settings.ts",
     "verify:supplier-payments": "tsx scripts/verify-supplier-payments.ts",
+    "verify:cost-basis": "tsx scripts/verify-cost-basis.ts",
     "verify:reports": "tsx scripts/verify-reports.ts",
     "verify:currency": "tsx scripts/verify-currency-and-content.ts",
     "verify:blog": "tsx scripts/verify-blog-and-testimonials.ts",

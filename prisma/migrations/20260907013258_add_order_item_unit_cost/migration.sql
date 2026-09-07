@@ -1,0 +1,28 @@
+-- Captures what a sold unit COST, at the moment it was sold.
+-- See openspec/changes/add-weighted-average-cost-basis.
+--
+-- Purely additive and nullable, so it is safe on a live OrderItem table: no
+-- rewrite, no default to backfill, no lock beyond the catalog update.
+--
+-- DELIBERATELY NOT BACKFILLED. Every existing row predates cost tracking, and
+-- the only value available to backfill with is today's cost — which, stamped on
+-- an order placed months ago, is a fabricated margin that would then read as
+-- fact. NULL means "cost unknown" and is the honest answer. Anything deriving
+-- profit from this column must exclude NULLs rather than treat them as zero,
+-- which would report free goods.
+--
+-- This column exists because Product.purchasePrice stops being a constant in
+-- this change: purchase-order receipts now maintain it as a moving weighted
+-- average, so a margin computed after the fact from the live catalogue would
+-- give a different answer every time a supplier delivery lands.
+--
+-- NOTE: the DROP INDEX statements `prisma migrate dev` generated alongside this
+-- have again been removed. Those are the pg_trgm GIN indexes
+-- (Product_name_trgm_idx, Product_sku_trgm_idx, Brand_name_trgm_idx) created by
+-- raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan. Expect to remove them again next time one is generated.
+
+-- AlterTable
+ALTER TABLE "OrderItem" ADD COLUMN     "unitCost" DECIMAL(12,2);

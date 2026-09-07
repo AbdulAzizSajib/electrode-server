@@ -1,11 +1,18 @@
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { AuditAction, PurchaseOrderStatus, StockMovementType } from "../../../generated/prisma/client";
+import {
+    AuditAction,
+    NotificationType,
+    PurchaseOrderStatus,
+    StockMovementType,
+} from "../../../generated/prisma/client";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
+import { allocateLandedUnitCosts, weightedAverageCost } from "./purchase-order.cost";
 import {
     deriveSettlement,
     sumPaymentsByPurchaseOrder,
@@ -299,6 +306,13 @@ const deletePurchaseOrder = async (userId: string, id: string) => {
  * item may receive less than its remaining ordered quantity, and the
  * purchase order's status reflects whether everything has now been
  * received (RECEIVED) or only some of it has (PARTIALLY_RECEIVED).
+ *
+ * A receipt also moves the received item's COST BASIS
+ * (`Product.purchasePrice` / `ProductVariant.purchasePrice`) to a moving
+ * weighted average over the landed cost of what arrived — see
+ * purchase-order.cost.ts. That is what stops the catalogue's cost from being
+ * whatever a merchant typed on the day the product was created while
+ * `PurchaseOrderItem.unitCost` records what suppliers have charged since.
  */
 const receivePurchaseOrder = async (
     userId: string,
@@ -334,9 +348,66 @@ const receivePurchaseOrder = async (
         }
     }
 
+    /*
+     * Landed cost per unit for every line on the order, computed once up front
+     * from the ORDERED quantities — shipping and tax were charged against the
+     * whole order, so a line's landed unit cost is a property of the order, not
+     * of how much of it happens to arrive in this receipt. A partial receipt
+     * therefore brings in fewer units at the same per-unit cost.
+     */
+    const landedUnitCostByLine = allocateLandedUnitCosts({
+        items: purchaseOrder.items.map((item) => ({
+            id: item.id,
+            quantity: item.quantity,
+            unitCost: Number(item.unitCost),
+        })),
+        shippingCost: Number(purchaseOrder.shippingCost),
+        taxAmount: Number(purchaseOrder.taxAmount),
+    });
+
+    /** Collected in the transaction, read after it commits to decide who to warn. */
+    const costOutcomes: {
+        productName: string;
+        newCost: number;
+        effectiveOfferPrice: number;
+    }[] = [];
+
     await prisma.$transaction(async (tx) => {
         for (const receipt of payload.items) {
             const item = itemsById.get(receipt.purchaseOrderItemId)!;
+
+            /*
+             * Read BEFORE the stock increase below. Reading `stockQuantity`
+             * after `applyDenormalizedStockDelta` has run would put the
+             * received units in the average's denominator but not its
+             * numerator, quietly under-weighting the new cost.
+             *
+             * The product row is loaded even for a variant line: a variant with
+             * no price of its own is priced by its parent (see
+             * productVariant.prisma), so both the cost basis it averages
+             * against and the offer price it is compared to may live there.
+             * Same COALESCE semantics report.stock.ts already values stock by.
+             */
+            const product = await tx.product.findUnique({
+                where: { id: item.productId },
+                select: { stockQuantity: true, purchasePrice: true, offerPrice: true },
+            });
+
+            const variant = item.variantId
+                ? await tx.productVariant.findUnique({
+                      where: { id: item.variantId },
+                      select: { stockQuantity: true, purchasePrice: true, offerPrice: true },
+                  })
+                : null;
+
+            const onHandBefore = variant
+                ? variant.stockQuantity
+                : (product?.stockQuantity ?? 0);
+
+            const existingCostRaw = variant
+                ? (variant.purchasePrice ?? product?.purchasePrice)
+                : product?.purchasePrice;
+            const existingCost = existingCostRaw == null ? null : Number(existingCostRaw);
 
             await tx.purchaseOrderItem.update({
                 where: { id: item.id },
@@ -395,6 +466,48 @@ const receivePurchaseOrder = async (
                 item.variantId,
                 receipt.quantity,
             );
+
+            /*
+             * Move the cost basis, in the same transaction as the stock it
+             * describes — a receipt must never leave units on hand recorded at
+             * a cost the ledger did not also record.
+             *
+             * The write is variant-scoped when the line is: that is the stock
+             * this delivery actually replenished, and the parent product's own
+             * basis says nothing about it.
+             */
+            const landedUnitCost = landedUnitCostByLine.get(item.id);
+
+            if (landedUnitCost !== undefined) {
+                const newCost = weightedAverageCost(
+                    onHandBefore,
+                    existingCost,
+                    receipt.quantity,
+                    landedUnitCost,
+                );
+
+                if (variant) {
+                    await tx.productVariant.update({
+                        where: { id: item.variantId as string },
+                        data: { purchasePrice: newCost },
+                    });
+                } else {
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: { purchasePrice: newCost },
+                    });
+                }
+
+                const effectiveOfferPrice = Number(variant?.offerPrice ?? product?.offerPrice ?? 0);
+
+                costOutcomes.push({
+                    productName: item.variant
+                        ? `${item.product.name} — ${item.variant.name}`
+                        : item.product.name,
+                    newCost,
+                    effectiveOfferPrice,
+                });
+            }
         }
 
         const refreshedItems = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id } });
@@ -424,6 +537,28 @@ const receivePurchaseOrder = async (
     for (const receipt of payload.items) {
         const item = itemsById.get(receipt.purchaseOrderItemId)!;
         await StockService.notifyIfLowStock(item.productId, null, item.product.name);
+    }
+
+    /*
+     * A receipt that prices an item at or above what it sells for is NOT an
+     * error and must not have failed the transaction above — the goods have
+     * arrived, and refusing to record them to protect a price that is merely
+     * now unprofitable would leave the stock ledger wrong about the physical
+     * world. The catalogue's `offerPrice > purchasePrice` rule constrains what
+     * a merchant may author on the product form; it says nothing about what a
+     * supplier is allowed to charge.
+     *
+     * So it is reported instead, the way low stock already is, and the merchant
+     * corrects the price deliberately.
+     */
+    for (const outcome of costOutcomes) {
+        if (outcome.effectiveOfferPrice > 0 && outcome.newCost >= outcome.effectiveOfferPrice) {
+            await NotificationService.notifyOwnersAndAdmins(
+                NotificationType.INVENTORY,
+                "Selling below cost",
+                `"${outcome.productName}" now costs ${outcome.newCost} after this receipt but sells for ${outcome.effectiveOfferPrice}. Raise the offer price or this product loses money on every sale.`,
+            );
+        }
     }
 
     return received;

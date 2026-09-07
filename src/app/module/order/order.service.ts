@@ -67,6 +67,30 @@ const ORDER_LIST_INCLUDE = {
     customer: { select: { id: true, firstName: true, lastName: true } },
 };
 
+/**
+ * Drops `OrderItem.unitCost` from an order on its way to a shopper.
+ *
+ * `ORDER_DETAIL_INCLUDE` above spreads whole `OrderItem` rows, so the cost
+ * snapshot captured at placement rides along by default. It is supplier cost —
+ * admin-only, exactly like `Product.purchasePrice` — and `api/checkout` spec
+ * forbids it on any customer-facing response.
+ *
+ * Stripped at the boundary rather than by narrowing the include, because the
+ * SAME include serves the staff reads that exist precisely to see cost. A
+ * narrowed include would have to be duplicated and would then drift.
+ *
+ * `ORDER_LIST_INCLUDE` needs no equivalent: it returns no items at all.
+ */
+const withoutItemCosts = <T extends { items: unknown[] }>(order: T): T =>
+    ({
+        ...order,
+        items: order.items.map((item) => {
+            const visible = { ...(item as Record<string, unknown>) };
+            delete visible.unitCost;
+            return visible;
+        }),
+    }) as unknown as T;
+
 const isStaffRole = (role: RoleName) =>
     role === RoleName.OWNER || role === RoleName.ADMIN || role === RoleName.STAFF;
 
@@ -650,11 +674,7 @@ const placeOrder = async (
 ) => {
     const isGuest = actor.kind === "guest";
 
-    const { customer, shippingAddressId, shippingAddress } = await resolveCheckoutContext(
-        actor,
-        payload,
-        overrides,
-    );
+    const { customer, shippingAddressId } = await resolveCheckoutContext(actor, payload, overrides);
 
     // Lines come either from the payload (a landing page ordering a product
     // directly) or from the buyer's cart. The cart is only loaded when it is
@@ -704,7 +724,9 @@ const placeOrder = async (
                   }))
                 : (cart?.items ?? []),
         );
-        return { order: replayedOrder, isReplay: true };
+        // Checkout answers a shopper, never staff — cost is stripped on all
+        // three of this function's returns.
+        return { order: withoutItemCosts(replayedOrder), isReplay: true };
     }
 
     const lines: ICheckoutLine[] = usePayloadItems
@@ -774,6 +796,21 @@ const placeOrder = async (
         const totalPrice = unitPrice * item.quantity;
         subtotal += totalPrice;
 
+        /*
+         * What this unit COST, captured on the same footing as `unitPrice`
+         * above and for the same reason: an order records the transaction as
+         * it stood, not as the catalogue later becomes. That matters more now
+         * than it used to — purchase-order receipts move `purchasePrice` as a
+         * weighted average, so a margin recomputed from the live catalogue
+         * would give a different answer after every supplier delivery.
+         *
+         * `?? null`, never `?? 0`: a product whose cost was never recorded has
+         * an UNKNOWN cost, and a zero here would report it as free goods with
+         * 100% margin. Same variant-then-product fallback the price above uses.
+         */
+        const purchasePrice = item.variant?.purchasePrice ?? item.product.purchasePrice;
+        const unitCost = purchasePrice == null ? null : Number(purchasePrice);
+
         orderItemsData.push({
             productId: item.productId,
             variantId: item.variantId,
@@ -782,6 +819,7 @@ const placeOrder = async (
             quantity: item.quantity,
             unitPrice,
             totalPrice,
+            unitCost,
         });
 
         pricingLines.push({
@@ -962,7 +1000,7 @@ const placeOrder = async (
             if (payload.idempotencyKey && violatedTarget(error, "idempotencyKey")) {
                 const winner = await findReplayableOrder(payload.idempotencyKey, customer.id);
                 if (winner) {
-                    return { order: winner, isReplay: true };
+                    return { order: withoutItemCosts(winner), isReplay: true };
                 }
             }
 
@@ -985,7 +1023,7 @@ const placeOrder = async (
         ),
     ).catch((error) => console.error("Low-stock notification failed after checkout:", error));
 
-    return { order: created, isReplay: false };
+    return { order: withoutItemCosts(created), isReplay: false };
 };
 
 /**
@@ -1134,6 +1172,8 @@ const getOrderById = async (userId: string, role: RoleName, orderId: string) => 
             // 404, not 403 — avoids confirming the order's existence to a non-owner (per api/checkout spec).
             throw new AppError(status.NOT_FOUND, "Order not found");
         }
+
+        return withoutItemCosts(order);
     }
 
     return order;
@@ -1167,7 +1207,8 @@ const getGuestOrderByNumberAndPhone = async (orderNumber: string, phone: string)
         throw new AppError(status.NOT_FOUND, "Order not found");
     }
 
-    return order;
+    // Guest tracking has no staff variant — this read is always a shopper's.
+    return withoutItemCosts(order);
 };
 
 /** Order states from which a customer may still cancel their own order — before fulfillment has actually started. */
@@ -1218,7 +1259,8 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
         `Your order ${cancelled.orderNumber} has been cancelled.`,
     );
 
-    return cancelled;
+    // Customer self-cancel — staff use `updateOrderStatus` instead.
+    return withoutItemCosts(cancelled);
 };
 
 const updateOrderStatus = async (

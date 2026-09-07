@@ -48,6 +48,17 @@ model Product {
   /// price, rendered struck through above the offer price, and is null when no
   /// offer is running. `purchasePrice` is supplier cost: admin-only, excluded
   /// from every public projection and from the public sort allowlist.
+  ///
+  /// `purchasePrice` is a COST BASIS, not a figure fixed when the product was
+  /// created: it means "what the stock currently on hand cost to acquire". A
+  /// merchant may author it, which sets the opening cost for an item never
+  /// bought through a purchase order — but from the first goods receipt onward
+  /// `receivePurchaseOrder` maintains it as a moving weighted average over
+  /// landed cost, and an authored value it overwrites is not preserved anywhere.
+  ///
+  /// The flow is one-way: a receipt writes this, and this never writes back into
+  /// a purchase order. `PurchaseOrderItem.unitCost` stays the immutable record of
+  /// what a supplier actually charged. See purchase-order.cost.ts.
   offerPrice    Decimal  @db.Decimal(12, 2)
   sellingPrice  Decimal? @db.Decimal(12, 2)
   purchasePrice Decimal? @db.Decimal(12, 2)

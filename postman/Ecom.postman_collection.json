@@ -5018,7 +5018,7 @@
                                         "{{productId}}"
                                     ]
                                 },
-                                "description": "Run this last - other Products requests above reference {{productId}}. 409 if the product is referenced by orders/cart items/etc."
+                                "description": "Run this last - other Products requests above reference {{productId}}. Hard-deletes when nothing depends on the product. Returns 200 with an 'archived instead of deleted' message when order items or purchase order items reference it - the row survives as ARCHIVED to preserve financial history. Returns 409 when a landing page still sells it, naming the campaign to delete first. Cart/wishlist/review/stock rows cascade and never block."
                             },
                             "response": []
                         },
