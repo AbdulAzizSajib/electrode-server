@@ -106,11 +106,23 @@ export const guestOrderLookupZodSchema = z.object({
     phone: z.string().refine(isValidPhone, "Please enter a valid Bangladeshi mobile number"),
 });
 
+/**
+ * Shape only: this list must mirror the `OrderStatus` enum, but it does NOT
+ * decide which transitions are legal — `ORDER_STATUS_TRANSITIONS` in
+ * order.service.ts does, transactionally and against the order's current
+ * state. A value accepted here can still be rejected there, which is the
+ * intended split (see the validation conventions in CLAUDE.md).
+ *
+ * Written out rather than derived from the generated enum, matching the other
+ * schemas in this file — so remember to add new statuses here too. Omitting
+ * one does not fail the build; it silently 400s a status the service supports.
+ */
 export const updateOrderStatusZodSchema = z.object({
     status: z.enum([
         "PENDING",
         "CONFIRMED",
         "PROCESSING",
+        "PACKED",
         "SHIPPED",
         "DELIVERED",
         "CANCELLED",

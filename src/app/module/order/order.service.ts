@@ -1243,6 +1243,11 @@ const RESTOCKABLE_ON_CANCEL_STATUSES: OrderStatus[] = [
     OrderStatus.PENDING,
     OrderStatus.CONFIRMED,
     OrderStatus.PROCESSING,
+    // A packed parcel is boxed but still on the premises — nobody has the goods
+    // yet, so cancelling one must credit its stock back. This is the last state
+    // where that is true; SHIPPED onward the goods have left and come back
+    // through the return flow instead.
+    OrderStatus.PACKED,
 ];
 
 /**
@@ -1255,13 +1260,22 @@ const RESTOCKABLE_ON_CANCEL_STATUSES: OrderStatus[] = [
  * side effects nothing can reconcile.
  *
  * `CANCELLED` and `COMPLETED` are terminal. `DELIVERED` may still move to
- * `COMPLETED` (the order settles) or `CANCELLED` is NOT offered from it —
+ * `COMPLETED` (the order settles), and `CANCELLED` is NOT offered from it —
  * goods with the customer come back through a return, not a cancellation.
+ *
+ * `PACKED` sits between `PROCESSING` and `SHIPPED`: picked and boxed, still on
+ * the premises. It is reachable only from `PROCESSING` — an order nobody has
+ * picked yet cannot be packed, so `PENDING`/`CONFIRMED` do not offer it — and
+ * leads only onward to `SHIPPED` or out via `CANCELLED`. `CONFIRMED` keeps its
+ * direct `SHIPPED` edge: packing is a step a merchant may record, not one this
+ * map forces every order through.
+ * See openspec/changes/add-order-fulfillment-documents, design.md Decision 6.
  */
 const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.CANCELLED],
     [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-    [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.PROCESSING]: [OrderStatus.PACKED, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.PACKED]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
     [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
     [OrderStatus.CANCELLED]: [],

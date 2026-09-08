@@ -1,0 +1,26 @@
+-- Everything the SEO menu owns beyond the three existing scalar columns
+-- (siteUrl, metaTitle, metaDescription), which stay where they are: title
+-- template, metadata defaults, OG/Twitter defaults, robots policy, sitemap
+-- toggles, structured-data settings and search-engine verification tokens.
+--
+-- Nullable with NO backfill, deliberately. A null column resolves to
+-- DEFAULT_SEO_CONFIG on read, and those defaults reproduce the storefront's
+-- pre-configuration metadata exactly — so an existing store and a fresh
+-- install both render as they did before. This migration therefore changes no
+-- store's behaviour on its own; behaviour changes only once a merchant saves.
+--
+-- Read with a DEEP per-key merge over DEFAULT_SEO_CONFIG, not a wholesale `??`.
+-- The blob is nested, so a row written before a key existed must come back with
+-- that key at its default rather than `undefined` — `undefined` is falsy, and
+-- for an `index` flag that would silently withdraw a page from search.
+--
+-- NOTE: the DROP INDEX statements `prisma migrate dev` generated alongside this
+-- have again been removed. Those are the pg_trgm GIN indexes
+-- (Product_name_trgm_idx, Product_sku_trgm_idx, Brand_name_trgm_idx) created by
+-- raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan. Expect to remove them again next time one is generated.
+
+-- AlterTable
+ALTER TABLE "StoreSetting" ADD COLUMN     "seoConfig" JSONB;

@@ -218,6 +218,125 @@ const deliverySettingsSchema = z
     });
 
 /**
+ * Everything the SEO menu owns beyond the three scalar columns (siteUrl,
+ * metaTitle, metaDescription), which stay where they are.
+ *
+ * `.strict()` throughout like the blobs around it — a typo'd key here would be a
+ * robots directive or a schema toggle silently reading at its default, which is
+ * exactly the class of bug that goes unnoticed until traffic drops.
+ *
+ * Every field is REQUIRED on write, and the whole object is replaced on PATCH
+ * rather than deep-merged. The four SEO admin screens each edit a facet of one
+ * object and each send the full merged config, so a partial write here would be
+ * a screen silently reverting another's fields. Deep-merging instead would make
+ * "remove a custom robots rule" and "clear the sameAs list" inexpressible —
+ * arrays cannot be deep-merged unambiguously.
+ *
+ * Empty string means "unset" for every text field, not "set to empty". The
+ * storefront treats `""` and absent identically and falls through to its next
+ * fallback; this keeps the shape closed while still letting a merchant clear a
+ * value, which `.optional()` could not express under a whole-object replace.
+ */
+const seoUrlOrEmptySchema = z.union([
+    z.literal(""),
+    z
+        .url("Must be a valid URL")
+        .max(500)
+        .refine(
+            (value) => value.startsWith("http://") || value.startsWith("https://"),
+            "URL must start with http:// or https://",
+        ),
+]);
+
+const seoRobotsGroupSchema = z.object({ index: z.boolean(), follow: z.boolean() }).strict();
+
+export const seoConfigSchema = z
+    .object({
+        /*
+         * `%s` is the page's resolved title. Validated as a plain string rather
+         * than a pattern: a template without `%s` is a merchant choosing a fixed
+         * title for every page, which is unusual but not wrong, and rejecting it
+         * would be this layer overruling a legitimate choice.
+         */
+        titleTemplate: z.string().max(100),
+        defaultMetaTitle: z.string().max(200),
+        defaultMetaDescription: z.string().max(500),
+        defaultOgImageUrl: seoUrlOrEmptySchema,
+        twitterCardType: z.enum(
+            ["summary", "summary_large_image"],
+            'Twitter card type must be "summary" or "summary_large_image"',
+        ),
+        twitterSite: z.string().max(50),
+
+        robots: z
+            .object({
+                globalNoindex: z.boolean(),
+                /*
+                 * Every group required, so the object is exhaustive over
+                 * SEO_ROUTE_GROUPS. A missing key would read as `undefined` at
+                 * the resolver, and `undefined.index` is falsy — a page dropped
+                 * from search by omission rather than by decision.
+                 */
+                groups: z
+                    .object({
+                        home: seoRobotsGroupSchema,
+                        product: seoRobotsGroupSchema,
+                        category: seoRobotsGroupSchema,
+                        blog: seoRobotsGroupSchema,
+                        page: seoRobotsGroupSchema,
+                        landingPage: seoRobotsGroupSchema,
+                        account: seoRobotsGroupSchema,
+                        cart: seoRobotsGroupSchema,
+                        checkout: seoRobotsGroupSchema,
+                        wishlist: seoRobotsGroupSchema,
+                        compare: seoRobotsGroupSchema,
+                        search: seoRobotsGroupSchema,
+                    })
+                    .strict(),
+                customRules: z.string().max(2000),
+            })
+            .strict(),
+
+        sitemap: z
+            .object({
+                product: z.boolean(),
+                category: z.boolean(),
+                page: z.boolean(),
+                blogPost: z.boolean(),
+                landingPage: z.boolean(),
+            })
+            .strict(),
+
+        structuredData: z
+            .object({
+                enableOrganization: z.boolean(),
+                enableProduct: z.boolean(),
+                enableArticle: z.boolean(),
+                enableBreadcrumb: z.boolean(),
+                organization: z
+                    .object({
+                        legalName: z.string().max(200),
+                        logoUrl: seoUrlOrEmptySchema,
+                        // Not z.email(): "" must stay expressible as "unset".
+                        email: z.string().max(200),
+                        phone: z.string().max(50),
+                        sameAs: z.array(seoUrlOrEmptySchema).max(20),
+                    })
+                    .strict(),
+            })
+            .strict(),
+
+        verification: z
+            .object({
+                google: z.string().max(200),
+                bing: z.string().max(200),
+                other: z.string().max(200),
+            })
+            .strict(),
+    })
+    .strict();
+
+/**
  * Which optional catalog features the storefront offers.
  *
  * `.strict()` like the blobs around it, so a typo'd key is a 400 rather than a
@@ -454,6 +573,15 @@ export const updateStoreSettingZodSchema = z.object({
     checkoutConfig: checkoutConfigUpdateSchema.optional(),
     catalogConfig: catalogConfigSchema.optional(),
     theme: themeSchema.optional(),
+
+    /*
+     * Optional like every other blob — omitted leaves the column untouched, so
+     * the SEO screens do not clobber Site Setting and vice versa. But note the
+     * merge does NOT recurse: a present `seoConfig` REPLACES the whole blob, so
+     * each of the four SEO screens must send the full merged object rather than
+     * its own slice. See seoConfigSchema above.
+     */
+    seoConfig: seoConfigSchema.optional(),
 
     /*
      * The website ↔ single-landing-page toggle and the page it points at.

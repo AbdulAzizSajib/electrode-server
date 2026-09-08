@@ -8,7 +8,11 @@ import {
 import AppError from "../../errorHelpers/AppError";
 import { prisma } from "../../lib/prisma";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { revalidateStorefront, STORE_SETTINGS_TAG } from "../../utils/revalidateStorefront";
+import {
+    revalidateStorefront,
+    SEO_CONFIG_TAG,
+    STORE_SETTINGS_TAG,
+} from "../../utils/revalidateStorefront";
 import {
     DEFAULT_CHECKOUT_CONFIG,
     DEFAULT_PUBLIC_SETTINGS,
@@ -17,6 +21,7 @@ import {
 import {
     ICheckoutConfig,
     ICurrencyFormat,
+    ISeoConfig,
     IUpdateStoreSettingPayload,
 } from "./store-setting.interface";
 import {
@@ -34,6 +39,54 @@ const getStoreSetting = async () => {
         update: {},
         create: { id: SINGLETON_ID },
     });
+};
+
+/**
+ * Fills a stored `seoConfig` out to a complete one, level by level.
+ *
+ * Written out per level rather than as a generic recursive deep-merge because
+ * the two leaf collections must NOT be merged: `sameAs` and the group flags are
+ * replaced wholesale when present. A recursive merge would union `sameAs` with
+ * the defaults, which makes removing a social profile impossible — the same
+ * reason the write path replaces the blob instead of deep-merging it.
+ *
+ * `robots.groups` is spread per key so a group added after a row was written
+ * reads at its default rather than `undefined`; `undefined.index` is falsy, and
+ * a page dropped from search by omission is the failure this whole function
+ * exists to prevent.
+ */
+const mergeSeoConfig = (stored: unknown): ISeoConfig => {
+    const defaults = DEFAULT_PUBLIC_SETTINGS.seoConfig;
+    // Not an object (null, or a row edited by hand into something else): take
+    // the defaults whole rather than reading keys off a value that has none.
+    if (typeof stored !== "object" || stored === null) return defaults as ISeoConfig;
+
+    const s = stored as Record<string, undefined | Record<string, unknown>>;
+    const robots = s.robots ?? {};
+    const structuredData = s.structuredData ?? {};
+
+    return {
+        ...defaults,
+        ...s,
+        robots: {
+            ...defaults.robots,
+            ...robots,
+            groups: {
+                ...defaults.robots.groups,
+                ...((robots.groups as object | undefined) ?? {}),
+            },
+        },
+        sitemap: { ...defaults.sitemap, ...((s.sitemap as object | undefined) ?? {}) },
+        structuredData: {
+            ...defaults.structuredData,
+            ...structuredData,
+            organization: {
+                ...defaults.structuredData.organization,
+                ...((structuredData.organization as object | undefined) ?? {}),
+            },
+        },
+        verification: { ...defaults.verification, ...((s.verification as object | undefined) ?? {}) },
+    } as ISeoConfig;
 };
 
 /**
@@ -155,6 +208,21 @@ const getPublicStoreSetting = async () => {
         },
 
         theme: merge(stored?.theme, DEFAULT_PUBLIC_SETTINGS.theme),
+
+        /*
+         * Public because metadata is rendered on every page, before any session
+         * exists — and because the sitemap and robots routes read it too. There
+         * is nothing to leak: every value here is emitted into the HTML the
+         * moment it is set.
+         *
+         * A DEEP merge, not the per-key spread `catalogConfig` uses one block
+         * up. That spread repairs a flat map; this blob is nested three levels,
+         * so a one-level spread would swap a whole `robots` or `structuredData`
+         * subtree for the stored one and lose any key added since it was
+         * written. For an `index` flag that reads as `undefined` — falsy — and
+         * withdraws a page from search by omission. See mergeSeoConfig.
+         */
+        seoConfig: mergeSeoConfig(stored?.seoConfig),
 
         /*
          * What the storefront routes its ROOT on. Public because it decides
@@ -322,6 +390,17 @@ const updateStoreSetting = async (userId: string, payload: IUpdateStoreSettingPa
      * successful save into an error.
      */
     revalidateStorefront(STORE_SETTINGS_TAG);
+
+    /*
+     * Both tags, on every settings save. `seoConfig` travels inside the settings
+     * payload, so the first tag already covers page metadata — but the sitemap
+     * and robots routes cache separately on this one, and they read the same
+     * config. Firing it unconditionally rather than only when `seoConfig` is in
+     * the payload: `siteUrl` lives in a column of its own and every sitemap URL
+     * is built from it, so "did this write touch SEO" is not a question the
+     * payload's keys can answer.
+     */
+    revalidateStorefront(SEO_CONFIG_TAG);
 
     return updated;
 };

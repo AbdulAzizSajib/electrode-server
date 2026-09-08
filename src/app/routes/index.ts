@@ -33,6 +33,7 @@ import { ProductViewNestedRoutes } from "../module/product-view/product-view.rou
 import { ReviewNestedRoutes, ReviewRoutes } from "../module/review/review.route";
 import { ShipmentRoutes } from "../module/shipment/shipment.route";
 import { StockMovementRoutes, StockRoutes } from "../module/stock/stock.route";
+import { SeoRoutes } from "../module/seo/seo.route";
 import { StoreSettingRoutes } from "../module/store-setting/store-setting.route";
 import { SupplierRoutes } from "../module/supplier/supplier.route";
 import { SupportMessageRoutes, SupportTicketRoutes } from "../module/support-ticket/support-ticket.route";
@@ -99,6 +100,10 @@ router.use("/testimonials", TestimonialRoutes);
 // `/:id` reads — see landing-page.route.ts.
 router.use("/landing-pages", LandingPageRoutes);
 router.use("/settings", StoreSettingRoutes);
+// Beside /settings, which it reads its config from, but a mount of its own: it
+// aggregates five content models rather than projecting the settings singleton.
+// Both its routes are literal segments, so it has no ordering constraint.
+router.use("/seo", SeoRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);

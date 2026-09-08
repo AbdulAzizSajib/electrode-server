@@ -76,9 +76,47 @@ model StoreSetting {
   /// SEO surface. `siteUrl` is the canonical origin used to resolve absolute
   /// metadata URLs; `metaTitle` falls back to `storeName` when unset, so the
   /// storefront's document title is never empty.
+  ///
+  /// These three stayed as columns rather than folding into `seoConfig` below:
+  /// `siteUrl` already resolves the storefront's `metadataBase`, and moving
+  /// them would be a data migration for no user-visible gain. The admin edits
+  /// all of them from one screen (SEO → General) either way.
   siteUrl         String?
   metaTitle       String?
   metaDescription String?
+
+  /// Everything else the SEO menu owns, Zod-validated on write exactly like
+  /// the blobs below — `seoConfigSchema` in store-setting.validation.ts is the
+  /// ONLY gate on its shape.
+  ///
+  /// seoConfig: { titleTemplate, defaultMetaTitle, defaultMetaDescription,
+  ///              defaultOgImageUrl, twitterCardType, twitterSite,
+  ///              robots: { globalNoindex, groups: { <routeGroup>: { index, follow } },
+  ///                        customRules },
+  ///              sitemap: { <contentType>: boolean },
+  ///              structuredData: { enableOrganization, enableProduct,
+  ///                                enableArticle, enableBreadcrumb,
+  ///                                organization: { legalName, logoUrl, email,
+  ///                                                phone, sameAs: [url] } },
+  ///              verification: { google, bing, other } }
+  ///
+  ///   `robots.groups` is keyed by a CLOSED set of route groups (see
+  ///   SEO_ROUTE_GROUPS in store-setting.constant.ts), not by free-form path
+  ///   patterns: a merchant can read a checklist, and a typo in a glob that
+  ///   silently deindexes the catalog is not a failure mode worth having.
+  ///   `robots.globalNoindex` overrides every per-group setting — it is the
+  ///   staging-site kill switch, so nothing may quietly re-enable indexing.
+  ///
+  /// READ WITH A DEEP PER-KEY MERGE over DEFAULT_SEO_CONFIG (see
+  /// mergeSeoConfig), not a wholesale `??` — this blob is nested, and a row
+  /// written before a key existed must come back with that key at its default
+  /// rather than `undefined`. `undefined` is falsy, and for an `index` flag
+  /// that silently withdraws a page from search.
+  ///
+  /// Nullable with no backfill: null resolves to DEFAULT_SEO_CONFIG, which
+  /// reproduces the storefront's pre-configuration metadata exactly, so the
+  /// additive migration changes nothing on its own.
+  seoConfig Json?
 
   /// Zod-validated on write - see the model doc-comment above.
   /// mainNav:         [{ label, href, children?: [{ label, href }] }] (one level deep)

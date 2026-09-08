@@ -1,0 +1,24 @@
+-- Adds the PACKED fulfilment state, between PROCESSING and SHIPPED: an order
+-- that has been picked and boxed but is still on the premises.
+--
+-- Additive and backward compatible. No existing row changes, no query breaks,
+-- and nothing produces a PACKED order until the admin offers the transition.
+-- The guard that decides what may follow what is allowedOrderTransitions in
+-- order.service.ts, not the declaration order of this enum.
+--
+-- Forward-only: PostgreSQL cannot remove a value from an enum type. Rolling
+-- back the application is safe (an unreachable enum value is inert), but any
+-- order sitting in PACKED at that moment would be stranded in a state the
+-- reverted admin cannot advance — drain those to SHIPPED first.
+-- See openspec/changes/add-order-fulfillment-documents, design.md Decision 6.
+--
+-- NOTE: the DROP INDEX statements `prisma migrate dev` generated alongside this
+-- have again been removed. Those are the pg_trgm GIN indexes
+-- (Product_name_trgm_idx, Product_sku_trgm_idx, Brand_name_trgm_idx) created by
+-- raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan. Expect to remove them again next time one is generated.
+
+-- AlterEnum
+ALTER TYPE "OrderStatus" ADD VALUE 'PACKED';

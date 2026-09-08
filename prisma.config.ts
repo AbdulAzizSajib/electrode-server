@@ -9,6 +9,28 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env.DATABASE_URL,
+    /*
+     * Migrations connect through DIRECT_DATABASE_URL when it is set, falling
+     * back to the runtime URL otherwise.
+     *
+     * This exists because the two clients do not agree. The app connects with
+     * the `pg` driver adapter, which negotiates `channel_binding=require`
+     * happily. Prisma's own migration engine cannot, and fails the connection
+     * outright as `P1001: Can't reach database server` — a message that reads
+     * like the host is down when in fact it answers on the port and accepts
+     * `pg` connections normally. That misdiagnosis is the whole cost of not
+     * having this split.
+     *
+     * DIRECT_DATABASE_URL is therefore the same database, same credentials,
+     * with `channel_binding` removed and `sslmode=require` retained — the
+     * connection stays encrypted. The runtime URL is deliberately left alone,
+     * so the app keeps the stronger binding.
+     *
+     * The name follows Prisma's `directUrl` convention, which normally points
+     * past a connection pooler; here the pooler host is the only one this Neon
+     * project resolves, so it points at the same host. Keep the fallback:
+     * environments whose URL has no `channel_binding` need no second variable.
+     */
+    url: process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL,
   },
 });

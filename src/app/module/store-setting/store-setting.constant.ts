@@ -210,6 +210,128 @@ export const DEFAULT_THEME = {
 };
 
 /**
+ * The route groups a storefront page can belong to, for per-group robots
+ * directives. A CLOSED set, deliberately: the admin renders it as a checklist a
+ * merchant can read, Zod validates it exhaustively, and there is no free-form
+ * path pattern whose typo could silently deindex the catalog. Custom
+ * `robots.txt` lines remain available as the escape hatch for the rare case.
+ *
+ * The order here is the order the admin renders them: public surfaces first,
+ * then the private ones a shop never wants indexed.
+ */
+export const SEO_ROUTE_GROUPS = [
+    "home",
+    "product",
+    "category",
+    "blog",
+    "page",
+    "landingPage",
+    "account",
+    "cart",
+    "checkout",
+    "wishlist",
+    "compare",
+    "search",
+] as const;
+
+export type SeoRouteGroup = (typeof SEO_ROUTE_GROUPS)[number];
+
+/** The content types the sitemap can list, and that `Page SEO` groups rows by. */
+export const SEO_CONTENT_TYPES = ["product", "category", "page", "blogPost", "landingPage"] as const;
+
+export type SeoContentType = (typeof SEO_CONTENT_TYPES)[number];
+
+/**
+ * Merged over on every read of `StoreSetting.seoConfig`, so a null column, a row
+ * written before a key existed, and a fully configured store all yield a
+ * complete config. The storefront never has to null-check a nested SEO field.
+ *
+ * The defaults reproduce the storefront's pre-configuration metadata exactly:
+ * no title template, no defaults of its own (the resolver already falls back to
+ * `storeName` and the record's own title), and indexing left as the search
+ * engines would have found it. So adding the column changed nothing, and this is
+ * also the safe direction to fail in — a settings read that fell back to
+ * `globalNoindex: true` would deindex a live shop, which nobody would notice
+ * until traffic vanished.
+ *
+ * Private groups ship `noindex, nofollow` because a cart, a checkout and a
+ * customer's own account are not pages a search engine should hold; they carry
+ * per-visitor state and thin, duplicated content. That is a correction to
+ * today's behaviour, and the one default here that is not a no-op.
+ */
+export const DEFAULT_SEO_CONFIG = {
+    /** `%s` is replaced by the page's resolved title. Empty means "no template". */
+    titleTemplate: "" as string,
+    defaultMetaTitle: "" as string,
+    defaultMetaDescription: "" as string,
+    defaultOgImageUrl: "" as string,
+    twitterCardType: "summary_large_image" as "summary" | "summary_large_image",
+    twitterSite: "" as string,
+
+    robots: {
+        /**
+         * The staging-site kill switch. Overrides every per-group setting below
+         * and empties the sitemap — nothing may quietly re-enable indexing while
+         * this is on, which is why the override lives in the resolver rather
+         * than being merged into the group flags.
+         */
+        globalNoindex: false,
+        groups: {
+            home: { index: true, follow: true },
+            product: { index: true, follow: true },
+            category: { index: true, follow: true },
+            blog: { index: true, follow: true },
+            page: { index: true, follow: true },
+            landingPage: { index: true, follow: true },
+            account: { index: false, follow: false },
+            cart: { index: false, follow: false },
+            checkout: { index: false, follow: false },
+            wishlist: { index: false, follow: false },
+            compare: { index: false, follow: false },
+            search: { index: false, follow: false },
+        } as Record<SeoRouteGroup, { index: boolean; follow: boolean }>,
+        /** Appended verbatim to the generated robots.txt. */
+        customRules: "" as string,
+    },
+
+    /** Which content types the generated sitemap lists. */
+    sitemap: {
+        product: true,
+        category: true,
+        page: true,
+        blogPost: true,
+        landingPage: true,
+    } as Record<SeoContentType, boolean>,
+
+    structuredData: {
+        enableOrganization: true,
+        enableProduct: true,
+        enableArticle: true,
+        enableBreadcrumb: true,
+        organization: {
+            legalName: "" as string,
+            logoUrl: "" as string,
+            email: "" as string,
+            phone: "" as string,
+            /** Social profile URLs, emitted as schema.org `sameAs`. */
+            sameAs: [] as string[],
+        },
+    },
+
+    /**
+     * Search-engine ownership tokens. Empty means "emit no tag" — an empty
+     * verification meta tag is not neutral, it is a failed verification.
+     */
+    verification: {
+        google: "" as string,
+        bing: "" as string,
+        other: "" as string,
+    },
+};
+
+export type SeoConfig = typeof DEFAULT_SEO_CONFIG;
+
+/**
  * Seeded into the DB by scripts/backfill-storefront-engagement.ts. Scalars only
  * where the column is nullable — `storeName`, `currency` and `currencySymbol`
  * already carry Prisma-level defaults and are intentionally absent here.
@@ -302,6 +424,7 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     catalogConfig: DEFAULT_CATALOG_CONFIG,
     theme: DEFAULT_THEME,
+    seoConfig: DEFAULT_SEO_CONFIG,
     /*
      * WEBSITE and null, so a storefront that cannot reach this API — or reaches
      * an install where nobody has ever opened the landing page screen — renders

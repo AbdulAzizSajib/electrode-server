@@ -125,6 +125,82 @@ export interface ITheme {
     font: IThemeFont;
 }
 
+/**
+ * Per-route-group indexing. Both flags, always — see `groups` in
+ * seoConfigSchema for why a missing one is worse than a wrong one.
+ */
+export interface ISeoRobotsGroup {
+    index: boolean;
+    follow: boolean;
+}
+
+/** Keys mirror SEO_ROUTE_GROUPS in store-setting.constant.ts. */
+export interface ISeoRobots {
+    /** Overrides every group below, and empties the sitemap. */
+    globalNoindex: boolean;
+    groups: Record<
+        | "home"
+        | "product"
+        | "category"
+        | "blog"
+        | "page"
+        | "landingPage"
+        | "account"
+        | "cart"
+        | "checkout"
+        | "wishlist"
+        | "compare"
+        | "search",
+        ISeoRobotsGroup
+    >;
+    /** Appended verbatim to the generated robots.txt. */
+    customRules: string;
+}
+
+export interface ISeoOrganization {
+    legalName: string;
+    logoUrl: string;
+    email: string;
+    phone: string;
+    /** Social profile URLs, emitted as schema.org `sameAs`. */
+    sameAs: string[];
+}
+
+/**
+ * Everything the SEO menu owns beyond `siteUrl`/`metaTitle`/`metaDescription`,
+ * which remain columns of their own.
+ *
+ * Every field is required: the blob is replaced wholesale on write, so an
+ * optional field here would be a screen silently dropping another's value. `""`
+ * is how a text field expresses "unset" — the storefront treats it as absent and
+ * falls through to its next fallback.
+ */
+export interface ISeoConfig {
+    /** `%s` is replaced by the page's resolved title. `""` means no template. */
+    titleTemplate: string;
+    defaultMetaTitle: string;
+    defaultMetaDescription: string;
+    defaultOgImageUrl: string;
+    twitterCardType: "summary" | "summary_large_image";
+    twitterSite: string;
+    robots: ISeoRobots;
+    /** Which content types the generated sitemap lists. */
+    sitemap: Record<"product" | "category" | "page" | "blogPost" | "landingPage", boolean>;
+    structuredData: {
+        enableOrganization: boolean;
+        enableProduct: boolean;
+        enableArticle: boolean;
+        enableBreadcrumb: boolean;
+        organization: ISeoOrganization;
+    };
+    /** `""` means emit no tag — an empty verification tag is a failed one. */
+    verification: {
+        google: string;
+        bing: string;
+        other: string;
+    };
+}
+
 export interface IUpdateStoreSettingPayload {
     storeName?: string;
     currency?: string;
@@ -165,6 +241,13 @@ export interface IUpdateStoreSettingPayload {
      * payload has this type its font is already the validated pair.
      */
     theme?: ITheme;
+
+    /**
+     * Optional like the blobs above — omitting it leaves the column untouched.
+     * But a PRESENT value replaces the whole blob rather than merging into it,
+     * so a caller must send the full merged config, not a slice of one.
+     */
+    seoConfig?: ISeoConfig;
 
     /**
      * Whether the storefront root serves the shop or a campaign landing page,

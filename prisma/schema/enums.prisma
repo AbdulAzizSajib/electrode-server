@@ -30,10 +30,19 @@ enum DiscountType {
   FIXED
 }
 
+/// Fulfilment states an order moves through. Order here is narrative, not
+/// enforced — `allowedOrderTransitions` in order.service.ts is the guard, and
+/// it is the only thing that decides what may follow what.
+///
+/// PACKED sits between PROCESSING and SHIPPED: picked and boxed, but still on
+/// the premises. That last part is why it belongs in
+/// RESTOCKABLE_ON_CANCEL_STATUSES — cancelling a packed parcel must credit its
+/// stock back, because nobody has it yet.
 enum OrderStatus {
   PENDING
   CONFIRMED
   PROCESSING
+  PACKED
   SHIPPED
   DELIVERED
   CANCELLED

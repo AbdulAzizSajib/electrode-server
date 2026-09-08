@@ -31,6 +31,7 @@
     "verify:currency": "tsx scripts/verify-currency-and-content.ts",
     "verify:blog": "tsx scripts/verify-blog-and-testimonials.ts",
     "verify:landing-page": "tsx scripts/verify-landing-page.ts",
+    "verify:seo": "tsx scripts/verify-seo.ts",
     "seed:demo-landing-page": "tsx scripts/seed-demo-landing-page.ts"
   },
   "keywords": [],

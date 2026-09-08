@@ -24,6 +24,17 @@ import { envVars } from "../config/env";
 /** Matches the storefront's STORE_SETTINGS_CACHE_TAG. */
 export const STORE_SETTINGS_TAG = "store-settings";
 
+/**
+ * Matches the storefront's SEO_CONFIG_CACHE_TAG.
+ *
+ * A tag of its own rather than folding into `store-settings`, because the two
+ * have different costs: the settings tag backs a payload every page already
+ * fetches, while this one backs the sitemap — a five-table query worth rebuilding
+ * when SEO changes and not worth rebuilding when someone edits a theme colour.
+ * A settings save fires BOTH, since `seoConfig` travels in that payload too.
+ */
+export const SEO_CONFIG_TAG = "seo-config";
+
 /** Short: this is a background hint, not something worth holding a socket for. */
 const TIMEOUT_MS = 3000;
 
