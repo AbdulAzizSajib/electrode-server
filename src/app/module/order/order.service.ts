@@ -67,6 +67,25 @@ const ORDER_DETAIL_INCLUDE = {
 
 const ORDER_LIST_INCLUDE = {
     customer: { select: { id: true, firstName: true, lastName: true } },
+    /*
+     * Courier state, so the admin's orders list can show at a glance which
+     * parcels are with Steadfast and where they are.
+     *
+     * Narrowly selected rather than `shipments: true`: this include serves a
+     * paginated list, and the alternative to carrying these three columns is the
+     * admin fetching a shipment per row — the N+1 pattern integrate-orders-api
+     * explicitly removed. Everything else about a shipment belongs to the detail
+     * read, which already returns the whole row.
+     *
+     * `orderBy` and `take` make it deterministic: an order has at most one
+     * shipment today, and if split shipments ever arrive this keeps the list
+     * showing the newest rather than an arbitrary one.
+     */
+    shipments: {
+        select: { consignmentId: true, courierStatus: true, trackingNumber: true },
+        orderBy: { createdAt: "desc" as const },
+        take: 1,
+    },
 };
 
 /**
@@ -1482,10 +1501,17 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
     return withoutItemCosts(cancelled);
 };
 
+/**
+ * `changedByUserId` is optional because not every status change has a person
+ * behind it. The courier's delivery notification advances an order with no
+ * operator involved, and `OrderStatusHistory.changedById` is already a nullable
+ * FK to User — so the honest record is no actor, not a sentinel string, which
+ * would fail the foreign key on write.
+ */
 const updateOrderStatus = async (
     orderId: string,
     payload: IUpdateOrderStatusPayload,
-    changedByUserId: string,
+    changedByUserId?: string,
 ) => {
     const order = await prisma.order.findUnique({
         where: { id: orderId },

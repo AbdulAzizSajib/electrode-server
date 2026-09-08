@@ -13,9 +13,50 @@ model Shipment {
   shippedAt   DateTime?
   deliveredAt DateTime?
 
+  /// The courier's own id for this consignment. Null on a shipment entered by
+  /// hand, which is every shipment that predates courier dispatch.
+  ///
+  /// Its presence is what makes a shipment COURIER-OWNED: once set, the fields
+  /// above are derived from the courier and the manual update path refuses to
+  /// write them (see shipment.service.ts). Unique, so the same consignment can
+  /// never be recorded against two orders.
+  consignmentId String? @unique
+
+  /// The `invoice` value actually sent to the courier — `Order.orderNumber` at
+  /// the time of dispatch.
+  ///
+  /// Stored rather than recomputed on read. Reconciling a dispatch whose
+  /// outcome was never confirmed means asking "what did we send", and a value
+  /// derived at read time cannot answer that if the derivation ever changes.
+  courierInvoice String?
+
+  /// The courier's `delivery_status` verbatim.
+  ///
+  /// Kept BESIDE `status` rather than mapped onto it because the two vocabularies
+  /// do not line up. Steadfast has eleven values, several of them approval-pending
+  /// intermediates; `ShipmentStatus` has eight. Any mapping collapses
+  /// `delivered_approval_pending` and `delivered` onto DELIVERED, yet only the
+  /// second means the merchant has been paid — so the distinction has to survive
+  /// somewhere. `status` is derived from this conservatively; this is the truth.
+  courierStatus String?
+
+  /// When `courierStatus` was last heard from the courier, by webhook or by
+  /// reconciliation. Distinguishes "the courier says pending" from "we have not
+  /// heard since Tuesday" — and it is the second reading the reconciliation job
+  /// selects on, since a consignment that has gone quiet is the one whose
+  /// webhook may have been missed.
+  courierSyncedAt DateTime?
+
+  /// Every notification the courier has sent about this consignment, oldest to
+  /// newest. See CourierTrackingEvent.
+  trackingEvents CourierTrackingEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([orderId])
   @@index([status])
+  /// Serves the sync job, which selects consignments whose courier status is not
+  /// yet terminal. Without it that is a scan of every shipment ever created.
+  @@index([courierStatus])
 }

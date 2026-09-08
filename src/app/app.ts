@@ -28,8 +28,40 @@ app.set("trust proxy", 1);
 app.set("view engine", "ejs");
 app.set("views",path.resolve(process.cwd(), `src/app/templates`) )
 
+/*
+ * The three deployed origins, plus the local dev ports.
+ *
+ * ADMIN_URL is separate from the other two and easy to forget: FRONTEND_URL is
+ * the storefront, BETTER_AUTH_URL is this server, and the admin panel is a third
+ * deployment of its own. Omitting it fails CORS preflight on every admin
+ * request, which presents as "the panel loads but nothing works" rather than as
+ * a configuration error.
+ *
+ * `.filter(Boolean)` because all three are optional in some environments, and
+ * `undefined` in this array would match an origin-less request.
+ *
+ * Deliberately an exact list rather than a `*.vercel.app` pattern: `credentials`
+ * is true below, so a wildcard would let any site on that shared domain make
+ * authenticated requests with a visitor's cookies. Preview deployments get
+ * fresh URLs and are therefore not covered — that is the accepted cost.
+ */
+const allowedOrigins = [
+    envVars.FRONTEND_URL,
+    envVars.BETTER_AUTH_URL,
+    envVars.ADMIN_URL,
+    "http://localhost:4000",
+    "http://localhost:5000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://ecomsite-admin.vercel.app",
+    "https://ecomsite-ui.vercel.app",
+    "https://ecomsite-ui.vercel.app",
+    "https://ecomsite-server.vercel.app"
+
+].filter(Boolean) as string[];
+
 app.use(cors({
-    origin : [envVars.FRONTEND_URL, envVars.BETTER_AUTH_URL, "http://localhost:4000", "http://localhost:5000", "http://localhost:5173", "http://localhost:5174"],
+    origin : allowedOrigins,
     credentials : true,
     methods : ["GET", "POST", "PUT", "DELETE", "PATCH"],
     // Idempotency-Key rides on checkout (see order.controller.ts). It reaches the

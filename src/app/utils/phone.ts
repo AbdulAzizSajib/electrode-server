@@ -56,3 +56,21 @@ export const normalizePhone = (input: string): string | null => {
 
 /** Whether `input` is a recognizable BD mobile number in any accepted form. */
 export const isValidPhone = (input: string): boolean => normalizePhone(input) !== null;
+
+/**
+ * The same number in the 11-digit local form couriers expect: `01712345678`.
+ *
+ * Steadfast validates `recipient_phone` as exactly 11 digits and rejects the
+ * E.164 form this system stores, so the conversion is mandatory rather than
+ * cosmetic. It routes through `normalizePhone` first so every accepted input
+ * shape converts identically, and returns null for anything that is not a BD
+ * mobile number — which the dispatch pre-flight reports as an unusable phone
+ * rather than sending onward to be rejected mid-batch.
+ */
+export const toLocalPhone = (input: string): string | null => {
+    const normalized = normalizePhone(input);
+    if (!normalized) return null;
+
+    // `+8801XXXXXXXXX` → `01XXXXXXXXX`: drop `+880`, restore the national 0.
+    return `0${normalized.slice(4)}`;
+};

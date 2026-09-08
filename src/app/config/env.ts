@@ -61,7 +61,66 @@ interface EnvConfig {
      * (see design.md — Open Questions), and a report cannot wait for it.
      */
     STORE_TIMEZONE?: string;
+    /**
+     * Steadfast Courier API credentials.
+     *
+     * In the environment and NOT in StoreSetting, deliberately. `GET /settings`
+     * is public — the storefront renders its payload into every page — so a
+     * credential stored on that row is one careless field selection away from
+     * being served to the internet. Cloudinary's keys sit here for the same
+     * reason. The cost is that rotating a key is a redeploy rather than a form,
+     * which is the right trade for a secret that lets a stranger create
+     * consignments billed to the merchant.
+     *
+     * Optional, and absent from requireEnvVariable below: an install without
+     * them boots normally and the courier endpoints report themselves
+     * unconfigured. Manual shipment entry is unaffected.
+     * See openspec/changes/add-steadfast-courier-integration, design.md Decision 1.
+     */
+    STEADFAST_API_KEY?: string;
+    STEADFAST_SECRET_KEY?: string;
+    /** Overridable for a sandbox account; the live API when unset. */
+    STEADFAST_BASE_URL?: string;
+    /**
+     * Shared secret for POST /courier/sync, which Vercel Cron calls on a
+     * schedule. Same posture as STOREFRONT_REVALIDATE_SECRET above: a header the
+     * caller must present, an endpoint that refuses without it.
+     *
+     * `node-cron` cannot drive this — the server runs as a Vercel function and
+     * no process survives between requests (design.md Decision 7).
+     */
+    COURIER_SYNC_SECRET?: string;
+    /**
+     * Bearer token Steadfast presents when calling POST /courier/webhook.
+     *
+     * WE generate this and paste it into their portal's Webhook Integration
+     * form; it is not issued by them. It is the entire authentication boundary
+     * on that endpoint, which necessarily sits outside `checkAuth` because
+     * Steadfast has no session here.
+     *
+     * Unset means the webhook endpoint refuses every call — deliberately, since
+     * accepting unauthenticated status updates is worse than accepting none.
+     * Dispatch and the reconciliation job are unaffected.
+     */
+    STEADFAST_WEBHOOK_TOKEN?: string;
+    /**
+     * Origin of the deployed admin panel, for CORS and better-auth's trusted
+     * origins.
+     *
+     * A THIRD origin, distinct from the two that already exist: `FRONTEND_URL`
+     * is the storefront and `BETTER_AUTH_URL` is this server. The admin panel is
+     * a separate deployment, and without it here every one of its requests is
+     * refused by CORS preflight — which presents as "the panel loads but nothing
+     * works", not as a configuration error.
+     *
+     * Optional: local development is already covered by the explicit localhost
+     * entries in the allowlist.
+     */
+    ADMIN_URL?: string;
 }
+
+/** The live Steadfast API, used when STEADFAST_BASE_URL is unset. */
+export const STEADFAST_DEFAULT_BASE_URL = "https://portal.packzy.com/api/v1";
 
 
 const loadEnvVariables = (): EnvConfig => {
@@ -132,6 +191,12 @@ const loadEnvVariables = (): EnvConfig => {
         STOREFRONT_REVALIDATE_SECRET: process.env.STOREFRONT_REVALIDATE_SECRET,
         STOREFRONT_URL: process.env.STOREFRONT_URL,
         STORE_TIMEZONE: process.env.STORE_TIMEZONE,
+        STEADFAST_API_KEY: process.env.STEADFAST_API_KEY,
+        STEADFAST_SECRET_KEY: process.env.STEADFAST_SECRET_KEY,
+        STEADFAST_BASE_URL: process.env.STEADFAST_BASE_URL,
+        COURIER_SYNC_SECRET: process.env.COURIER_SYNC_SECRET,
+        STEADFAST_WEBHOOK_TOKEN: process.env.STEADFAST_WEBHOOK_TOKEN,
+        ADMIN_URL: process.env.ADMIN_URL,
     }
 }
 

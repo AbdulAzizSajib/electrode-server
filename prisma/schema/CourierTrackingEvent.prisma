@@ -1,0 +1,59 @@
+/// One notification received from the courier about a consignment.
+///
+/// History, not a latest value. "Where has this parcel been" is the question a
+/// late delivery actually raises, and only a sequence answers it — a single
+/// `lastTrackingMessage` column on Shipment would answer "where is it now"
+/// while destroying exactly the information customer service needs.
+///
+/// Both notification types land here. A delivery-status change IS a tracking
+/// event, and interleaving the two in one table is what makes the sequence
+/// readable.
+///
+/// See openspec/changes/add-steadfast-courier-integration, design.md Decision 11.
+model CourierTrackingEvent {
+  id String @id @default(cuid())
+
+  shipmentId String
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  /// `delivery_status` or `tracking_update` — the courier's own `notification_type`.
+  notificationType String
+
+  /// The reported delivery status, present on `delivery_status` notifications
+  /// and null on `tracking_update`. Stored lowercased: the courier's field
+  /// documentation lists lowercase values while its example payload sends
+  /// `Delivered`, so the casing carries no meaning and normalising it here
+  /// keeps every comparison downstream simple.
+  status String?
+
+  /// The human-readable line — "Package arrived at the sorting center".
+  trackingMessage String?
+
+  /// Reported alongside a delivery-status change. Recorded rather than acted on:
+  /// what the courier says it collected is worth keeping beside what the order
+  /// says was owed, but reconciling the two is not this table's job.
+  codAmount      Decimal? @db.Decimal(12, 2)
+  deliveryCharge Decimal? @db.Decimal(12, 2)
+
+  /// The courier's own `updated_at`, which is when the event happened. Distinct
+  /// from `receivedAt` below, which is when we heard about it — they diverge
+  /// whenever a webhook is delayed or replayed.
+  courierUpdatedAt DateTime?
+
+  receivedAt DateTime @default(now())
+
+  /// Idempotency for webhook replays.
+  ///
+  /// Steadfast may re-deliver a notification, and an appended duplicate would
+  /// show the operator a timeline that stutters. Built from shipment + type +
+  /// the courier's timestamp + a bounded slice of the message, so a genuine
+  /// repeat collides here and is skipped.
+  ///
+  /// A stored column rather than a unique index across those four fields
+  /// directly: `trackingMessage` is unbounded text and a btree unique index
+  /// over it would fail on a long value at insert time — the worst possible
+  /// moment to discover a size limit.
+  dedupeKey String @unique
+
+  @@index([shipmentId, receivedAt])
+}

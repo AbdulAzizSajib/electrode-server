@@ -95,11 +95,13 @@ export const auth = betterAuth({
         emailOTP({
             overrideDefaultEmailVerification: true,
             // The parameter type is deliberately left to be inferred from
-            // better-auth's own signature. It was previously spelled out here
-            // with three `type` values, which silently went stale when the
-            // library added a fourth ("change-email") - the annotation then no
-            // longer matched what better-auth passes, and `tsc` (so `pnpm
-            // build`) failed. Inferring keeps this in step with the library.
+            // better-auth's own signature rather than spelled out here, so it
+            // cannot go stale against the library and break `tsc` (so `pnpm
+            // build`). As of better-auth 1.4.18 the plugin emits exactly
+            // "sign-in" | "email-verification" | "forget-password"; changing
+            // an existing address is NOT one of them - that flow is the
+            // `user.changeEmail.sendChangeEmailVerification` option instead,
+            // which this app does not enable.
             async sendVerificationOTP({ email, otp, type }) {
                 if (type === "email-verification") {
                     const user = await prisma.user.findUnique({
@@ -138,18 +140,6 @@ export const auth = betterAuth({
                             templateData: { name: user.name, otp },
                         });
                     }
-                } else if (type === "change-email") {
-                    // `email` here is the NEW address being claimed, which has
-                    // no user row of its own yet - the row still holds the old
-                    // address. So this looks nothing up and greets the reader
-                    // generically rather than leaking whose account is being
-                    // changed to an address not yet proven to be theirs.
-                    sendEmail({
-                        to: email,
-                        subject: "Confirm your new email address",
-                        templateName: "otp",
-                        templateData: { name: "there", otp },
-                    });
                 }
             },
             expiresIn: 5 * 60,
@@ -171,12 +161,20 @@ export const auth = betterAuth({
     },
 
    
+    /*
+     * Must include the admin panel's deployed origin for the same reason the
+     * CORS allowlist in app.ts does: it is a third deployment, separate from the
+     * storefront (FRONTEND_URL) and this server (BETTER_AUTH_URL). Left out,
+     * better-auth rejects the panel's sign-in requests even though CORS lets
+     * them through — two separate allowlists that have to agree.
+     */
     trustedOrigins: [
         envVars.BETTER_AUTH_URL,
         "http://localhost:5000",
         "http://localhost:5173",
         "http://localhost:3000",
         envVars.FRONTEND_URL,
+        envVars.ADMIN_URL,
     ].filter(Boolean) as string[],
 
     advanced: {

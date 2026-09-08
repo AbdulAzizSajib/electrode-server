@@ -32,6 +32,8 @@
     "verify:blog": "tsx scripts/verify-blog-and-testimonials.ts",
     "verify:landing-page": "tsx scripts/verify-landing-page.ts",
     "verify:seo": "tsx scripts/verify-seo.ts",
+    "verify:courier-mapping": "tsx scripts/verify-courier-mapping.ts",
+    "verify:courier-dispatch": "tsx scripts/verify-courier-dispatch.ts",
     "seed:demo-landing-page": "tsx scripts/seed-demo-landing-page.ts"
   },
   "keywords": [],
@@ -59,7 +61,7 @@
     "pg": "^8.18.0",
     "qs": "^6.14.1",
     "uuid": "^13.0.0",
-    "vercel": "^56.3.1",
+    "vercel": "^59.11.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {

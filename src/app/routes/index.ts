@@ -26,6 +26,7 @@ import { ReturnNestedRoutes, ReturnRoutes } from "../module/return/return.route"
 import { AttributeRoutes } from "../module/attribute/attribute.route";
 import { BundleDealRoutes } from "../module/bundle-deal/bundle-deal.route";
 import { CollectionRoutes } from "../module/collection/collection.route";
+import { CourierRoutes } from "../module/courier/courier.route";
 import { TagRoutes } from "../module/tag/tag.route";
 import { TaxRuleRoutes } from "../module/tax-rule/tax-rule.route";
 import { TestimonialRoutes } from "../module/testimonial/testimonial.route";
@@ -115,6 +116,12 @@ router.use("/analytics", AnalyticsRoutes);
 // questions over a fixed window; reports take an arbitrary range, filters,
 // paging and export. They share one revenue definition (constants/sales.constant.ts).
 router.use("/reports", ReportRoutes);
+// Every path inside this router is a literal segment (/dispatch, /sync,
+// /webhook, /balance, /orders/:id/return), so unlike /products or /orders it has
+// no mount-ordering constraint — nothing here can be captured by a sibling's
+// /:id. Its two machine-to-machine routes authenticate by shared secret rather
+// than session, since Steadfast and Vercel Cron have no session here.
+router.use("/courier", CourierRoutes);
 router.use("/uploads", UploadRoutes);
 
 export const IndexRoutes = router;
