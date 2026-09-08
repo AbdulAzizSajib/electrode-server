@@ -217,6 +217,24 @@ const deliverySettingsSchema = z
         }
     });
 
+/**
+ * Which optional catalog features the storefront offers.
+ *
+ * `.strict()` like the blobs around it, so a typo'd key is a 400 rather than a
+ * flag silently reading at its default forever. All three are required on write:
+ * the admin panel edits them as one screen, and a partial write would leave the
+ * reader unable to tell "the merchant turned this off" from "this key predates
+ * the flag" — a distinction the per-key read default already handles, and which
+ * a partial write would make ambiguous.
+ */
+export const catalogConfigSchema = z
+    .object({
+        showWishlist: z.boolean(),
+        showCompare: z.boolean(),
+        showQuickView: z.boolean(),
+    })
+    .strict();
+
 export const checkoutConfigSchema = z
     .object({
         fields: z
@@ -434,6 +452,7 @@ export const updateStoreSettingZodSchema = z.object({
     // the two new admin pages stay as non-clobbering as the existing three
     // editors — a key left out is a column left untouched.
     checkoutConfig: checkoutConfigUpdateSchema.optional(),
+    catalogConfig: catalogConfigSchema.optional(),
     theme: themeSchema.optional(),
 
     /*

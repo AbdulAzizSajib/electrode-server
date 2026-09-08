@@ -177,6 +177,24 @@ export const DEFAULT_CHECKOUT_CONFIG = {
  * returns, so this constant and a merchant-saved value are indistinguishable to
  * every reader.
  */
+/**
+ * Every optional catalog feature offered.
+ *
+ * This reproduces the storefront exactly as it behaved before any of it was
+ * configurable — which is what lets the migration add the column with no
+ * backfill and change nothing for any existing store.
+ *
+ * It is also the only safe direction to fail in. A settings read that fell back
+ * to "off" would strip the wishlist and comparison from a shop that pays for
+ * them, and — unlike a blank announcement bar — nobody would read the absence
+ * as an outage.
+ */
+export const DEFAULT_CATALOG_CONFIG = {
+    showWishlist: true,
+    showCompare: true,
+    showQuickView: true,
+};
+
 export const DEFAULT_THEME = {
     background: "#ffffff",
     foreground: "#1a1a1a",
@@ -282,6 +300,7 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     announcementBar: DEFAULT_ANNOUNCEMENT_BAR,
     newsletter: DEFAULT_NEWSLETTER,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
+    catalogConfig: DEFAULT_CATALOG_CONFIG,
     theme: DEFAULT_THEME,
     /*
      * WEBSITE and null, so a storefront that cannot reach this API — or reaches

@@ -131,6 +131,29 @@ const getPublicStoreSetting = async () => {
         checkoutConfig: withDeliveryDefault(
             merge(stored?.checkoutConfig, DEFAULT_PUBLIC_SETTINGS.checkoutConfig),
         ),
+
+        /*
+         * Public for the same reason the theme is: the storefront decides what
+         * to render from these before any shopper session exists, and it needs
+         * them on every page that shows a product. Opted in one line like
+         * everything else here — this stays an allow-list. There is nothing to
+         * leak either way: three booleans describing which controls a shop
+         * offers are already obvious to anyone who loads the storefront.
+         *
+         * A PER-KEY SPREAD, not the wholesale `merge()` above. `merge()` swaps
+         * the entire stored value for the fallback, so a blob written before a
+         * key existed is served WITHOUT that key — which is precisely what
+         * forced `withDeliveryDefault` into existence one line up. This blob is
+         * a flat map of booleans and is certain to gain more, so it is read the
+         * right way from the start and never needs a shim of its own. A missing
+         * flag reads at its default instead of `undefined`, which is falsy and
+         * would withdraw the feature by accident.
+         */
+        catalogConfig: {
+            ...DEFAULT_PUBLIC_SETTINGS.catalogConfig,
+            ...((stored?.catalogConfig as object | null) ?? {}),
+        },
+
         theme: merge(stored?.theme, DEFAULT_PUBLIC_SETTINGS.theme),
 
         /*

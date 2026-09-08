@@ -116,6 +116,28 @@ model StoreSetting {
   checkoutConfig Json?
   theme          Json?
 
+  /// Which optional catalog features the storefront offers:
+  /// { showWishlist, showCompare, showQuickView }, all booleans.
+  ///
+  /// Zod-validated on write like the blobs above — `catalogConfigSchema` in
+  /// store-setting.validation.ts is the ONLY gate on its shape.
+  ///
+  /// READ WITH A PER-KEY SPREAD over DEFAULT_CATALOG_CONFIG, not the wholesale
+  /// `merge()` the other blobs use. `merge()` swaps the entire value for the
+  /// fallback, so a row written before a key existed comes back WITHOUT it —
+  /// which is exactly the bug that forced the `withDeliveryDefault` shim onto
+  /// checkoutConfig when `delivery` was added. This blob is a flat map of
+  /// booleans and will gain more, so it is read the right way from the start;
+  /// a missing flag then reads at its default instead of `undefined`, which is
+  /// falsy and would withdraw the feature by accident.
+  ///
+  /// Nullable with no backfill: all three default to TRUE, so an existing store
+  /// and a fresh install both behave exactly as they did before this column.
+  /// Turning one off is a PRESENTATION decision only — the wishlist and compare
+  /// APIs stay open, so a merchant who turns a feature off and back on finds
+  /// their shoppers' saved lists intact.
+  catalogConfig Json?
+
   /// Whether the storefront root serves the full shop or a single campaign
   /// landing page, and which landing page that is.
   ///

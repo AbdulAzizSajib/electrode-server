@@ -15,12 +15,14 @@
  */
 import { parseGoogleFontEmbed } from "../src/app/module/store-setting/google-font";
 import {
+    catalogConfigSchema,
     checkoutConfigSchema,
     checkoutConfigUpdateSchema,
     themeSchema,
     SITE_CONTENT_WIDTHS,
 } from "../src/app/module/store-setting/store-setting.validation";
 import {
+    DEFAULT_CATALOG_CONFIG,
     DEFAULT_CHECKOUT_CONFIG,
     DEFAULT_THEME,
 } from "../src/app/module/store-setting/store-setting.constant";
@@ -484,6 +486,71 @@ check(
         checkoutConfigSchema.safeParse({ ...legacy, delivery: DEFAULT_CHECKOUT_CONFIG.delivery })
             .success,
         "the merchant keeps their own field, notice and guest-checkout settings",
+    );
+}
+
+/*
+ * Catalog display flags.
+ *
+ * Two properties, both of which decide whether a merchant's shop keeps working:
+ * an unconfigured store must report every feature as offered, and turning one
+ * off must leave the other two alone.
+ *
+ * The read path is reproduced here as the same spread `getPublicStoreSetting`
+ * performs, rather than called through it — that function needs a database and
+ * this script deliberately has none. What is being checked is the shape of the
+ * merge, which is where the bug would be.
+ */
+{
+    /** Exactly what the public projection does with whatever the column holds. */
+    const publicRead = (stored: unknown) => ({
+        ...DEFAULT_CATALOG_CONFIG,
+        ...((stored as object | null) ?? {}),
+    });
+
+    check(
+        "the defaults themselves parse",
+        catalogConfigSchema.safeParse(DEFAULT_CATALOG_CONFIG).success,
+        "so a fresh install cannot store a shape its own reader would reject",
+    );
+
+    check(
+        "an unconfigured store offers every feature",
+        JSON.stringify(publicRead(null)) ===
+            JSON.stringify({ showWishlist: true, showCompare: true, showQuickView: true }),
+        "a null column is what every store has until a merchant opens the screen",
+    );
+
+    check(
+        "turning one feature off leaves the others offered",
+        JSON.stringify(publicRead({ showWishlist: true, showCompare: false, showQuickView: true })) ===
+            JSON.stringify({ showWishlist: true, showCompare: false, showQuickView: true }),
+        "the merchant's stored choice wins over the default, per key",
+    );
+
+    /*
+     * The property the per-key spread exists for, and the reason this is not
+     * the wholesale `merge()` the other blobs use — see the note in
+     * store-setting.service.ts. A blob written before a flag existed must
+     * report that flag at its default, not as `undefined`, which is falsy and
+     * would withdraw the feature by accident.
+     */
+    check(
+        "a blob predating a flag reports that flag as offered",
+        publicRead({ showWishlist: false, showCompare: true }).showQuickView === true,
+        "which is what a wholesale merge would have got wrong the day a flag was added",
+    );
+
+    check(
+        "a non-boolean flag is rejected",
+        !catalogConfigSchema.safeParse({ ...DEFAULT_CATALOG_CONFIG, showCompare: "yes" }).success,
+        "Postgres cannot constrain a JSON column, so Zod is the only gate",
+    );
+
+    check(
+        "an unknown key is rejected",
+        !catalogConfigSchema.safeParse({ ...DEFAULT_CATALOG_CONFIG, showQuickview: true }).success,
+        "a typo'd key would otherwise read at its default forever",
     );
 }
 
