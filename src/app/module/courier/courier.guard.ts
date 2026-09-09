@@ -1,16 +1,24 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextFunction, Request, Response } from "express";
 import httpStatus from "http-status";
+import { CourierProvider } from "../../../generated/prisma/client";
 import { envVars } from "../../config/env";
 import AppError from "../../errorHelpers/AppError";
+import { isSupportedProvider, resolveProvider } from "./providers";
 
 /**
  * The two machine-to-machine guards on this module.
  *
- * Neither can use `checkAuth`: Vercel Cron and Steadfast have no session here.
+ * Neither can use `checkAuth`: Vercel Cron and a courier have no session here.
  * A shared secret is therefore the entire boundary in both cases, which is why
  * both compare in constant time and both refuse outright when unconfigured —
  * accepting unauthenticated status updates is worse than accepting none.
+ *
+ * The two differ in one respect. The sync secret is ONE infrastructure
+ * credential: the scheduler is ours, and the endpoint it calls creates nothing.
+ * The webhook token is PER COURIER, looked up through the provider — because a
+ * single token accepted at a single endpoint would mean one courier's leaked
+ * token opening every courier's notifications.
  *
  * The pattern follows `utils/revalidateStorefront.ts`, already established in
  * this codebase for a machine-to-machine call: a header the caller must present,
@@ -81,25 +89,62 @@ export const requireSyncSecret = (req: Request, _res: Response, next: NextFuncti
 };
 
 /**
- * Guards `POST /courier/webhook`, called by Steadfast.
+ * Guards `POST /courier/webhook/:provider`, called by the named courier.
  *
- * The token is one WE generate and paste into their portal's Webhook
- * Integration form; it is not issued by them. It is the whole authentication
- * boundary on a public endpoint, so an unset token refuses everything rather
- * than falling open.
+ * The token is one WE generate and paste into that courier's portal; it is not
+ * issued by them. It is the whole authentication boundary on a public endpoint,
+ * so an unset token refuses everything rather than falling open.
+ *
+ * THE TOKEN IS LOOKED UP BY PROVIDER, not shared across them. One endpoint
+ * accepting any configured token would have to try each in turn to work out who
+ * was calling — which means a token leaked for one courier grants access to
+ * every courier's notifications. Each provider's endpoint accepts only its own.
+ *
+ * The provider is resolved and attached to the request here, so the controller
+ * never re-derives it from the URL and the two cannot disagree about which
+ * courier was authenticated.
+ *
+ * See openspec/changes/add-courier-provider-selection, design.md Decision 5.
  */
 export const requireWebhookToken = (req: Request, _res: Response, next: NextFunction) => {
-    const expected = envVars.STEADFAST_WEBHOOK_TOKEN;
+    // The alias route has no `:provider` segment, so an absent one means
+    // Steadfast — that is the whole point of keeping the old path alive.
+    const raw = req.params.provider;
+    const named = typeof raw === "string" && raw ? raw : (CourierProvider.STEADFAST as string);
+
+    /*
+     * Rejected before any database work. An unknown provider cannot own a
+     * consignment, so looking one up would be a query issued on behalf of an
+     * unauthenticated caller naming a courier we do not support.
+     */
+    if (!isSupportedProvider(named)) {
+        return next(
+            new AppError(httpStatus.NOT_FOUND, `Unknown courier provider "${named}".`),
+        );
+    }
+
+    const provider = resolveProvider(named);
+
+    if (!provider.capabilities.webhook) {
+        return next(
+            new AppError(
+                httpStatus.NOT_FOUND,
+                `${provider.displayName} does not send webhooks.`,
+            ),
+        );
+    }
+
+    const expected = provider.webhookToken?.();
 
     if (!expected) {
         warnOnce(
-            "webhook",
-            "[courier] STEADFAST_WEBHOOK_TOKEN is not set — the courier webhook will refuse every call and delivery statuses will only update on the reconciliation schedule.",
+            `webhook:${named}`,
+            `[courier] No webhook token is set for ${provider.displayName} — its webhook will refuse every call and delivery statuses will only update on the reconciliation schedule.`,
         );
         return next(
             new AppError(
                 httpStatus.SERVICE_UNAVAILABLE,
-                "Courier webhook is not configured (STEADFAST_WEBHOOK_TOKEN).",
+                `The ${provider.displayName} webhook is not configured.`,
             ),
         );
     }
@@ -110,6 +155,8 @@ export const requireWebhookToken = (req: Request, _res: Response, next: NextFunc
     if (!provided || !secretMatches(provided, expected)) {
         return next(new AppError(httpStatus.UNAUTHORIZED, "Invalid webhook token."));
     }
+
+    req.courierProvider = provider.id;
 
     next();
 };

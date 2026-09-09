@@ -368,6 +368,29 @@ enum SiteMode {
   LANDING_PAGE
 }
 
+/// How one of the storefront's brand slots — the header or the footer —
+/// presents the shop's identity.
+///
+/// THE MODE DECIDES, NOT THE ARTWORK. A slot set to TEXT renders the wordmark
+/// even when a logo is uploaded, which is the whole point: the header and the
+/// footer are set independently, so a shop can show artwork on its brand-colour
+/// header and the wordmark on its dark footer without deleting either image.
+/// Inferring the mode from "is a logo uploaded" cannot express that — choosing
+/// text for the footer would mean clearing the footer's artwork, which then
+/// makes the header's logo fall through into the footer by the fallback in
+/// StoreSetting.
+///
+/// A closed set of two rather than a boolean `headerShowsLogo`, for the reason
+/// SiteMode above gives: a third variant (logo and wordmark side by side) would
+/// be an added value rather than a second flag to keep consistent with the
+/// first. Both columns default to TEXT, which is exactly what every storefront
+/// rendered before this enum existed. See add-header-footer-brand-display
+/// design.md, Decision 1.
+enum BrandDisplayMode {
+  TEXT
+  LOGO
+}
+
 /// Whether a shopper takes delivery of an order or collects it themselves.
 ///
 /// Recorded on the order rather than derived, because it decides what staff DO
@@ -379,4 +402,26 @@ enum SiteMode {
 enum DeliveryMethod {
   DELIVERY
   PICKUP
+}
+
+/// Which courier service the shop dispatches through.
+///
+/// EVERY VALUE HERE MUST HAVE A REGISTERED ADAPTER in
+/// `src/app/module/courier/providers/`. The registry in `courier.provider.ts`
+/// resolves this enum to an implementation and throws when it cannot — adding a
+/// member without its adapter turns a dispatch into a runtime failure, so the
+/// two changes belong in one commit.
+///
+/// `MANUAL` is a real provider, not the absence of one: it declares no
+/// capabilities and creates no consignments, and it is what a merchant using a
+/// courier this system does not integrate with selects. Modelling that as a
+/// null selection instead would make "deliberately unintegrated" and
+/// "misconfigured deployment" indistinguishable, which is exactly the
+/// distinction the admin panel has to show.
+///
+/// See openspec/changes/add-courier-provider-selection, design.md Decisions 1
+/// and 6.
+enum CourierProvider {
+  STEADFAST
+  MANUAL
 }

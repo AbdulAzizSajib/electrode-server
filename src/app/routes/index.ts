@@ -36,6 +36,7 @@ import { ShipmentRoutes } from "../module/shipment/shipment.route";
 import { StockMovementRoutes, StockRoutes } from "../module/stock/stock.route";
 import { SeoRoutes } from "../module/seo/seo.route";
 import { StoreSettingRoutes } from "../module/store-setting/store-setting.route";
+import { FontRoutes } from "../module/font/font.route";
 import { SupplierRoutes } from "../module/supplier/supplier.route";
 import { SupportMessageRoutes, SupportTicketRoutes } from "../module/support-ticket/support-ticket.route";
 import { UploadRoutes } from "../module/upload/upload.route";
@@ -101,6 +102,13 @@ router.use("/testimonials", TestimonialRoutes);
 // `/:id` reads — see landing-page.route.ts.
 router.use("/landing-pages", LandingPageRoutes);
 router.use("/settings", StoreSettingRoutes);
+// The font library the theme's two font selections are chosen from. A mount of
+// its own rather than a branch of /settings: /settings is the singleton, this
+// is a collection, and nesting it would put a paginated list behind an endpoint
+// that PATCHes one row. No ordering constraint against /settings — the paths do
+// not overlap. Admin-only in full, reads included; the storefront never calls
+// it, because the typeface it needs already travels in the theme.
+router.use("/fonts", FontRoutes);
 // Beside /settings, which it reads its config from, but a mount of its own: it
 // aggregates five content models rather than projecting the settings singleton.
 // Both its routes are literal segments, so it has no ordering constraint.

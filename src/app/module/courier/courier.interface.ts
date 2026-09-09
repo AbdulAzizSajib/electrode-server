@@ -15,7 +15,14 @@ export type CourierIneligibleReason =
     | "NO_RECIPIENT_NAME"
     | "NAME_TOO_LONG"
     | "INVALID_PHONE"
-    | "ADDRESS_TOO_LONG";
+    | "ADDRESS_TOO_LONG"
+    /** The configured courier creates no consignments — the shop hands parcels
+     *  over by hand. Distinct from every reason above, all of which describe
+     *  something wrong with the ORDER; this one describes the shop's setup, and
+     *  telling an operator their order is "not packed" when it is would send
+     *  them looking for a problem that does not exist.
+     *  See openspec/changes/add-courier-provider-selection. */
+    | "PROVIDER_CANNOT_DISPATCH";
 
 /** The order shape the mapper and pre-flight need. Deliberately narrow: it is a
  *  contract with the query in `courier.service.ts`, not a mirror of the model. */

@@ -472,13 +472,34 @@ export const MIN_CURRENCY_DECIMALS = 0;
 export const MAX_CURRENCY_DECIMALS = 4;
 
 /**
+ * How tall a header or footer logo may render, in pixels.
+ *
+ * THIS IS THE ONLY GATE. The columns are plain `Int` — Postgres could express
+ * the range as a CHECK, but the convention on this row is a single Zod bound
+ * for anything the schema cannot state (see `currencyDecimals` above), because
+ * two gates that can disagree is worse than one.
+ *
+ * 24 is roughly where a logo stops being legible beside the header's text
+ * controls; 96 is past the header row's natural height, so anything larger is a
+ * layout the row was not built for rather than a bigger logo. Width is never
+ * stored — it follows the image's own proportions, which is what lets artwork
+ * of any aspect ratio be used without re-cutting it.
+ *
+ * Mirrored into the admin as `LOGO_HEIGHT_LIMITS` so the field can bound itself
+ * rather than surfacing a 400 the merchant has to decode, and into the
+ * storefront's `FALLBACK_SETTINGS` as the defaults. Keep the three in step.
+ */
+export const MIN_LOGO_HEIGHT = 24;
+export const MAX_LOGO_HEIGHT = 96;
+
+/**
  * The font arrives as the text the merchant pasted and leaves as the parsed
  * pair. A bare URL is one of the accepted paste forms, which is what lets the
  * admin form send a previously stored URL straight back through this same
  * validation when the merchant did not touch the field — there is no second,
  * unchecked route into the column.
  */
-const fontSchema = z.string().min(1).max(2000).transform((input, ctx) => {
+const fontEmbedSchema = z.string().min(1).max(2000).transform((input, ctx) => {
     const result = parseGoogleFontEmbed(input);
     if (!result.ok) {
         ctx.addIssue({ code: "custom", message: result.message });
@@ -488,9 +509,104 @@ const fontSchema = z.string().min(1).max(2000).transform((input, ctx) => {
 });
 
 /**
+ * A font selected from the library by name.
+ *
+ * This is what the admin's font pickers send, and it is only a SHAPE check —
+ * whether that family actually exists in the `Font` table is a database read,
+ * and this codebase puts DB-dependent invariants in the service, resolved
+ * transactionally. The service turns `{ family }` into the stored
+ * `{ family, url }` by looking the row up, and 400s on a family that is not
+ * there. Nothing may persist a selection without going through that lookup;
+ * accepting a `url` here would be the second unchecked path into the column
+ * that the whole parser exists to prevent.
+ */
+const fontSelectionSchema = z
+    .object({
+        family: z.string().min(1).max(64),
+    })
+    /*
+     * `.strict()`, and this is the point of the whole arm rather than a
+     * tidiness habit.
+     *
+     * Without it Zod would silently STRIP an accompanying `url` and accept the
+     * object. Nothing attacker-controlled reaches the column even then — the
+     * service ignores the stripped value and looks the family up — but it
+     * leaves a caller able to send `{ family, url }` and get a 200, which reads
+     * as "the url was accepted". The next person to add a `{family, url}`
+     * fast-path to the service, seeing that shape arrive routinely, would turn
+     * a silently-discarded field into a stored one and hand the parser's job to
+     * the caller. Refusing the key outright means that shape never arrives.
+     */
+    .strict();
+
+/**
+ * A font sent back in the shape it is stored in — `{ family, url }`.
+ *
+ * This is the round-trip arm: a caller that GETs the settings, changes a
+ * colour, and PATCHes the whole theme back sends the font exactly as it read
+ * it. DEFAULT_THEME is in this shape too. Without this arm the commonest
+ * possible request — "save what you gave me, with one field different" — would
+ * be rejected.
+ *
+ * It is NOT a trusted passthrough. The `url` is re-parsed by the same
+ * `parseGoogleFontEmbed` every other arm uses (a bare URL is one of its
+ * accepted paste forms, so a stored URL re-parses to itself) and the REBUILT
+ * result is what gets stored. A tampered `url` is refused here exactly as a
+ * pasted one would be; a `family` that disagrees with its `url` is resolved in
+ * favour of the url, since that is the value the parser can actually vouch for.
+ */
+const fontPairSchema = z
+    .object({
+        family: z.string().min(1).max(64),
+        url: z.string().min(1).max(2000),
+    })
+    .strict()
+    .transform((input, ctx) => {
+        const result = parseGoogleFontEmbed(input.url);
+        if (!result.ok) {
+            ctx.addIssue({ code: "custom", message: result.message });
+            return z.NEVER;
+        }
+        return result.value;
+    });
+
+/**
+ * All three arms are live, and none is legacy debris.
+ *
+ * `{ family }` is what the pickers send now. `{ family, url }` is what a
+ * read-modify-write round trip sends, and what DEFAULT_THEME is. The bare
+ * string — a pasted `@import`, `<link>` or URL, parsed by `fontEmbedSchema`
+ * above — is retained because it is what every caller written before the font
+ * library sends: the Postman collection, the verify scripts, any existing
+ * integration. Dropping it would make this change breaking for zero benefit,
+ * since all three converge on the same stored shape.
+ *
+ * Order matters. `fontPairSchema` is tried before `fontSelectionSchema`
+ * because both are strict objects and a `{family, url}` payload must reach the
+ * arm that re-parses the url rather than being refused by the arm that forbids
+ * the key.
+ *
+ * See openspec/changes/add-font-library-and-admin-font, design.md Decision 3.
+ */
+const fontSchema = z.union([fontPairSchema, fontSelectionSchema, fontEmbedSchema]);
+
+/**
  * Every key is required. The theme is one Json column written whole, so a
  * partial object would silently blank whatever it omitted — a 400 telling the
  * caller to send the complete theme is the better failure.
+ *
+ * `adminFont` is the ONE exception, and it is deliberate. Making it required
+ * like the rest would 400 every caller written before the admin panel had a
+ * font of its own — the Postman collection, the verify scripts, any existing
+ * integration — turning an additive feature into a breaking change. Omitting it
+ * therefore means "leave the admin's typeface alone", and the service carries
+ * the stored value forward rather than blanking it. That is the one case the
+ * "written whole" rule above cannot cover, because the key did not exist when
+ * those callers were written.
+ *
+ * Note this is NOT the `.optional()` vs `.nullable()` convention: there is no
+ * third state here. `adminFont` is never null — an unset admin font resolves to
+ * DEFAULT_THEME.adminFont on read.
  */
 export const themeSchema = z
     .object({
@@ -505,6 +621,7 @@ export const themeSchema = z
             `Content width must be "${FULL_WIDTH}" or one of ${SITE_CONTENT_WIDTHS.join(", ")}px`,
         ),
         font: fontSchema,
+        adminFont: fontSchema.optional(),
     })
     .strict();
 
@@ -547,6 +664,39 @@ export const updateStoreSettingZodSchema = z.object({
     siteNameAccent: z.string().max(100).optional(),
     aboutText: z.string().max(1000).optional(),
     copyrightText: z.string().max(300).optional(),
+
+    /*
+     * Which of the two things each brand slot shows. `.optional()` alone, like
+     * every other scalar here: an omitted key means "leave unchanged", and a
+     * mode always has one of exactly two values, so there is no third "unset"
+     * state that would call for `.nullable()`.
+     *
+     * The MODE decides what renders — not whether `logoUrl`/`footerLogoUrl`
+     * above happen to be set. That separation is the point: it is what lets a
+     * merchant show a logo in the header and the wordmark in the footer while
+     * keeping both images on file. See add-header-footer-brand-display
+     * design.md, Decision 1.
+     */
+    headerBrandMode: z
+        .enum(["TEXT", "LOGO"], "Header brand display must be TEXT or LOGO")
+        .optional(),
+    footerBrandMode: z
+        .enum(["TEXT", "LOGO"], "Footer brand display must be TEXT or LOGO")
+        .optional(),
+
+    /* Bounded here and nowhere else — see MIN_LOGO_HEIGHT above. */
+    headerLogoHeight: z
+        .number()
+        .int("Logo height must be a whole number of pixels")
+        .min(MIN_LOGO_HEIGHT, `Logo height must be between ${MIN_LOGO_HEIGHT} and ${MAX_LOGO_HEIGHT}px`)
+        .max(MAX_LOGO_HEIGHT, `Logo height must be between ${MIN_LOGO_HEIGHT} and ${MAX_LOGO_HEIGHT}px`)
+        .optional(),
+    footerLogoHeight: z
+        .number()
+        .int("Logo height must be a whole number of pixels")
+        .min(MIN_LOGO_HEIGHT, `Logo height must be between ${MIN_LOGO_HEIGHT} and ${MAX_LOGO_HEIGHT}px`)
+        .max(MAX_LOGO_HEIGHT, `Logo height must be between ${MIN_LOGO_HEIGHT} and ${MAX_LOGO_HEIGHT}px`)
+        .optional(),
 
     // SEO
     siteUrl: z
@@ -602,4 +752,27 @@ export const updateStoreSettingZodSchema = z.object({
         .enum(["WEBSITE", "LANDING_PAGE"], "Site mode must be WEBSITE or LANDING_PAGE")
         .optional(),
     activeLandingPageId: z.string().min(1).nullable().optional(),
+
+    /*
+     * Which courier the shop dispatches through.
+     *
+     * `.optional()` alone, NOT `.nullable()`: there is no third state. Every
+     * shop dispatches through something, and a merchant using a courier this
+     * system does not integrate with selects MANUAL — which is a real provider
+     * declaring no capabilities, not the absence of a selection. Adding null
+     * would create a state with no defined behaviour and force every dispatch
+     * path to handle it.
+     *
+     * Shape only, as with `siteMode` above. The rule that actually matters —
+     * that a switch is refused while consignments are still in flight with the
+     * current courier — needs to count rows, so it is enforced transactionally
+     * in store-setting.service.ts.
+     *
+     * The enum members are mirrored from `CourierProvider` in the Prisma schema
+     * and must be kept in step with it: a member added there without being added
+     * here is silently unselectable through the API.
+     */
+    courierProvider: z
+        .enum(["STEADFAST", "MANUAL"], "Courier provider must be STEADFAST or MANUAL")
+        .optional(),
 });

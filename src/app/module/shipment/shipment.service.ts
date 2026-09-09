@@ -1,7 +1,9 @@
 import status from "http-status";
+import { CourierProvider } from "../../../generated/prisma/client";
 import { RoleName } from "../../constants/role.constant";
 import AppError from "../../errorHelpers/AppError";
 import { prisma } from "../../lib/prisma";
+import { resolveProvider } from "../courier/providers";
 import { CustomerService } from "../customer/customer.service";
 import { ICreateShipmentPayload, IUpdateShipmentPayload } from "./shipment.interface";
 
@@ -46,12 +48,16 @@ const getOrderShipment = async (userId: string, role: RoleName, orderId: string)
 /**
  * The fields a courier owns once a consignment exists.
  *
- * They are derived from Steadfast by the webhook and the reconciliation job, so
- * a hand-edit here would be undone by the next notification. Left open, an
+ * They are derived from the courier by the webhook and the reconciliation job,
+ * so a hand-edit here would be undone by the next notification. Left open, an
  * operator's correction and the sync overwrite each other in turn and the panel
  * shows whichever wrote last — a record that disagrees with both the courier and
  * the operator. A control that visibly refuses is better than one that silently
  * undoes itself.
+ *
+ * The condition is still the presence of a `consignmentId`, not which courier
+ * issued it: a consignment is courier-owned whoever created it, and
+ * `Shipment.courierProvider` says which one that was.
  * See openspec/changes/add-steadfast-courier-integration, design.md Decision 8.
  */
 const COURIER_OWNED_FIELDS = [
@@ -63,7 +69,7 @@ const COURIER_OWNED_FIELDS = [
 ] as const;
 
 const assertNotCourierOwned = (
-    shipment: { consignmentId: string | null },
+    shipment: { consignmentId: string | null; courierProvider: CourierProvider },
     payload: IUpdateShipmentPayload,
 ) => {
     if (!shipment.consignmentId) return;
@@ -78,7 +84,10 @@ const assertNotCourierOwned = (
 
     throw new AppError(
         status.CONFLICT,
-        `This shipment is managed by the courier (consignment ${shipment.consignmentId}). ${attempted.join(", ")} ${attempted.length === 1 ? "is" : "are"} set from Steadfast and cannot be edited here.`,
+        // Names the courier that actually created this consignment, not the one
+        // the shop dispatches through now. An operator told to check the wrong
+        // courier's portal has been sent to look in the wrong place.
+        `This shipment is managed by the courier (consignment ${shipment.consignmentId}). ${attempted.join(", ")} ${attempted.length === 1 ? "is" : "are"} set from ${resolveProvider(shipment.courierProvider).displayName} and cannot be edited here.`,
     );
 };
 

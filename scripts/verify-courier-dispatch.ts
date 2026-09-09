@@ -15,13 +15,22 @@
  * "correct-looking" if someone rewrote it positionally, right up until Steadfast
  * returned a reordered array.
  *
+ * Since add-courier-provider-selection these run against the STEADFAST provider
+ * explicitly rather than an implicit single courier. The assertions are
+ * unchanged: they are properties of dispatching to a courier, not of dispatching
+ * to Steadfast, and every provider must uphold them.
+ *
  * Run with: npx tsx scripts/verify-courier-dispatch.ts
  */
 import { ICourierOrderForDispatch } from "../src/app/module/courier/courier.interface";
+import { ICourierConsignmentResult } from "../src/app/module/courier/courier.provider";
 import { CourierService, matchResultsByInvoice } from "../src/app/module/courier/courier.service";
-import { SteadfastBulkResultItem } from "../src/app/module/courier/steadfast.client";
+import { SteadfastProvider } from "../src/app/module/courier/providers/steadfast.provider";
 
 const { evaluateOrder } = CourierService._internals;
+
+/** Eligibility is provider-aware now; these checks exercise Steadfast's rules. */
+const evaluate = (order: ICourierOrderForDispatch) => evaluateOrder(order, SteadfastProvider);
 
 let failures = 0;
 
@@ -55,12 +64,12 @@ console.log("\n--- Eligibility ---\n");
 
 check(
     "a packed order is eligible",
-    evaluateOrder(order()).eligible,
+    evaluate(order()).eligible,
     "the normal path",
 );
 
 for (const status of ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "COMPLETED"]) {
-    const verdict = evaluateOrder(order({ status }));
+    const verdict = evaluate(order({ status }));
     check(
         `a ${status} order is ineligible`,
         !verdict.eligible && verdict.reason === "NOT_PACKED",
@@ -68,7 +77,7 @@ for (const status of ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERE
     );
 }
 
-const dispatched = evaluateOrder(
+const dispatched = evaluate(
     order({ shipments: [{ id: "ship_1", consignmentId: "1424107" }] }),
 );
 
@@ -86,7 +95,7 @@ check(
 
 // Ordering matters: a dispatched order that is also not PACKED (it will be
 // SHIPPED) must report ALREADY_DISPATCHED, which is the more useful truth.
-const dispatchedAndShipped = evaluateOrder(
+const dispatchedAndShipped = evaluate(
     order({ status: "SHIPPED", shipments: [{ id: "ship_1", consignmentId: "1424107" }] }),
 );
 
@@ -98,7 +107,7 @@ check(
 
 check(
     "a manual shipment with no consignment does not block dispatch",
-    evaluateOrder(order({ shipments: [{ id: "ship_1", consignmentId: null }] })).eligible,
+    evaluate(order({ shipments: [{ id: "ship_1", consignmentId: null }] })).eligible,
     "such an order is updated in place, not refused",
 );
 
@@ -125,10 +134,10 @@ console.log("\n--- Results are matched by invoice, never by position ---\n");
 const sent = ["ORD-1001", "ORD-1002", "ORD-1003"];
 
 /** Deliberately reordered, and with one rejection in the middle. */
-const reordered: SteadfastBulkResultItem[] = [
-    { invoice: "ORD-1003", consignment_id: 3003, tracking_code: "CCC", status: "success" },
-    { invoice: "ORD-1001", consignment_id: 1001, tracking_code: "AAA", status: "success" },
-    { invoice: "ORD-1002", consignment_id: null, tracking_code: null, status: "error" },
+const reordered: ICourierConsignmentResult[] = [
+    { invoice: "ORD-1003", consignmentId: "3003", trackingCode: "CCC", accepted: true },
+    { invoice: "ORD-1001", consignmentId: "1001", trackingCode: "AAA", accepted: true },
+    { invoice: "ORD-1002", consignmentId: null, trackingCode: null, accepted: false },
 ];
 
 const matched = matchResultsByInvoice(sent, reordered);
@@ -142,7 +151,7 @@ check(
 
 check(
     "a rejected row is reported as failed, not accepted",
-    matched.rejected.length === 1 && matched.rejected[0] === "ORD-1002",
+    matched.rejected.length === 1 && matched.rejected[0]?.invoice === "ORD-1002",
     "",
 );
 
@@ -153,17 +162,17 @@ check(
 );
 
 const partial = matchResultsByInvoice(sent, [
-    { invoice: "ORD-1001", consignment_id: 1001, tracking_code: "AAA", status: "success" },
+    { invoice: "ORD-1001", consignmentId: "1001", trackingCode: "AAA", accepted: true },
 ]);
 
 check(
     "an invoice absent from the response is unconfirmed, not failed",
     partial.missing.length === 2 && partial.missing.includes("ORD-1002"),
-    "we cannot say Steadfast did not create it, so it must not be offered a retry",
+    "we cannot say the courier did not create it, so it must not be offered a retry",
 );
 
 const stray = matchResultsByInvoice(sent, [
-    { invoice: "ORD-9999", consignment_id: 9999, tracking_code: "ZZZ", status: "success" },
+    { invoice: "ORD-9999", consignmentId: "9999", trackingCode: "ZZZ", accepted: true },
 ]);
 
 check(
@@ -173,52 +182,62 @@ check(
 );
 
 check(
-    "success status is matched case-insensitively",
-    matchResultsByInvoice(["ORD-1"], [
-        { invoice: "ORD-1", consignment_id: 1, tracking_code: "A", status: "Success" },
-    ]).accepted.length === 1,
-    "the courier's casing is not consistent between its docs and its payloads",
-);
-
-check(
     "a success row with no consignment id is not treated as accepted",
     matchResultsByInvoice(["ORD-1"], [
-        { invoice: "ORD-1", consignment_id: null, tracking_code: null, status: "success" },
+        { invoice: "ORD-1", consignmentId: null, trackingCode: null, accepted: true },
     ]).rejected.length === 1,
     "there is nothing to record, so calling it dispatched would lose the parcel",
 );
 
-console.log("\n--- Courier status derivation ---\n");
+console.log("\n--- Courier status derivation (Steadfast's vocabulary) ---\n");
 
-const { isTerminalCourierStatus, needsAttention } = CourierService._internals;
+/*
+ * Status interpretation moved onto the provider: the vocabulary is the
+ * courier's, so only that courier's adapter can say what one of its strings
+ * means. The properties asserted are exactly the ones asserted before.
+ */
+const readStatus = (raw: string) => SteadfastProvider.readStatus!(raw);
+
+check(
+    "a status is read case-insensitively",
+    readStatus("Delivered").rawStatus === "delivered",
+    "the courier's casing is not consistent between its docs and its payloads",
+);
 
 check(
     "delivered is terminal",
-    isTerminalCourierStatus("delivered") && isTerminalCourierStatus("Delivered"),
+    readStatus("delivered").isTerminal && readStatus("Delivered").isTerminal,
     "and case-insensitively so",
 );
 
 check(
     "an approval-pending state is NOT terminal",
-    !isTerminalCourierStatus("delivered_approval_pending"),
+    !readStatus("delivered_approval_pending").isTerminal,
     "the merchant has not been paid yet, so it must keep being reconciled",
 );
 
 check(
+    "only an exact delivered advances the order",
+    readStatus("delivered").isFullyDelivered &&
+        !readStatus("partial_delivered").isFullyDelivered,
+    "closing an order while goods are still coming back is unrecoverable — DELIVERED has no transition out",
+);
+
+check(
     "cancelled needs attention",
-    needsAttention("cancelled"),
+    readStatus("cancelled").needsAttention,
     "the parcel is coming back and only a human can resolve it",
 );
 
 check(
     "partial_delivered needs attention",
-    needsAttention("partial_delivered"),
+    readStatus("partial_delivered").needsAttention,
     "no automatic rule can decide what was collected and what is returning",
 );
 
 check(
     "delivered does not need attention",
-    !needsAttention("delivered"),
+    !readStatus("delivered").needsAttention,
     "",
 );
 

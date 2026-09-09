@@ -1,4 +1,9 @@
-import { CurrencyPosition, SiteMode } from "../../../generated/prisma/client";
+import {
+    BrandDisplayMode,
+    CourierProvider,
+    CurrencyPosition,
+    SiteMode,
+} from "../../../generated/prisma/client";
 
 export interface INavChild {
     label: string;
@@ -122,7 +127,17 @@ export interface ITheme {
     sale: string;
     /** Pixels, or `"full"` for an unconstrained content width. */
     maxWidth: number | "full";
+    /** The storefront's typeface. */
     font: IThemeFont;
+    /**
+     * The admin panel's typeface, chosen independently of the storefront's.
+     *
+     * Optional on the way IN only — a caller written before the admin panel had
+     * a font of its own omits it, and the service carries the stored value
+     * forward rather than blanking it. Every READ resolves it, falling back to
+     * DEFAULT_THEME.adminFont, so a reader never has to handle its absence.
+     */
+    adminFont?: IThemeFont;
 }
 
 /**
@@ -224,6 +239,19 @@ export interface IUpdateStoreSettingPayload {
     aboutText?: string;
     copyrightText?: string;
 
+    /**
+     * Which of the two things each brand slot shows, set independently.
+     *
+     * The mode decides — not whether `logoUrl`/`footerLogoUrl` above are set —
+     * so a slot showing the wordmark keeps its artwork on file. Omitting a key
+     * leaves that slot's mode unchanged, as with every other optional scalar.
+     */
+    headerBrandMode?: BrandDisplayMode;
+    footerBrandMode?: BrandDisplayMode;
+    /** Pixels, bounded 24-96 by the schema. Width follows the image. */
+    headerLogoHeight?: number;
+    footerLogoHeight?: number;
+
     siteUrl?: string;
     metaTitle?: string;
     metaDescription?: string;
@@ -262,6 +290,22 @@ export interface IUpdateStoreSettingPayload {
      */
     siteMode?: SiteMode;
     activeLandingPageId?: string | null;
+
+    /**
+     * Which courier the shop dispatches through.
+     *
+     * Optional but never null — unlike `activeLandingPageId` above, there is no
+     * "deselected" state to express. MANUAL is the selection a merchant makes
+     * when their courier has no integration here, so every shop always resolves
+     * to a provider.
+     *
+     * Only the SELECTION lives on this row. The credentials stay in the
+     * environment, because `GET /settings` is public.
+     *
+     * Changing this is refused while consignments are in flight with the
+     * current courier — see store-setting.service.ts.
+     */
+    courierProvider?: CourierProvider;
 }
 
 /** What the storefront needs to route the root, from the settings it already fetches. */

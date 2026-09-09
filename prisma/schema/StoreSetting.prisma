@@ -65,13 +65,60 @@ model StoreSetting {
   ///
   /// Two logos, not one: storefront headers and footers are commonly
   /// light-on-dark and dark-on-light respectively, so one image cannot serve
-  /// both. A store with only `logoUrl` set renders it in both places rather
-  /// than leaving the footer's brand slot blank.
+  /// both. These columns SUPPLY the artwork; they do not decide whether it is
+  /// shown — `headerBrandMode`/`footerBrandMode` below do. Uploading a logo is
+  /// therefore never itself a publish action, and a slot showing the wordmark
+  /// keeps its artwork on file.
+  ///
+  /// In logo mode the footer resolves `footerLogoUrl`, falling back to
+  /// `logoUrl` when it has none of its own. Null and "a copy of the header's
+  /// URL" are deliberately different: clearing the footer's artwork must
+  /// restore that fallback rather than pin a copy, which is also why
+  /// DEFAULT_PUBLIC_SETTINGS.footerLogoUrl is null and not a copy of logoUrl.
   logoUrl        String?
   footerLogoUrl  String?
   siteNameAccent String?
   aboutText      String?
   copyrightText  String?
+
+  /// Whether each brand slot shows the wordmark or its logo image.
+  ///
+  /// Set INDEPENDENTLY — header logo above a wordmark footer, or the reverse,
+  /// are both ordinary configurations. See the BrandDisplayMode doc-comment for
+  /// why this is a stored mode rather than something derived from whether an
+  /// image happens to be uploaded.
+  ///
+  /// Both default to TEXT, and that is the entire backwards-compatibility
+  /// story: before these columns the storefront rendered the wordmark
+  /// unconditionally in both slots — it never read `logoUrl` at all — so TEXT
+  /// reproduces existing behaviour exactly, including for a store that had
+  /// already uploaded artwork. The migration is additive with no backfill and
+  /// changes no storefront's rendering on deploy.
+  ///
+  /// A slot in LOGO mode whose fallback chain yields no URL renders the
+  /// wordmark. The brand block is on every page of the site, so a blank one is
+  /// worse than the text it replaced — see the `storefront-branding` spec, "A
+  /// brand slot never renders empty".
+  headerBrandMode BrandDisplayMode @default(TEXT)
+  footerBrandMode BrandDisplayMode @default(TEXT)
+
+  /// Displayed height of each logo, in pixels. Width always follows the image's
+  /// own proportions, so artwork of any aspect ratio renders undistorted and
+  /// never needs re-cutting.
+  ///
+  /// Bounded 24-96 in store-setting.validation.ts, which Postgres cannot
+  /// express — so Zod is the ONLY gate, exactly as with `currencyDecimals`. 24
+  /// is roughly where a logo stops being legible beside the header's text
+  /// controls; 96 is past the header row's natural height, so anything larger
+  /// is a layout the row was not built for rather than a bigger logo.
+  ///
+  /// The storefront reserves this height before the image loads, which is what
+  /// keeps a late-arriving logo from shifting the page under a shopper who has
+  /// already started reading. That is also why no intrinsic width/height is
+  /// stored: reserving the box gets the same guarantee without probing every
+  /// upload. See add-header-footer-brand-display design.md, Decisions 2 and 3.
+  headerLogoHeight Int @default(40)
+  footerLogoHeight Int @default(36)
 
   /// SEO surface. `siteUrl` is the canonical origin used to resolve absolute
   /// metadata URLs; `metaTitle` falls back to `storeName` when unset, so the
@@ -146,11 +193,18 @@ model StoreSetting {
   ///   the API cannot disable it either.
   ///
   /// theme: { background, foreground, brand, brandDark, accent, sale,
-  ///          maxWidth, font: { family, url } }
+  ///          maxWidth, font: { family, url }, adminFont: { family, url } }
   ///   Colours are strict hex - the values are interpolated into an inline
   ///   style attribute on the storefront's <html>, so a value that could carry
-  ///   further declarations is rejected. `font.url` is REBUILT by the parser
-  ///   from validated components and is never a substring of merchant input.
+  ///   further declarations is rejected. Both `url`s are REBUILT by the parser
+  ///   from validated components and are never a substring of merchant input.
+  ///
+  ///   `font` is the STOREFRONT's typeface, `adminFont` the ADMIN PANEL's;
+  ///   they are chosen independently. Each is a denormalised copy of a row in
+  ///   the `Font` library rather than a reference to one, which is why the
+  ///   storefront read path joins nothing and why a font cannot be deleted
+  ///   while it is selected - see font.service.ts. `adminFont` may be absent
+  ///   on a row written before it existed; reads resolve it from DEFAULT_THEME.
   checkoutConfig Json?
   theme          Json?
 
@@ -201,6 +255,29 @@ model StoreSetting {
 
   activeLandingPageId String?
   activeLandingPage   LandingPage? @relation(fields: [activeLandingPageId], references: [id], onDelete: SetNull)
+
+  /// Which courier the shop dispatches through.
+  ///
+  /// THE SELECTION LIVES HERE; THE CREDENTIALS DO NOT. This row is served by a
+  /// public endpoint, so a secret on it is one careless field selection away
+  /// from being published — which is why the Steadfast keys sit in the
+  /// environment and stay there. An enum naming a courier grants nothing to
+  /// whoever reads it, so it is safe on the same row.
+  ///
+  /// Defaults to STEADFAST so an installation that predates this column keeps
+  /// dispatching exactly as before, with no configuration step. There is no
+  /// unset state: a nullable selection would force every dispatch path to
+  /// answer "what if nobody chose", and MANUAL already models "we use a courier
+  /// this system does not integrate with".
+  ///
+  /// Changing this is REFUSED while consignments created by the current
+  /// provider are still in flight — see store-setting.service.ts. Routing for
+  /// an existing consignment reads `Shipment.courierProvider`, never this
+  /// field.
+  ///
+  /// See openspec/changes/add-courier-provider-selection, design.md Decisions 4
+  /// and 8.
+  courierProvider CourierProvider @default(STEADFAST)
 
   updatedAt DateTime @updatedAt
 }

@@ -19,11 +19,15 @@ import {
     checkoutConfigSchema,
     checkoutConfigUpdateSchema,
     themeSchema,
+    updateStoreSettingZodSchema,
+    MAX_LOGO_HEIGHT,
+    MIN_LOGO_HEIGHT,
     SITE_CONTENT_WIDTHS,
 } from "../src/app/module/store-setting/store-setting.validation";
 import {
     DEFAULT_CATALOG_CONFIG,
     DEFAULT_CHECKOUT_CONFIG,
+    DEFAULT_PUBLIC_SETTINGS,
     DEFAULT_THEME,
 } from "../src/app/module/store-setting/store-setting.constant";
 import {
@@ -211,6 +215,120 @@ check(
     "DEFAULT_THEME.maxWidth is one of the offered widths",
     (SITE_CONTENT_WIDTHS as readonly number[]).includes(DEFAULT_THEME.maxWidth),
     "an unconfigured store must render at a width the form can also show",
+);
+
+/*
+ * The two font selections.
+ *
+ * `font` accepts a font two ways since the font library was added: a pasted
+ * embed (a string, which every check above uses) and `{ family }`, a pick from
+ * the library. Both arms are live — the string arm is what every caller written
+ * before the library sends, and dropping it would have made an additive feature
+ * breaking. These checks pin both, and pin that `adminFont` may be omitted,
+ * which is the one thing keeping those older callers working.
+ *
+ * Whether a selected family actually EXISTS is not checked here: that is a
+ * database read, so it lives in the service and is covered by
+ * verify-font-selection.ts. This file stays pure.
+ */
+check(
+    "DEFAULT_THEME validates with both fonts as pasted URLs",
+    themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: DEFAULT_THEME.font.url,
+        adminFont: DEFAULT_THEME.adminFont.url,
+    }).success,
+    "the defaults must be legal in the paste form as well",
+);
+check(
+    "adminFont may be omitted entirely",
+    themeSchema.safeParse({ ...DEFAULT_THEME, font: DEFAULT_THEME.font.url, adminFont: undefined })
+        .success,
+    "a caller written before the admin panel had a font must not be rejected",
+);
+check(
+    "a font may be selected by family",
+    themeSchema.safeParse({ ...DEFAULT_THEME, font: { family: "Inter" } }).success,
+    "the shape the admin's font picker sends",
+);
+check(
+    "both fonts may be selected by family",
+    themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: { family: "Inter" },
+        adminFont: { family: "Roboto" },
+    }).success,
+    "the two selections are independent",
+);
+/*
+ * The round-trip arm. A caller that reads the settings, changes a colour and
+ * PATCHes the theme back sends the font as `{ family, url }` — so that shape
+ * must be accepted, but never TRUSTED: the url is re-parsed and rebuilt, which
+ * is what stops a tampered one being stored.
+ */
+check(
+    "a stored {family, url} pair round-trips",
+    themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: { family: "Inter", url: "https://fonts.googleapis.com/css2?family=Inter&display=swap" },
+    }).success,
+    "read-modify-write is the commonest request there is",
+);
+{
+    const tampered = themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: { family: "Inter", url: "https://evil.test/x.css" },
+    });
+    check(
+        "a pair carrying a non-Google url is rejected",
+        !tampered.success,
+        "the url is re-parsed, not trusted for arriving in the stored shape",
+    );
+}
+{
+    const rebuilt = themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: {
+            family: "Inter",
+            url: "https://fonts.googleapis.com/css2?family=Inter&display=block&evil=1",
+        },
+    });
+    check(
+        "a round-tripped url is rebuilt, not echoed",
+        rebuilt.success &&
+            (rebuilt.data.font as { url: string }).url.includes("display=swap") &&
+            !(rebuilt.data.font as { url: string }).url.includes("evil"),
+        "the same rebuild every other arm gets",
+    );
+}
+check(
+    "a pair with an unknown extra key is rejected",
+    !themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: { family: "Inter", url: DEFAULT_THEME.font.url, weight: 700 },
+    }).success,
+    "strict on every arm, so an ignored field never reads as an accepted one",
+);
+check(
+    "an empty family is rejected",
+    !themeSchema.safeParse({ ...DEFAULT_THEME, font: { family: "" } }).success,
+    "there is no font named nothing",
+);
+check(
+    "a non-Google embed is still rejected in the adminFont slot",
+    !themeSchema.safeParse({
+        ...DEFAULT_THEME,
+        font: DEFAULT_THEME.font.url,
+        adminFont: "https://fonts.googleapis.com.evil.test/css2?family=Evil&display=swap",
+    }).success,
+    "the admin's font goes through the same parser as the storefront's",
+);
+check(
+    "DEFAULT_THEME.adminFont is a parsed pair, not a paste",
+    typeof DEFAULT_THEME.adminFont === "object" &&
+        typeof DEFAULT_THEME.adminFont.family === "string" &&
+        DEFAULT_THEME.adminFont.url.startsWith("https://fonts.googleapis.com/"),
+    "stored in the shape the parser returns, so this constant and a merchant-saved value read alike",
 );
 
 console.log("\n--- Checkout config invariants ---\n");
@@ -551,6 +669,106 @@ check(
         "an unknown key is rejected",
         !catalogConfigSchema.safeParse({ ...DEFAULT_CATALOG_CONFIG, showQuickview: true }).success,
         "a typo'd key would otherwise read at its default forever",
+    );
+}
+
+/* ------------------------------------------------------------------ *
+ * Header/footer brand display — the mode and height keys
+ * ------------------------------------------------------------------ */
+{
+    console.log("\n--- Brand display: modes and logo heights ---\n");
+
+    const parse = (patch: Record<string, unknown>) =>
+        updateStoreSettingZodSchema.safeParse(patch);
+
+    check(
+        "both modes default to TEXT",
+        DEFAULT_PUBLIC_SETTINGS.headerBrandMode === "TEXT" &&
+            DEFAULT_PUBLIC_SETTINGS.footerBrandMode === "TEXT",
+        "which is what the storefront rendered before these columns existed, so the change is invisible on deploy",
+    );
+
+    check(
+        "each slot's mode is accepted on its own",
+        parse({ headerBrandMode: "LOGO" }).success && parse({ footerBrandMode: "TEXT" }).success,
+        "a logo header above a wordmark footer is one PATCH, not two coupled ones",
+    );
+
+    check(
+        "a mode outside the closed set is rejected",
+        !parse({ headerBrandMode: "BOTH" }).success,
+        "the enum is the gate; a third mode would need the column to know about it first",
+    );
+
+    /*
+     * `.optional()` and NOT `.nullable()`, unlike freeShippingThreshold above.
+     * A brand slot always shows one of exactly two things, so there is no third
+     * "unset" state for null to express — and accepting it would mean a slot
+     * that renders neither the wordmark nor a logo.
+     */
+    check(
+        "null is rejected for a mode",
+        !parse({ headerBrandMode: null }).success,
+        "these are .optional() not .nullable() — an omitted key already means 'leave unchanged'",
+    );
+
+    check(
+        "omitting the brand keys leaves them out of the parsed payload",
+        (() => {
+            const result = parse({ storeName: "Some Shop" });
+            return (
+                result.success &&
+                !("headerBrandMode" in result.data) &&
+                !("headerLogoHeight" in result.data)
+            );
+        })(),
+        "which is what makes the partial upsert leave a slot a merchant did not touch alone",
+    );
+
+    check(
+        "the height bounds are inclusive at both ends",
+        parse({ headerLogoHeight: MIN_LOGO_HEIGHT }).success &&
+            parse({ headerLogoHeight: MAX_LOGO_HEIGHT }).success,
+        `${MIN_LOGO_HEIGHT} and ${MAX_LOGO_HEIGHT} are both valid heights`,
+    );
+
+    /*
+     * Postgres cannot express this range — the columns are plain Int — so this
+     * schema is the ONLY thing standing between a merchant and a header row
+     * built for a logo twice its height. Same arrangement as currencyDecimals.
+     */
+    check(
+        "a height below the range is refused",
+        !parse({ headerLogoHeight: MIN_LOGO_HEIGHT - 1 }).success,
+        "Zod is the only gate; the column is a plain Int",
+    );
+
+    check(
+        "a height above the range is refused",
+        !parse({ footerLogoHeight: MAX_LOGO_HEIGHT + 1 }).success,
+        "checked on the footer too — the two heights are independent keys",
+    );
+
+    check(
+        "a fractional height is refused",
+        !parse({ headerLogoHeight: 40.5 }).success,
+        "a pixel height is a whole number",
+    );
+
+    check(
+        "the refusal message names the permitted range",
+        (() => {
+            const result = parse({ headerLogoHeight: 500 });
+            return (
+                !result.success &&
+                result.error.issues.some(
+                    (issue) =>
+                        issue.message.includes(String(MIN_LOGO_HEIGHT)) &&
+                        issue.message.includes(String(MAX_LOGO_HEIGHT)),
+                )
+            );
+        })(),
+        "a merchant reading the toast should not have to guess what is allowed",
     );
 }
 

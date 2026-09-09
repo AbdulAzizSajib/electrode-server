@@ -1,6 +1,7 @@
 import status from "http-status";
 import {
     AuditAction,
+    CourierProvider,
     LandingPageStatus,
     Prisma,
     SiteMode,
@@ -8,6 +9,7 @@ import {
 import AppError from "../../errorHelpers/AppError";
 import { prisma } from "../../lib/prisma";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { CourierService } from "../courier/courier.service";
 import {
     revalidateStorefront,
     SEO_CONFIG_TAG,
@@ -22,6 +24,7 @@ import {
     ICheckoutConfig,
     ICurrencyFormat,
     ISeoConfig,
+    ITheme,
     IUpdateStoreSettingPayload,
 } from "./store-setting.interface";
 import {
@@ -129,6 +132,17 @@ const getPublicStoreSetting = async () => {
         siteNameAccent: merge(stored?.siteNameAccent, DEFAULT_PUBLIC_SETTINGS.siteNameAccent),
         logoUrl: merge(stored?.logoUrl, DEFAULT_PUBLIC_SETTINGS.logoUrl),
         footerLogoUrl: merge(stored?.footerLogoUrl, DEFAULT_PUBLIC_SETTINGS.footerLogoUrl),
+        /*
+         * Public for the same reason the logos above are: the storefront cannot
+         * draw its header or footer without knowing which of the two things
+         * each slot shows. Opted in one line at a time — this stays an
+         * allow-list. A row predating these columns merges to TEXT, which is
+         * what the storefront rendered before they existed.
+         */
+        headerBrandMode: merge(stored?.headerBrandMode, DEFAULT_PUBLIC_SETTINGS.headerBrandMode),
+        footerBrandMode: merge(stored?.footerBrandMode, DEFAULT_PUBLIC_SETTINGS.footerBrandMode),
+        headerLogoHeight: merge(stored?.headerLogoHeight, DEFAULT_PUBLIC_SETTINGS.headerLogoHeight),
+        footerLogoHeight: merge(stored?.footerLogoHeight, DEFAULT_PUBLIC_SETTINGS.footerLogoHeight),
         aboutText: merge(stored?.aboutText, DEFAULT_PUBLIC_SETTINGS.aboutText),
         copyrightText: merge(stored?.copyrightText, DEFAULT_PUBLIC_SETTINGS.copyrightText),
 
@@ -207,7 +221,39 @@ const getPublicStoreSetting = async () => {
             ...((stored?.catalogConfig as object | null) ?? {}),
         },
 
-        theme: merge(stored?.theme, DEFAULT_PUBLIC_SETTINGS.theme),
+        /*
+         * A PER-KEY merge with a nested repair for both font keys, not the
+         * wholesale `merge()` this used to be — the same correction
+         * `withDeliveryDefault` and `catalogConfig` above already carry.
+         *
+         * `merge()` swaps the WHOLE stored value for the fallback only when it
+         * is null, so a theme row written before `adminFont` existed — which is
+         * every row in every existing install — was served exactly as stored,
+         * i.e. with no `adminFont` at all. The admin panel would then have
+         * nothing to read and would sit on its fallback stack permanently,
+         * looking like the setting simply did not work.
+         *
+         * The two nested spreads matter for the same reason one level up would
+         * not be enough: a stored `font` carrying a `family` but no `url` (a
+         * row hand-edited, or written by a partial migration) would otherwise
+         * be served with the family and no stylesheet to load it from. Repaired
+         * per key, a half-written font resolves the missing half from the
+         * default and still renders.
+         */
+        theme: {
+            ...DEFAULT_PUBLIC_SETTINGS.theme,
+            ...((stored?.theme as object | null) ?? {}),
+            font: {
+                ...DEFAULT_PUBLIC_SETTINGS.theme.font,
+                ...(((stored?.theme as { font?: object } | null)?.font as object | undefined) ??
+                    {}),
+            },
+            adminFont: {
+                ...DEFAULT_PUBLIC_SETTINGS.theme.adminFont,
+                ...(((stored?.theme as { adminFont?: object } | null)
+                    ?.adminFont as object | undefined) ?? {}),
+            },
+        },
 
         /*
          * Public because metadata is rendered on every page, before any session
@@ -355,6 +401,140 @@ const assertSiteModeIsServable = async (
     }
 };
 
+/**
+ * Refuses a courier switch that would strand parcels already in flight.
+ *
+ * Every consignment is polled against the provider that CREATED it, using that
+ * provider's credentials (`Shipment.courierProvider`). So a switch made while
+ * parcels are out does not break them — but it is still the wrong moment: the
+ * merchant's old courier account is funded and their new one may not even be
+ * configured, and an operator watching statuses stop moving has no way to
+ * connect that to a setting they changed.
+ *
+ * The refusal names the COUNT rather than saying "not allowed", because "23
+ * parcels are still in transit" tells the merchant when to try again.
+ *
+ * "In flight" is the same non-terminal set reconciliation polls, read from
+ * `CourierService` so the two cannot disagree about what settled means.
+ * `unknown` counts as in flight deliberately — it is the courier telling us to
+ * contact support, which is the opposite of settled.
+ *
+ * Runs INSIDE the caller's transaction, against the provider being switched
+ * AWAY from. A payload that does not mention `courierProvider`, or names the one
+ * already configured, costs nothing.
+ *
+ * See openspec/changes/add-courier-provider-selection, design.md Decision 4.
+ */
+const assertCourierSwitchIsSafe = async (
+    payload: IUpdateStoreSettingPayload,
+    existing: { courierProvider: CourierProvider } | null,
+) => {
+    const next = payload.courierProvider;
+
+    if (!next) return;
+
+    const current = existing?.courierProvider ?? CourierProvider.STEADFAST;
+
+    if (next === current) return;
+
+    const inFlight = await CourierService.countInFlightConsignments(current);
+
+    if (inFlight > 0) {
+        throw new AppError(
+            status.CONFLICT,
+            `${inFlight} ${inFlight === 1 ? "consignment is" : "consignments are"} still in transit with the current courier. Wait for ${inFlight === 1 ? "it" : "them"} to be delivered or cancelled before switching couriers.`,
+        );
+    }
+};
+
+/**
+ * Turns the theme's font selections into the `{ family, url }` pairs actually
+ * stored.
+ *
+ * `themeSchema` accepts a font two ways (see fontSchema there): as a pasted
+ * embed, which Zod has already parsed into `{ family, url }` by the time it
+ * reaches here, or as `{ family }` — a pick from the font library. Only the
+ * second needs anything doing: the family has to be looked up to get its
+ * stylesheet URL, and that is a database read, which is why it happens here and
+ * not in validation.
+ *
+ * Rejecting an unknown family matters more than it looks. The alternative —
+ * storing the name and no URL — would render as the fallback stack on every
+ * page with nothing anywhere saying why, and a merchant would reasonably read
+ * that as the font feature being broken.
+ *
+ * `adminFont` is carried forward when the payload omits it. It is the one
+ * optional key in an otherwise write-whole blob, so an older caller that sends
+ * a complete theme without it must not blank the admin's typeface.
+ *
+ * See openspec/changes/add-font-library-and-admin-font, design.md Decision 3.
+ */
+const resolveThemeFonts = async (
+    tx: Prisma.TransactionClient,
+    payload: IUpdateStoreSettingPayload,
+    existing: { theme: Prisma.JsonValue } | null,
+): Promise<IUpdateStoreSettingPayload> => {
+    const theme = payload.theme as Record<string, unknown> | undefined;
+
+    if (!theme) {
+        return payload;
+    }
+
+    const resolveOne = async (value: unknown, label: string) => {
+        /*
+         * Already `{ family, url }` — which can ONLY be Zod's own transform
+         * output, never caller input: `fontSelectionSchema` is `.strict()`, so
+         * a request that sends a `url` alongside a `family` is rejected outright
+         * rather than stripped. That is what makes trusting this branch safe.
+         * If that `.strict()` is ever removed, this becomes a hole straight
+         * past the parser and into the column.
+         */
+        if (
+            value &&
+            typeof value === "object" &&
+            "url" in (value as object) &&
+            "family" in (value as object)
+        ) {
+            return value;
+        }
+
+        if (value && typeof value === "object" && "family" in (value as object)) {
+            const family = String((value as { family: unknown }).family);
+
+            const font = await tx.font.findFirst({
+                where: { family: { equals: family, mode: "insensitive" } },
+            });
+
+            if (!font) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `"${family}" is not in the font library. Add it under UI → Fonts first.`,
+                );
+            }
+
+            return { family: font.family, url: font.url };
+        }
+
+        throw new AppError(status.BAD_REQUEST, `The ${label} font is not in a recognised form.`);
+    };
+
+    const storedTheme = (existing?.theme as Record<string, unknown> | null) ?? null;
+
+    const resolved: Record<string, unknown> = {
+        ...theme,
+        font: await resolveOne(theme.font, "storefront"),
+    };
+
+    if (theme.adminFont !== undefined) {
+        resolved.adminFont = await resolveOne(theme.adminFont, "admin panel");
+    } else if (storedTheme?.adminFont !== undefined) {
+        // Omitted by an older caller: keep what is there rather than dropping it.
+        resolved.adminFont = storedTheme.adminFont;
+    }
+
+    return { ...payload, theme: resolved as unknown as ITheme };
+};
+
 const updateStoreSetting = async (userId: string, payload: IUpdateStoreSettingPayload) => {
     const existing = await prisma.storeSetting.findUnique({ where: { id: SINGLETON_ID } });
 
@@ -368,10 +548,14 @@ const updateStoreSetting = async (userId: string, payload: IUpdateStoreSettingPa
          */
         await assertSiteModeIsServable(tx, resolveSiteMode(payload, existing));
 
+        await assertCourierSwitchIsSafe(payload, existing);
+
+        const resolvedPayload = await resolveThemeFonts(tx, payload, existing);
+
         return tx.storeSetting.upsert({
             where: { id: SINGLETON_ID },
-            update: payload as Prisma.StoreSettingUpdateInput,
-            create: { id: SINGLETON_ID, ...payload } as Prisma.StoreSettingCreateInput,
+            update: resolvedPayload as Prisma.StoreSettingUpdateInput,
+            create: { id: SINGLETON_ID, ...resolvedPayload } as Prisma.StoreSettingCreateInput,
         });
     });
 

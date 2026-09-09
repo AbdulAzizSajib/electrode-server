@@ -1,6 +1,31 @@
+/**
+ * Courier dispatch and status, across whichever courier the shop uses.
+ *
+ * THIS FILE ORCHESTRATES; PROVIDERS TRANSLATE. Everything here is
+ * courier-independent by design — deduplicating a selection, eligibility
+ * ordering, batching with results persisted before the next batch is sent,
+ * matching results by invoice rather than array position, and the single
+ * `applyCourierStatus` both status paths converge on. Each of those exists
+ * because getting it wrong duplicates a consignment or corrupts a status, so
+ * none of them is delegated to a provider that could then reintroduce the
+ * failure. See `courier.provider.ts`.
+ *
+ * ROUTING FOLLOWS THE CONSIGNMENT, NOT THE SETTING. Only dispatch reads
+ * `StoreSetting.courierProvider`; reconciliation, webhooks and returns all route
+ * on the `Shipment.courierProvider` recorded when the consignment was created.
+ * Without that, changing the setting would strand every parcel in flight — the
+ * sync job polling a new courier for an id it never issued.
+ *
+ * See openspec/changes/add-steadfast-courier-integration and
+ * openspec/changes/add-courier-provider-selection, design.md Decisions 2 and 3.
+ */
 import status from "http-status";
-import { AuditAction, OrderStatus, ShipmentStatus } from "../../../generated/prisma/client";
-import { envVars } from "../../config/env";
+import {
+    AuditAction,
+    CourierProvider,
+    OrderStatus,
+    ShipmentStatus,
+} from "../../../generated/prisma/client";
 import AppError from "../../errorHelpers/AppError";
 import { prisma } from "../../lib/prisma";
 import { AuditLogService } from "../audit-log/audit-log.service";
@@ -11,30 +36,23 @@ import {
     ICourierDispatchSummary,
     ICourierEligibility,
     ICourierOrderForDispatch,
-    ICourierWebhookPayload,
 } from "./courier.interface";
-import { mapOrderToConsignment } from "./courier.mapper";
 import {
-    isFullyDelivered,
-    isTerminalCourierStatus,
-    needsAttention,
-    normaliseCourierStatus,
-    toShipmentStatus,
-} from "./courier.status";
-import {
-    CourierNotConfiguredError,
-    SteadfastBulkResultItem,
-    SteadfastClient,
-} from "./steadfast.client";
+    ICourierConsignmentResult,
+    ICourierProvider,
+    ICourierStatusReading,
+    ICourierWebhookReading,
+} from "./courier.provider";
+import { listProviders, resolveProvider } from "./providers";
 
 /**
  * How many consignments one courier request carries.
  *
  * Steadfast allows 500. We send 50, because the binding constraint is not their
  * limit but our 30-second Vercel function: a 500-item call plus its database
- * writes will not finish, and a dispatch that dies after Steadfast has committed
- * is the exact failure this module exists to prevent.
- * See design.md Decision 4.
+ * writes will not finish, and a dispatch that dies after the courier has
+ * committed is the exact failure this module exists to prevent.
+ * See add-steadfast-courier-integration design.md Decision 4.
  */
 const BATCH_SIZE = 50;
 
@@ -48,6 +66,16 @@ const RECONCILE_BATCH = 40;
 /** A consignment heard from inside this window is assumed healthy; the job is
  *  looking for silence, not refreshing everything. */
 const STALENESS_MINUTES = 90;
+
+/**
+ * Courier statuses meaning "nothing further will happen".
+ *
+ * Used for two things that must agree: which consignments reconciliation stops
+ * polling, and which no longer block a provider switch. `unknown` is
+ * deliberately absent — it is the courier telling us to contact support, which
+ * is the opposite of settled.
+ */
+const TERMINAL_COURIER_STATUSES = ["delivered", "partial_delivered", "cancelled"];
 
 const ORDER_FOR_DISPATCH_SELECT = {
     id: true,
@@ -74,11 +102,50 @@ const ORDER_FOR_DISPATCH_SELECT = {
     },
 } as const;
 
-const assertConfigured = () => {
-    if (!SteadfastClient.isCourierConfigured()) {
+/**
+ * The provider the shop dispatches through right now.
+ *
+ * Read at dispatch time rather than cached: a setting read from a module-level
+ * variable would serve a stale provider to every request in a warm function
+ * until it was redeployed.
+ */
+const getConfiguredProvider = async (): Promise<ICourierProvider> => {
+    const setting = await prisma.storeSetting.findUnique({
+        where: { id: "singleton" },
+        select: { courierProvider: true },
+    });
+
+    // No settings row yet means a shop that has never been configured. The
+    // schema default is STEADFAST and so is this, so the two cannot disagree.
+    return resolveProvider(setting?.courierProvider ?? CourierProvider.STEADFAST);
+};
+
+/**
+ * Refuses an action the provider does not offer.
+ *
+ * Enforced here as well as hidden in the admin. Hiding alone leaves an endpoint
+ * that fails confusingly when called directly; refusing alone leaves buttons
+ * that exist only to fail. See design.md Decision 7.
+ */
+const assertCapability = (
+    provider: ICourierProvider,
+    capability: keyof ICourierProvider["capabilities"],
+    action: string,
+) => {
+    if (!provider.capabilities[capability]) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `${provider.displayName} does not support ${action}.`,
+        );
+    }
+};
+
+/** Refuses a provider whose credentials are unset, naming it. */
+const assertConfigured = (provider: ICourierProvider) => {
+    if (!provider.isConfigured()) {
         throw new AppError(
             status.SERVICE_UNAVAILABLE,
-            "Steadfast is not configured. Set STEADFAST_API_KEY and STEADFAST_SECRET_KEY.",
+            `${provider.displayName} is selected but not configured. Set its API credentials in the environment.`,
         );
     }
 };
@@ -90,7 +157,10 @@ const assertConfigured = () => {
  * An operator seeing "not packed" for an order they know is dispatched would be
  * reading a less useful truth than "already dispatched".
  */
-const evaluateOrder = (order: ICourierOrderForDispatch): ICourierEligibility => {
+const evaluateOrder = (
+    order: ICourierOrderForDispatch,
+    provider: ICourierProvider,
+): ICourierEligibility => {
     const base = { orderId: order.id, orderNumber: order.orderNumber };
 
     const existing = order.shipments.find((shipment) => shipment.consignmentId);
@@ -114,7 +184,9 @@ const evaluateOrder = (order: ICourierOrderForDispatch): ICourierEligibility => 
         };
     }
 
-    const mapped = mapOrderToConsignment(order);
+    // Provider-specific from here: field limits, phone format and address
+    // composition are the courier's, and the refusal names the courier's rule.
+    const mapped = provider.mapOrder(order);
 
     if (!mapped.ok) {
         return { ...base, eligible: false, reason: mapped.reason, detail: mapped.detail };
@@ -131,6 +203,8 @@ const evaluateOrder = (order: ICourierOrderForDispatch): ICourierEligibility => 
  * runs.
  */
 const previewDispatch = async (orderIds: string[]): Promise<ICourierEligibility[]> => {
+    const provider = await getConfiguredProvider();
+
     const unique = [...new Set(orderIds)];
 
     if (unique.length === 0) {
@@ -167,7 +241,7 @@ const previewDispatch = async (orderIds: string[]): Promise<ICourierEligibility[
             };
         }
 
-        return evaluateOrder(order as unknown as ICourierOrderForDispatch);
+        return evaluateOrder(order as unknown as ICourierOrderForDispatch, provider);
     });
 };
 
@@ -181,6 +255,7 @@ const previewDispatch = async (orderIds: string[]): Promise<ICourierEligibility[
  */
 const recordDispatchedConsignment = async (
     order: { id: string; orderNumber: string; shipments: { id: string }[] },
+    provider: ICourierProvider,
     consignmentId: string,
     trackingCode: string | null,
     actorUserId: string,
@@ -188,11 +263,15 @@ const recordDispatchedConsignment = async (
     const existing = order.shipments[0];
 
     const data = {
+        // Recorded per consignment, never read back from the setting: this
+        // parcel stays bound to the courier carrying it however the shop is
+        // later reconfigured. See design.md Decision 3.
+        courierProvider: provider.id,
         consignmentId,
         courierInvoice: order.orderNumber,
         courierStatus: "in_review",
         courierSyncedAt: new Date(),
-        carrier: "Steadfast",
+        carrier: provider.displayName,
         trackingNumber: trackingCode,
         status: ShipmentStatus.PROCESSING,
         shippedAt: new Date(),
@@ -209,7 +288,7 @@ const recordDispatchedConsignment = async (
      * distinguish a boxed parcel on the bench from one in a courier's van, which
      * is the distinction an operator dispatching in bulk most needs.
      *
-     * Failure here is logged, not thrown: the consignment exists at Steadfast
+     * Failure here is logged, not thrown: the consignment exists at the courier
      * and the shipment row is already written. Losing the status advance is a
      * cosmetic inconsistency an operator can fix; throwing would abandon the
      * rest of the batch over it.
@@ -217,7 +296,10 @@ const recordDispatchedConsignment = async (
     try {
         await OrderService.updateOrderStatus(
             order.id,
-            { status: "SHIPPED", note: `Dispatched to Steadfast (consignment ${consignmentId})` },
+            {
+                status: "SHIPPED",
+                note: `Dispatched to ${provider.displayName} (consignment ${consignmentId})`,
+            },
             actorUserId,
         );
     } catch (error) {
@@ -229,20 +311,23 @@ const recordDispatchedConsignment = async (
 };
 
 /**
- * Sends the eligible orders to Steadfast in bounded batches.
+ * Sends the eligible orders to the configured provider in bounded batches.
  *
  * Each batch is persisted before the next is sent. This is the property that
  * makes a timeout recoverable: a request killed at Vercel's ceiling then loses
  * the RESPONSE, not the RECORD, so the operator refreshes and sees precisely
  * which orders went. Accumulating results and writing once at the end would turn
- * a timeout into an unrecoverable divergence between our database and theirs.
- * See design.md Decision 4.
+ * a timeout into an unrecoverable divergence between our database and the
+ * courier's. See add-steadfast-courier-integration design.md Decision 4.
  */
 const dispatchOrders = async (
     orderIds: string[],
     actor: ICourierActor,
 ): Promise<ICourierDispatchSummary> => {
-    assertConfigured();
+    const provider = await getConfiguredProvider();
+
+    assertCapability(provider, "dispatch", "dispatching orders");
+    assertConfigured(provider);
 
     const verdicts = await previewDispatch(orderIds);
     const results: ICourierDispatchResult[] = [];
@@ -274,11 +359,11 @@ const dispatchOrders = async (
     for (let i = 0; i < orders.length; i += BATCH_SIZE) {
         const batch = orders.slice(i, i + BATCH_SIZE);
 
-        const payloads = [];
+        const requests = [];
         const byInvoice = new Map<string, (typeof batch)[number]>();
 
         for (const order of batch) {
-            const mapped = mapOrderToConsignment(order as unknown as ICourierOrderForDispatch);
+            const mapped = provider.mapOrder(order as unknown as ICourierOrderForDispatch);
 
             // Re-checked rather than trusted from the preview: the two reads are
             // separate queries and an order can change between them.
@@ -293,17 +378,17 @@ const dispatchOrders = async (
                 continue;
             }
 
-            payloads.push(mapped.payload);
-            byInvoice.set(mapped.payload.invoice, order);
+            requests.push(mapped.request);
+            byInvoice.set(mapped.request.invoice, order);
         }
 
-        if (payloads.length === 0) continue;
+        if (requests.length === 0) continue;
 
-        const response = await SteadfastClient.createBulkOrders(payloads);
+        const response = await provider.createConsignments!(requests);
 
         if (response.outcome === "unconfirmed") {
             /*
-             * NOT a failure. Aborting our request does not abort Steadfast's
+             * NOT a failure. Aborting our request does not abort the courier's
              * handler, so these consignments may well exist. Reporting them as
              * failed would invite the retry that duplicates them.
              */
@@ -335,7 +420,7 @@ const dispatchOrders = async (
         // Invoices we did not send. Logged and skipped rather than guessed at.
         for (const invoice of matched.unknownInvoices) {
             console.warn(
-                `Steadfast returned invoice "${invoice}", which was not in the batch sent. Skipped.`,
+                `${provider.displayName} returned invoice "${invoice}", which was not in the batch sent. Skipped.`,
             );
         }
 
@@ -344,6 +429,7 @@ const dispatchOrders = async (
 
             await recordDispatchedConsignment(
                 order,
+                provider,
                 item.consignmentId,
                 item.trackingCode,
                 actor.userId,
@@ -358,19 +444,19 @@ const dispatchOrders = async (
             });
         }
 
-        for (const invoice of matched.rejected) {
-            const order = byInvoice.get(invoice)!;
+        for (const rejected of matched.rejected) {
+            const order = byInvoice.get(rejected.invoice)!;
 
             results.push({
                 orderId: order.id,
                 orderNumber: order.orderNumber,
                 outcome: "failed",
-                detail: "The courier rejected this consignment.",
+                detail: rejected.message ?? "The courier rejected this consignment.",
             });
         }
 
         // Sent but absent from the response. We cannot say it failed, because we
-        // cannot say Steadfast did not create it.
+        // cannot say the courier did not create it.
         for (const invoice of matched.missing) {
             const order = byInvoice.get(invoice)!;
 
@@ -388,6 +474,7 @@ const dispatchOrders = async (
 
     void AuditLogService.record(actor.userId, AuditAction.OTHER, "CourierDispatch", undefined, {
         newData: {
+            provider: provider.id,
             dispatched: summary.results
                 .filter((r) => r.outcome === "dispatched")
                 .map((r) => ({ orderNumber: r.orderNumber, consignmentId: r.consignmentId })),
@@ -403,11 +490,11 @@ const dispatchOrders = async (
 /**
  * Pairs what we sent with what came back, by `invoice`.
  *
- * Pure and separate so the property that matters can be verified without
- * calling Steadfast: nothing in their documentation promises the response array
- * is ordered like the request, and applying it positionally would write one
- * order's consignment id onto another — a wrong tracking number handed to a
- * customer and a parcel nobody can find. See design.md Decision 5.
+ * Pure and separate so the property that matters can be verified without calling
+ * a courier: nothing promises the response array is ordered like the request,
+ * and applying it positionally would write one order's consignment id onto
+ * another — a wrong tracking number handed to a customer and a parcel nobody can
+ * find. See add-steadfast-courier-integration design.md Decision 5.
  *
  * Returns three groups, because "not in the response" is not the same as
  * "rejected": an invoice we sent and did not hear about may still have been
@@ -415,11 +502,11 @@ const dispatchOrders = async (
  */
 export const matchResultsByInvoice = (
     sentInvoices: string[],
-    responseItems: SteadfastBulkResultItem[],
+    responseItems: ICourierConsignmentResult[],
 ) => {
     const sent = new Set(sentInvoices);
     const accepted: { invoice: string; consignmentId: string; trackingCode: string | null }[] = [];
-    const rejected: string[] = [];
+    const rejected: { invoice: string; message?: string }[] = [];
     const unknownInvoices: string[] = [];
     const seen = new Set<string>();
 
@@ -431,18 +518,16 @@ export const matchResultsByInvoice = (
 
         seen.add(item.invoice);
 
-        const succeeded =
-            normaliseCourierStatus(String(item.status ?? "")) === "success" &&
-            item.consignment_id != null;
-
-        if (succeeded) {
+        // The provider has already translated its courier's own success flag
+        // into `accepted`; this function does not parse courier status strings.
+        if (item.accepted && item.consignmentId) {
             accepted.push({
                 invoice: item.invoice,
-                consignmentId: String(item.consignment_id),
-                trackingCode: item.tracking_code ?? null,
+                consignmentId: item.consignmentId,
+                trackingCode: item.trackingCode,
             });
         } else {
-            rejected.push(item.invoice);
+            rejected.push({ invoice: item.invoice, message: item.message });
         }
     }
 
@@ -467,19 +552,23 @@ const summarise = (results: ICourierDispatchResult[]): ICourierDispatchSummary =
  *
  * Both the webhook and the reconciliation job come through here, so the two
  * paths cannot drift — two paths writing the same state by different rules is
- * how a panel comes to disagree with itself. See design.md Decision 7.
+ * how a panel comes to disagree with itself. See
+ * add-steadfast-courier-integration design.md Decision 7.
  *
  * Idempotent: applying a status the shipment already holds touches only
  * `courierSyncedAt`, which is what makes a re-delivered webhook and a
  * double-fired cron equally harmless.
+ *
+ * Takes a `reading` rather than a raw string, because what a status MEANS is the
+ * provider's to say — its vocabulary, its terminal set, its notion of a partial
+ * delivery.
  */
 const applyCourierStatus = async (
     shipment: { id: string; orderId: string; courierStatus: string | null },
-    rawStatus: string,
+    reading: ICourierStatusReading,
     observedAt: Date,
 ) => {
-    const normalised = normaliseCourierStatus(rawStatus);
-    const unchanged = normaliseCourierStatus(shipment.courierStatus ?? "") === normalised;
+    const unchanged = (shipment.courierStatus ?? "").trim().toLowerCase() === reading.rawStatus;
 
     if (unchanged) {
         // Still worth recording that we heard from the courier — that timestamp
@@ -494,17 +583,17 @@ const applyCourierStatus = async (
     await prisma.shipment.update({
         where: { id: shipment.id },
         data: {
-            courierStatus: normalised,
+            courierStatus: reading.rawStatus,
             courierSyncedAt: observedAt,
-            status: toShipmentStatus(normalised),
-            ...(isFullyDelivered(normalised) ? { deliveredAt: observedAt } : {}),
+            status: reading.shipmentStatus,
+            ...(reading.isFullyDelivered ? { deliveredAt: observedAt } : {}),
         },
     });
 
     /*
-     * Only an exact `delivered` advances the order. `partial_delivered` does not:
-     * closing an order while goods are still coming back would be unrecoverable
-     * through the normal path, since DELIVERED offers no transition back.
+     * Only a full delivery advances the order. A partial one does not: closing
+     * an order while goods are still coming back would be unrecoverable through
+     * the normal path, since DELIVERED offers no transition back.
      *
      * A cancellation deliberately does nothing here — not the order status, not
      * stock, not a refund. The parcel is on its way back, and restocking on the
@@ -512,7 +601,7 @@ const applyCourierStatus = async (
      * surfaces as needing attention instead, and staff resolve it through the
      * existing cancellation flow.
      */
-    if (isFullyDelivered(normalised)) {
+    if (reading.isFullyDelivered) {
         try {
             await OrderService.updateOrderStatus(
                 shipment.orderId,
@@ -534,52 +623,70 @@ const applyCourierStatus = async (
     }
 };
 
-/** Builds the replay-proof key for one notification. See design.md Decision 11. */
-const buildDedupeKey = (
-    shipmentId: string,
-    payload: ICourierWebhookPayload,
-): string =>
+/** Builds the replay-proof key for one notification. See
+ *  add-steadfast-courier-integration design.md Decision 11. */
+const buildDedupeKey = (shipmentId: string, reading: ICourierWebhookReading): string =>
     [
         shipmentId,
-        payload.notification_type,
-        payload.updated_at ?? "",
-        payload.status ?? "",
-        (payload.tracking_message ?? "").slice(0, 120),
+        reading.notificationType,
+        reading.courierUpdatedAt?.toISOString() ?? "",
+        reading.rawStatus ?? "",
+        (reading.trackingMessage ?? "").slice(0, 120),
     ].join("|");
 
-const toDecimal = (value: unknown): number | undefined => {
-    if (value === undefined || value === null || value === "") return undefined;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-};
-
 /**
- * Handles one webhook notification.
+ * Handles one webhook notification from a named provider.
  *
- * An unknown consignment is acknowledged rather than refused: Steadfast is not
+ * An unknown consignment is acknowledged rather than refused: the courier is not
  * at fault for a consignment we no longer hold, and answering with an error
  * would invite retries of something that can never succeed.
+ *
+ * A consignment belonging to a DIFFERENT provider is a distinct case and is
+ * rejected. Two couriers issue ids from their own spaces, so matching on the id
+ * alone would let one courier's status be written onto another's parcel.
  */
-const handleWebhook = async (payload: ICourierWebhookPayload) => {
-    const consignmentId = String(payload.consignment_id);
+const handleWebhook = async (provider: ICourierProvider, body: unknown) => {
+    const reading = provider.parseWebhook?.(body);
+
+    if (!reading) {
+        return { matched: false, reason: "unreadable" as const };
+    }
 
     const shipment = await prisma.shipment.findUnique({
-        where: { consignmentId },
+        where: {
+            courierProvider_consignmentId: {
+                courierProvider: provider.id,
+                consignmentId: reading.consignmentId,
+            },
+        },
         select: { id: true, orderId: true, courierStatus: true },
     });
 
     if (!shipment) {
+        // Deliberately does not distinguish "no such consignment anywhere" from
+        // "belongs to another provider" in the response. Both are acknowledged
+        // and neither writes anything; telling an unauthenticated-ish caller
+        // which consignment ids exist under which provider would be an
+        // enumeration oracle. The log line carries the detail.
+        const elsewhere = await prisma.shipment.findFirst({
+            where: { consignmentId: reading.consignmentId },
+            select: { courierProvider: true },
+        });
+
+        if (elsewhere) {
+            console.warn(
+                `${provider.displayName} webhook named consignment ${reading.consignmentId}, which belongs to ${elsewhere.courierProvider}. Ignored.`,
+            );
+            return { matched: false, reason: "wrong-provider" as const };
+        }
+
         console.warn(
-            `Courier webhook named consignment ${consignmentId}, which this system does not hold. Acknowledged and ignored.`,
+            `${provider.displayName} webhook named consignment ${reading.consignmentId}, which this system does not hold. Acknowledged and ignored.`,
         );
-        return { matched: false };
+        return { matched: false, reason: "unknown-consignment" as const };
     }
 
-    const courierUpdatedAt = payload.updated_at ? new Date(payload.updated_at) : null;
-    const observedAt =
-        courierUpdatedAt && !Number.isNaN(courierUpdatedAt.getTime())
-            ? courierUpdatedAt
-            : new Date();
+    const observedAt = reading.courierUpdatedAt ?? new Date();
 
     /*
      * History first, and let the unique constraint do the deduplicating. A
@@ -590,16 +697,13 @@ const handleWebhook = async (payload: ICourierWebhookPayload) => {
         await prisma.courierTrackingEvent.create({
             data: {
                 shipmentId: shipment.id,
-                notificationType: String(payload.notification_type),
-                status: payload.status ? normaliseCourierStatus(payload.status) : null,
-                trackingMessage: payload.tracking_message ?? null,
-                codAmount: toDecimal(payload.cod_amount),
-                deliveryCharge: toDecimal(payload.delivery_charge),
-                courierUpdatedAt:
-                    courierUpdatedAt && !Number.isNaN(courierUpdatedAt.getTime())
-                        ? courierUpdatedAt
-                        : null,
-                dedupeKey: buildDedupeKey(shipment.id, payload),
+                notificationType: reading.notificationType,
+                status: reading.rawStatus ? reading.rawStatus.trim().toLowerCase() : null,
+                trackingMessage: reading.trackingMessage ?? null,
+                codAmount: reading.codAmount,
+                deliveryCharge: reading.deliveryCharge,
+                courierUpdatedAt: reading.courierUpdatedAt ?? null,
+                dedupeKey: buildDedupeKey(shipment.id, reading),
             },
         });
     } catch (error) {
@@ -610,8 +714,16 @@ const handleWebhook = async (payload: ICourierWebhookPayload) => {
         return { matched: true, duplicate: true };
     }
 
-    if (payload.status) {
-        await applyCourierStatus(shipment, payload.status, observedAt);
+    if (reading.rawStatus) {
+        // Asked of the provider rather than derived here: the vocabulary is
+        // theirs, and only they can say whether their string means delivered.
+        const interpreted = provider.readStatus
+            ? provider.readStatus(reading.rawStatus)
+            : undefined;
+
+        if (interpreted) {
+            await applyCourierStatus(shipment, interpreted, observedAt);
+        }
     }
 
     return { matched: true, duplicate: false };
@@ -623,20 +735,29 @@ const handleWebhook = async (payload: ICourierWebhookPayload) => {
  * Not a refresh of everything: a webhook is one delivery attempt with no
  * promised retry, and this job exists to notice when one was missed. So it looks
  * for silence — non-terminal consignments nothing has been heard about inside
- * the staleness window. See design.md Decision 7.
+ * the staleness window. See add-steadfast-courier-integration design.md
+ * Decision 7.
+ *
+ * Each consignment is polled against THE PROVIDER THAT CREATED IT, not the one
+ * currently configured. That is what lets parcels from a previously selected
+ * courier keep settling after the merchant switches.
  */
 const reconcileQuietConsignments = async () => {
-    assertConfigured();
-
     const cutoff = new Date(Date.now() - STALENESS_MINUTES * 60 * 1000);
 
     const stale = await prisma.shipment.findMany({
         where: {
             consignmentId: { not: null },
             OR: [{ courierSyncedAt: null }, { courierSyncedAt: { lt: cutoff } }],
-            NOT: { courierStatus: { in: ["delivered", "partial_delivered", "cancelled"] } },
+            NOT: { courierStatus: { in: TERMINAL_COURIER_STATUSES } },
         },
-        select: { id: true, orderId: true, consignmentId: true, courierStatus: true },
+        select: {
+            id: true,
+            orderId: true,
+            consignmentId: true,
+            courierProvider: true,
+            courierStatus: true,
+        },
         orderBy: { courierSyncedAt: "asc" },
         take: RECONCILE_BATCH,
     });
@@ -644,58 +765,85 @@ const reconcileQuietConsignments = async () => {
     let checked = 0;
     let updated = 0;
     let failed = 0;
+    let unreconcilable = 0;
 
-    // Sequential, not parallel: Steadfast documents no rate limit, and a fan-out
+    // Sequential, not parallel: couriers document no rate limit, and a fan-out
     // against an undocumented limit is how one gets a limit imposed.
     for (const shipment of stale) {
         checked += 1;
 
-        const response = await SteadfastClient.getStatusByConsignmentId(
-            shipment.consignmentId as string,
-        );
+        const provider = resolveProvider(shipment.courierProvider);
+
+        /*
+         * Reported, not silently skipped. A consignment whose creating provider
+         * can no longer be reached will never settle on its own, and a job that
+         * quietly passes over it looks identical to one finding nothing wrong.
+         */
+        if (!provider.capabilities.status || !provider.isConfigured()) {
+            unreconcilable += 1;
+            console.warn(
+                `Consignment ${shipment.consignmentId} cannot be reconciled: ${provider.displayName} ${
+                    provider.capabilities.status ? "has no usable credentials" : "cannot be polled for status"
+                }.`,
+            );
+            continue;
+        }
+
+        const response = await provider.getStatus!(shipment.consignmentId as string);
 
         if (response.outcome !== "ok") {
             // Left untouched. A courier outage must not be written into the
             // record as a delivery state.
             failed += 1;
             console.warn(
-                `Reconciliation could not read consignment ${shipment.consignmentId}: ${response.message}`,
+                `Reconciliation could not read consignment ${shipment.consignmentId} from ${provider.displayName}: ${response.message}`,
             );
             continue;
         }
 
-        const reported = response.data?.delivery_status;
-        if (!reported) continue;
+        const before = (shipment.courierStatus ?? "").trim().toLowerCase();
+        await applyCourierStatus(shipment, response.data, new Date());
 
-        const before = shipment.courierStatus;
-        await applyCourierStatus(shipment, reported, new Date());
-
-        if (normaliseCourierStatus(before ?? "") !== normaliseCourierStatus(reported)) {
+        if (before !== response.data.rawStatus) {
             updated += 1;
         }
     }
 
-    return { checked, updated, failed, remaining: stale.length === RECONCILE_BATCH };
+    return {
+        checked,
+        updated,
+        failed,
+        unreconcilable,
+        remaining: stale.length === RECONCILE_BATCH,
+    };
 };
 
 const getBalance = async () => {
-    assertConfigured();
+    const provider = await getConfiguredProvider();
 
-    const response = await SteadfastClient.getBalance();
+    assertCapability(provider, "balance", "balance enquiries");
+    assertConfigured(provider);
+
+    const response = await provider.getBalance!();
 
     if (response.outcome !== "ok") {
         throw new AppError(
             status.BAD_GATEWAY,
-            `Could not read the courier balance: ${response.message}`,
+            `Could not read the ${provider.displayName} balance: ${response.message}`,
         );
     }
 
-    return { currentBalance: response.data.current_balance };
+    return response.data;
 };
 
+/**
+ * Raises a return with the provider that created the consignment.
+ *
+ * Routed on the shipment's own provider, not the configured one: a parcel
+ * dispatched through one courier must be returned through that same courier
+ * however the shop is now set up.
+ */
 const createReturnRequest = async (orderId: string, reason: string | undefined) => {
-    assertConfigured();
-
     const shipment = await prisma.shipment.findFirst({
         where: { orderId, consignmentId: { not: null } },
         orderBy: { createdAt: "desc" },
@@ -704,11 +852,16 @@ const createReturnRequest = async (orderId: string, reason: string | undefined) 
     if (!shipment) {
         throw new AppError(
             status.BAD_REQUEST,
-            "This order has not been dispatched to the courier, so there is no consignment to return.",
+            "This order has not been dispatched to a courier, so there is no consignment to return.",
         );
     }
 
-    const response = await SteadfastClient.createReturnRequest(
+    const provider = resolveProvider(shipment.courierProvider);
+
+    assertCapability(provider, "returns", "return requests");
+    assertConfigured(provider);
+
+    const response = await provider.createReturnRequest!(
         shipment.consignmentId as string,
         reason,
     );
@@ -716,15 +869,54 @@ const createReturnRequest = async (orderId: string, reason: string | undefined) 
     if (response.outcome !== "ok") {
         throw new AppError(
             status.BAD_GATEWAY,
-            `The courier did not accept the return request: ${response.message}`,
+            `${provider.displayName} did not accept the return request: ${response.message}`,
         );
     }
 
     return response.data;
 };
 
-/** Whether the webhook token is set, without disclosing it. */
-const isWebhookConfigured = (): boolean => Boolean(envVars.STEADFAST_WEBHOOK_TOKEN);
+/**
+ * What the admin needs to render the courier surface honestly.
+ *
+ * Derived state about the environment and the registry, not a stored setting —
+ * which is why it is served from here rather than round-tripping through the
+ * writable settings row. Reports only WHETHER each credential is present, never
+ * its value.
+ */
+const getProviderConfiguration = async () => {
+    const configured = await getConfiguredProvider();
+
+    return {
+        configured: configured.id,
+        providers: listProviders().map((provider) => ({
+            id: provider.id,
+            displayName: provider.displayName,
+            capabilities: provider.capabilities,
+            credentialsConfigured: provider.isConfigured(),
+            webhookConfigured: provider.isWebhookConfigured(),
+        })),
+    };
+};
+
+/**
+ * How many consignments the given provider still has in flight.
+ *
+ * Used by the settings service to refuse a provider switch that would strand
+ * them, and by the admin to say how many. "Not terminal" is the same set
+ * reconciliation polls, so the two cannot disagree about what "in flight" means.
+ */
+const countInFlightConsignments = (provider: CourierProvider) =>
+    prisma.shipment.count({
+        where: {
+            courierProvider: provider,
+            consignmentId: { not: null },
+            OR: [
+                { courierStatus: null },
+                { NOT: { courierStatus: { in: TERMINAL_COURIER_STATUSES } } },
+            ],
+        },
+    });
 
 export const CourierService = {
     previewDispatch,
@@ -733,11 +925,16 @@ export const CourierService = {
     reconcileQuietConsignments,
     getBalance,
     createReturnRequest,
-    isWebhookConfigured,
-    isConfigured: SteadfastClient.isCourierConfigured,
+    getProviderConfiguration,
+    countInFlightConsignments,
+    getConfiguredProvider,
     // Exported for the verification scripts, which exercise them without calling
-    // Steadfast.
-    _internals: { evaluateOrder, buildDedupeKey, applyCourierStatus, isTerminalCourierStatus, needsAttention },
+    // a courier.
+    _internals: {
+        evaluateOrder,
+        buildDedupeKey,
+        applyCourierStatus,
+        assertCapability,
+        TERMINAL_COURIER_STATUSES,
+    },
 };
-
-export { CourierNotConfiguredError };

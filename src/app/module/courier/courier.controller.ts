@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
 import status from "http-status";
+import { CourierProvider } from "../../../generated/prisma/client";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { ICourierActor } from "./courier.interface";
 import { CourierService } from "./courier.service";
+import { resolveProvider } from "./providers";
 
 const actorFrom = (req: Request): ICourierActor => ({
     userId: req.user!.userId,
@@ -59,23 +61,46 @@ const createReturnRequest = catchAsync(async (req: Request, res: Response) => {
 });
 
 /**
- * The courier's webhook.
+ * A courier's webhook.
  *
  * Always answers 200 once the token has been accepted and the payload parsed,
- * including for a consignment this system does not hold. Steadfast is not at
+ * including for a consignment this system does not hold. The courier is not at
  * fault for that, and an error response would only invite retries of something
  * that can never succeed.
  *
- * The response body matches the shape their documentation asks for.
+ * The provider comes from `req.courierProvider`, set by the guard that
+ * authenticated the token — never re-derived from the URL here, so the provider
+ * that was authenticated and the provider whose format the payload is read in
+ * cannot drift apart.
+ *
+ * The response body matches the shape Steadfast's documentation asks for.
  */
 const handleWebhook = catchAsync(async (req: Request, res: Response) => {
-    const result = await CourierService.handleWebhook(req.body);
+    const provider = resolveProvider(req.courierProvider ?? CourierProvider.STEADFAST);
+
+    const result = await CourierService.handleWebhook(provider, req.body);
 
     res.status(status.OK).json({
         status: "success",
         message: result.matched
             ? "Webhook received successfully."
             : "Webhook received; no matching consignment.",
+    });
+});
+
+/**
+ * What the admin needs to render the courier surface honestly.
+ *
+ * Reports whether each provider's credentials are set, never what they are.
+ */
+const getProviderConfiguration = catchAsync(async (_req: Request, res: Response) => {
+    const result = await CourierService.getProviderConfiguration();
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Courier configuration retrieved",
+        data: result,
     });
 });
 
@@ -100,6 +125,7 @@ export const CourierController = {
     previewDispatch,
     dispatchOrders,
     getBalance,
+    getProviderConfiguration,
     createReturnRequest,
     handleWebhook,
     runReconciliation,

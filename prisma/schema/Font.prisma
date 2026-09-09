@@ -1,0 +1,54 @@
+/// A Google Font the merchant has added to this store's font library.
+///
+/// The library exists so a typeface is pasted ONCE and stays selectable
+/// forever. Before this model, the storefront font was a free-text Google
+/// Fonts embed pasted into UI -> Site Setting on every single change: nothing
+/// was remembered, so returning to a font used last month meant going back to
+/// fonts.google.com and fetching the snippet again. Rows here are what the
+/// storefront and admin-panel font pickers list.
+///
+/// `url` is ALWAYS a value returned by parseGoogleFontEmbed (see
+/// src/app/module/store-setting/google-font.ts) — rebuilt from validated
+/// components, with `display=swap` forced, and never a substring of what the
+/// merchant pasted. That parser is the security boundary for this model and is
+/// reused unmodified; do not add a second path that writes this column from
+/// raw input, and do not relax it to accept a non-Google host. The host check
+/// is an equality test on purpose: `endsWith` would accept
+/// `fonts.googleapis.com.evil.test`.
+///
+/// Because the parser accepts a bare URL as a paste form, a stored `url`
+/// re-parses to itself. That idempotence is what lets a row be re-validated on
+/// edit through exactly the same code path as a fresh paste.
+///
+/// The SELECTION is not stored here. StoreSetting.theme holds `font` and
+/// `adminFont` as denormalised `{ family, url }` copies rather than a foreign
+/// key, so the storefront read path (resolveFontStack / resolveFontHref /
+/// layout.tsx) is untouched by this model existing, and so a stale selection
+/// still renders a real typeface instead of nothing. The costs of that choice
+/// are paid in font.service.ts: editing a row propagates to any surface
+/// selected on it, and deleting a row that is selected is refused with 409.
+/// See openspec/changes/add-font-library-and-admin-font, design.md Decisions
+/// 1, 2, 4 and 5.
+model Font {
+  id String @id @default(cuid())
+
+  /// Human-readable and with spaces — "Open Sans", never "Open+Sans". The
+  /// parser decodes the `+` Google uses in the query string, and this is the
+  /// value rendered in the picker and written into `--font-sans`.
+  ///
+  /// Unique because two library entries for one typeface would show the same
+  /// card twice in the picker. The service rejects duplicates
+  /// case-insensitively before insert; this constraint is the backstop that
+  /// makes the check non-racy rather than the primary gate.
+  family String @unique
+
+  /// The rebuilt fonts.googleapis.com stylesheet URL. Not unique: two families
+  /// never share one, but two rows differing only in requested weights would,
+  /// and that is a legitimate edit rather than a duplicate.
+  url String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([family])
+}

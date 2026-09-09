@@ -1,4 +1,4 @@
-import { CurrencyPosition, SiteMode } from "../../../generated/prisma/client";
+import { BrandDisplayMode, CurrencyPosition, SiteMode } from "../../../generated/prisma/client";
 
 /**
  * Storefront presentation defaults for the StoreSetting singleton.
@@ -173,9 +173,15 @@ export const DEFAULT_CHECKOUT_CONFIG = {
  * of them. Readers snap a stored width to the nearest option, so a store
  * carrying the old 1384 renders at 1440 — 56px wider — until it is saved again.
  *
- * `font.url` is stored parsed, in the same shape the Google Fonts parser
- * returns, so this constant and a merchant-saved value are indistinguishable to
- * every reader.
+ * `font.url` and `adminFont.url` are stored parsed, in the same shape the
+ * Google Fonts parser returns, so this constant and a merchant-saved value are
+ * indistinguishable to every reader.
+ *
+ * Both font keys are DENORMALISED copies of a row in the `Font` library, not
+ * references to one. A merchant picks from that library and the chosen
+ * `{ family, url }` is written here — which is why the storefront read path
+ * never joins anything, and why a font cannot be deleted while selected (see
+ * font.service.ts).
  */
 /**
  * Every optional catalog feature offered.
@@ -206,6 +212,23 @@ export const DEFAULT_THEME = {
     font: {
         family: "Outfit",
         url: "https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap",
+    },
+    /*
+     * The ADMIN PANEL's typeface, independent of the storefront's `font` above.
+     * Two selections rather than one because the people working behind the
+     * counter all day and the customers browsing the shop are not the same
+     * audience, and a display face chosen to sell products is not necessarily
+     * one to read order tables in.
+     *
+     * Roboto, NOT Outfit, and that difference is deliberate: Roboto is what the
+     * admin panel was hardcoded to before it became configurable. Defaulting to
+     * it means an existing install looks identical after this change and only
+     * moves when a merchant asks it to. Change this and every shop that never
+     * touched the setting silently restyles.
+     */
+    adminFont: {
+        family: "Roboto",
+        url: "https://fonts.googleapis.com/css2?family=Roboto:wght@100..900&display=swap",
     },
 };
 
@@ -386,6 +409,23 @@ export const DEFAULT_PUBLIC_SETTINGS = {
      * same image as the header".
      */
     footerLogoUrl: null as string | null,
+    /*
+     * TEXT for both, which is what makes this change invisible on deploy: the
+     * storefront rendered the wordmark unconditionally in both slots before
+     * these existed — it never read the two logo columns above at all — so a
+     * store that has not chosen a mode, and a settings read that falls back to
+     * these defaults, both render exactly as they always have.
+     *
+     * Note this is the default MODE, not a fallback for a missing image: a slot
+     * set to LOGO whose fallback chain yields no URL renders the wordmark too,
+     * which the storefront resolves. See the `storefront-branding` spec, "A
+     * brand slot never renders empty".
+     */
+    headerBrandMode: "TEXT" as BrandDisplayMode,
+    footerBrandMode: "TEXT" as BrandDisplayMode,
+    /* Mirrors the column defaults; bounded 24-96 by MIN/MAX_LOGO_HEIGHT. */
+    headerLogoHeight: 40,
+    footerLogoHeight: 36,
     aboutText: STOREFRONT_SEED_DEFAULTS.aboutText,
     copyrightText: STOREFRONT_SEED_DEFAULTS.copyrightText,
     currency: "BDT",

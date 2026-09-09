@@ -13,14 +13,34 @@ model Shipment {
   shippedAt   DateTime?
   deliveredAt DateTime?
 
+  /// Which courier created this consignment.
+  ///
+  /// ROUTING FOLLOWS THE CONSIGNMENT, NOT THE SETTING. `StoreSetting.courierProvider`
+  /// says what the shop dispatches through *now*; this says who is actually
+  /// carrying *this* parcel. Reconciliation, webhook matching and return
+  /// requests all read this field — only dispatch reads the setting.
+  ///
+  /// Without it, changing the setting would silently strand every parcel in
+  /// flight: the sync job would poll the new courier's API, with the new
+  /// courier's credentials, for a consignment id that courier never issued. It
+  /// would not fail usefully — it would 404 per consignment forever and the
+  /// orders would sit in SHIPPED with nothing to explain why.
+  ///
+  /// Defaults to STEADFAST, which is what every pre-existing consignment is; no
+  /// backfill is required or possible.
+  ///
+  /// See openspec/changes/add-courier-provider-selection, design.md Decision 3.
+  courierProvider CourierProvider @default(STEADFAST)
+
   /// The courier's own id for this consignment. Null on a shipment entered by
   /// hand, which is every shipment that predates courier dispatch.
   ///
   /// Its presence is what makes a shipment COURIER-OWNED: once set, the fields
   /// above are derived from the courier and the manual update path refuses to
-  /// write them (see shipment.service.ts). Unique, so the same consignment can
-  /// never be recorded against two orders.
-  consignmentId String? @unique
+  /// write them (see shipment.service.ts).
+  ///
+  /// Unique per PROVIDER, not globally — see the @@unique below.
+  consignmentId String?
 
   /// The `invoice` value actually sent to the courier — `Order.orderNumber` at
   /// the time of dispatch.
@@ -54,9 +74,27 @@ model Shipment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([courierProvider, consignmentId])
   @@index([orderId])
   @@index([status])
   /// Serves the sync job, which selects consignments whose courier status is not
   /// yet terminal. Without it that is a scan of every shipment ever created.
   @@index([courierStatus])
 }
+
+/// A note on the composite unique above.
+///
+/// `consignmentId` was globally unique while Steadfast was the only courier.
+/// That stops being safe the moment a second one is registered: each courier
+/// issues ids from its own space, so two providers can legitimately both issue
+/// "1234567". A global constraint would reject the second one as a duplicate —
+/// and, worse, a webhook matching on the id alone would apply one courier's
+/// status to another courier's parcel.
+///
+/// Scoping uniqueness to the provider keeps the original guarantee where it
+/// matters (one consignment, one order, per courier) and makes webhook lookup
+/// match on both fields. With one provider registered this is a no-op.
+///
+/// Postgres treats NULLs as distinct, so hand-entered shipments — which all
+/// carry a null `consignmentId` — remain unconstrained by this, exactly as they
+/// were under the old single-column unique.
