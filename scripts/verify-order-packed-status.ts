@@ -4,15 +4,19 @@
  * PACKED is the state an order occupies once picked and boxed but still on the
  * premises. Two things about it are easy to get wrong and neither fails loudly:
  *
- *  - **Reachability.** It must be reachable ONLY from PROCESSING. An order
- *    nobody has picked cannot be packed, so PENDING and CONFIRMED must not
- *    offer it. A transition map that accepts it from anywhere still "works" in
- *    the admin — the wrong sequence just quietly becomes recordable.
+ *  - **Reachability.** It must be reachable and leavable. This once asserted
+ *    the stronger rule that PACKED was reachable ONLY from PROCESSING, which no
+ *    longer holds: transitions are unrestricted, so every status reaches every
+ *    other and packing order is narrative rather than enforced. What is checked
+ *    now is that PACKED participates fully — reached from PENDING and
+ *    CONFIRMED, walked back out of — and that a no-op is still refused.
  *  - **Restocking.** Cancelling a PACKED order must credit its stock back,
  *    because nobody has the goods. PACKED is the LAST state where that holds;
  *    getting this wrong strands real inventory the same way the pre-existing
  *    cancel bug did (see verify-order-cancel-restock.ts). This script asserts
- *    the credit actually lands, not merely that the call was accepted.
+ *    the credit actually lands, not merely that the call was accepted. With the
+ *    transition map gone, RESTOCKABLE_ON_CANCEL_STATUSES is the only guard left
+ *    on that boundary, so this assertion carries more weight than it used to.
  *
  * PROCESSING keeps its direct edge to SHIPPED: packing is a step a merchant MAY
  * record, not one every order is forced through. That is asserted too, since
@@ -152,28 +156,45 @@ async function main() {
         `order left in ${shipped.status}`,
     );
 
-    // ---- 2. an unpicked order cannot be packed ----
+    // ---- 2. an unpicked order may now be packed, and unpacked again ----
+    //
+    // This section asserted the opposite: PENDING -> PACKED and
+    // CONFIRMED -> PACKED were refused because nothing had been picked yet.
+    // The forward-only map that refused them was removed on the merchant's
+    // instruction — an operator who mis-clicks a status needs a way back, and
+    // the map offered none. Packing order is narrative now, not enforced; what
+    // still holds is that PACKED carries its stock meaning wherever it is
+    // reached from, which section 3 below checks.
 
     const pending = await makeOrder("PEND", OrderStatus.PENDING);
-    await expectRejection("refuses PENDING -> PACKED — nothing has been picked", () =>
-        OrderService.updateOrderStatus(pending.id, { status: OrderStatus.PACKED }, user.id),
-    );
-    const stillPending = await prisma.order.findUniqueOrThrow({ where: { id: pending.id } });
+    await OrderService.updateOrderStatus(pending.id, { status: OrderStatus.PACKED }, user.id);
+    const nowPacked = await prisma.order.findUniqueOrThrow({ where: { id: pending.id } });
     check(
-        "the refused PENDING order did not move",
-        stillPending.status === OrderStatus.PENDING,
-        `order is ${stillPending.status}, expected PENDING`,
+        "PENDING -> PACKED is accepted — transitions are unrestricted",
+        nowPacked.status === OrderStatus.PACKED,
+        `order is ${nowPacked.status}, expected PACKED`,
+    );
+
+    // The correction that the whole change exists for: walking a status back.
+    await OrderService.updateOrderStatus(pending.id, { status: OrderStatus.PENDING }, user.id);
+    const walkedBack = await prisma.order.findUniqueOrThrow({ where: { id: pending.id } });
+    check(
+        "PACKED -> PENDING walks the mis-click back",
+        walkedBack.status === OrderStatus.PENDING,
+        `order is ${walkedBack.status}, expected PENDING`,
     );
 
     const confirmed = await makeOrder("CONF", OrderStatus.CONFIRMED);
-    await expectRejection("refuses CONFIRMED -> PACKED — nothing has been picked", () =>
-        OrderService.updateOrderStatus(confirmed.id, { status: OrderStatus.PACKED }, user.id),
-    );
-    const stillConfirmed = await prisma.order.findUniqueOrThrow({ where: { id: confirmed.id } });
+    await OrderService.updateOrderStatus(confirmed.id, { status: OrderStatus.PACKED }, user.id);
+    const confirmedPacked = await prisma.order.findUniqueOrThrow({ where: { id: confirmed.id } });
     check(
-        "the refused CONFIRMED order did not move",
-        stillConfirmed.status === OrderStatus.CONFIRMED,
-        `order is ${stillConfirmed.status}, expected CONFIRMED`,
+        "CONFIRMED -> PACKED is accepted — transitions are unrestricted",
+        confirmedPacked.status === OrderStatus.PACKED,
+        `order is ${confirmedPacked.status}, expected PACKED`,
+    );
+
+    await expectRejection("still refuses PACKED -> PACKED — a no-op is not a transition", () =>
+        OrderService.updateOrderStatus(confirmed.id, { status: OrderStatus.PACKED }, user.id),
     );
 
     // ---- 3. cancelling a PACKED order credits stock back ----
@@ -202,6 +223,14 @@ async function main() {
     );
 
     // ---- 4. the transition map says what the admin should offer ----
+    //
+    // Transitions are unrestricted: every status but the current one is on
+    // offer, in both directions. The forward-only map this section used to
+    // assert (PROCESSING -> PACKED, PACKED -> SHIPPED|CANCELLED only, PACKED
+    // withheld from PENDING/CONFIRMED) was removed on the merchant's
+    // instruction so a mis-clicked status could be walked back. What is checked
+    // here now is that PACKED is a first-class status in that set — reachable
+    // and leaving — which is what this script exists to prove.
 
     const fromProcessing = OrderService.allowedOrderTransitions(OrderStatus.PROCESSING);
     check(
@@ -217,17 +246,20 @@ async function main() {
 
     const fromPacked = OrderService.allowedOrderTransitions(OrderStatus.PACKED);
     check(
-        "PACKED leads only to SHIPPED or CANCELLED",
-        fromPacked.length === 2 &&
-            fromPacked.includes(OrderStatus.SHIPPED) &&
-            fromPacked.includes(OrderStatus.CANCELLED),
+        "PACKED leads onward to SHIPPED and out via CANCELLED",
+        fromPacked.includes(OrderStatus.SHIPPED) && fromPacked.includes(OrderStatus.CANCELLED),
+        `allowed from PACKED: [${fromPacked.join(", ")}]`,
+    );
+    check(
+        "PACKED does not offer itself — updateOrderStatus rejects a no-op separately",
+        !fromPacked.includes(OrderStatus.PACKED),
         `allowed from PACKED: [${fromPacked.join(", ")}]`,
     );
 
     for (const from of [OrderStatus.PENDING, OrderStatus.CONFIRMED] as const) {
         check(
-            `${from} does not offer PACKED`,
-            !OrderService.allowedOrderTransitions(from).includes(OrderStatus.PACKED),
+            `${from} offers PACKED — transitions are unrestricted`,
+            OrderService.allowedOrderTransitions(from).includes(OrderStatus.PACKED),
             `allowed from ${from}: [${OrderService.allowedOrderTransitions(from).join(", ")}]`,
         );
     }

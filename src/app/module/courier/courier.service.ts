@@ -592,8 +592,11 @@ const applyCourierStatus = async (
 
     /*
      * Only a full delivery advances the order. A partial one does not: closing
-     * an order while goods are still coming back would be unrecoverable through
-     * the normal path, since DELIVERED offers no transition back.
+     * an order while goods are still coming back states something untrue about
+     * where they are. This used to be near-unrecoverable, since DELIVERED
+     * offered no transition back; transitions are unrestricted now, so staff
+     * CAN walk it back — but a wrong status the courier wrote itself is one
+     * nobody knows to go and correct, so the restraint still stands.
      *
      * A cancellation deliberately does nothing here — not the order status, not
      * stock, not a refund. The parcel is on its way back, and restocking on the
@@ -613,8 +616,9 @@ const applyCourierStatus = async (
                 undefined,
             );
         } catch (error) {
-            // An order already DELIVERED, or one the transition map refuses from
-            // its current state, lands here. The shipment is correct either way.
+            // An order already DELIVERED lands here — since transitions became
+            // unrestricted that is effectively the only case, the no-op guard
+            // being all that remains. The shipment is correct either way.
             console.warn(
                 `Courier reported delivery for order ${shipment.orderId} but the status advance failed:`,
                 error instanceof Error ? error.message : error,

@@ -7,7 +7,10 @@
  *
  *  - `ok`          — Steadfast answered and we understood it.
  *  - `failed`      — we reached Steadfast and it rejected us. Nothing was
- *                    created, so retrying is safe.
+ *                    created, so retrying is safe. `message` carries Steadfast's
+ *                    own words whenever it gave any, JSON or plain text: the
+ *                    status alone cannot tell a wrong key from a dormant
+ *                    account, and only the body can.
  *  - `unconfirmed` — the request timed out or the response was unreadable.
  *                    Aborting our fetch does NOT abort Steadfast's handler, so
  *                    the consignments may well exist and we simply do not know.
@@ -112,10 +115,30 @@ const request = async <T>(
                         "The courier's response could not be read, so the outcome is unknown. Check before retrying.",
                 };
             }
+
+            /*
+             * Not every Steadfast error is JSON. An unactivated account answers
+             * `/create_order/bulk-order` with the bare text `Account is not
+             * active!` and no envelope at all, which JSON.parse rejects.
+             *
+             * Discarding the body here cost an operator the only sentence that
+             * explained the failure: the panel said "Courier request failed
+             * (401)", which reads like a wrong key, and sent them looking for a
+             * credentials bug that did not exist. The status alone cannot
+             * distinguish a bad key from a dormant account — only the body can,
+             * so a short plain-text body is surfaced rather than dropped.
+             *
+             * Bounded and stripped of markup because this string reaches the
+             * admin UI: an HTML error page is a body too, and pasting a whole
+             * one into a toast is not a message.
+             */
+            const plain = asPlainTextMessage(text);
             return {
                 outcome: "failed",
                 status: response.status,
-                message: `Courier request failed (${response.status})`,
+                message: plain
+                    ? `${plain} (${response.status})`
+                    : `Courier request failed (${response.status})`,
             };
         }
     }
@@ -129,6 +152,28 @@ const request = async <T>(
     }
 
     return { outcome: "ok", data: payload as T };
+};
+
+/** Longest plain-text error body treated as a message. `Account is not active!`
+ *  is 22 characters; anything past this is a page, not a sentence. */
+const MAX_PLAIN_TEXT_MESSAGE = 200;
+
+/**
+ * A non-JSON error body reduced to something an operator can be shown, or null
+ * when it is not worth showing.
+ *
+ * Rejects anything carrying markup outright rather than trying to strip it: a
+ * courier that answers with an HTML error page has told us nothing specific to
+ * this request, and the generic fallback is the more honest message.
+ */
+const asPlainTextMessage = (text: string): string | null => {
+    const collapsed = text.replace(/\s+/g, " ").trim();
+
+    if (!collapsed) return null;
+    if (collapsed.length > MAX_PLAIN_TEXT_MESSAGE) return null;
+    if (/[<>]/.test(collapsed)) return null;
+
+    return collapsed;
 };
 
 /** Steadfast reports errors as `message`, and validation failures as `errors`. */

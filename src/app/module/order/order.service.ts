@@ -1270,40 +1270,57 @@ const RESTOCKABLE_ON_CANCEL_STATUSES: OrderStatus[] = [
 ];
 
 /**
- * Where an order may go next, from where it is.
+ * Where an order may go next, from where it is: currently anywhere but where it
+ * already is.
  *
- * Previously the only check was that the status was actually changing, so
- * `CANCELLED -> DELIVERED` and `COMPLETED -> PENDING` were both accepted. That
- * matters beyond tidiness: stock and money side effects key off these
- * transitions, and a transition that could never happen physically produces
- * side effects nothing can reconcile.
+ * This was a directed forward-only map (PENDING -> CONFIRMED -> PROCESSING ->
+ * PACKED -> SHIPPED -> DELIVERED -> COMPLETED, with CANCELLED reachable up to
+ * PACKED and CANCELLED/COMPLETED terminal). It was opened up on the merchant's
+ * explicit instruction: the map had no reverse edges at all, so an operator who
+ * advanced an order by mistake — the single most common admin slip — had no way
+ * to put it back, and a cancelled order could never be revived even when the
+ * customer rang back the same minute.
  *
- * `CANCELLED` and `COMPLETED` are terminal. `DELIVERED` may still move to
- * `COMPLETED` (the order settles), and `CANCELLED` is NOT offered from it —
- * goods with the customer come back through a return, not a cancellation.
+ * What the forward-only map was protecting, and where that protection now
+ * lives:
  *
- * `PACKED` sits between `PROCESSING` and `SHIPPED`: picked and boxed, still on
- * the premises. It is reachable only from `PROCESSING` — an order nobody has
- * picked yet cannot be packed, so `PENDING`/`CONFIRMED` do not offer it — and
- * leads only onward to `SHIPPED` or out via `CANCELLED`. `CONFIRMED` keeps its
- * direct `SHIPPED` edge: packing is a step a merchant may record, not one this
- * map forces every order through.
+ * - Stock. Cancelling restocks, and a CANCELLED -> PENDING -> CANCELLED loop
+ *   would otherwise credit the same goods twice. It does not:
+ *   `restockCancelledOrder` nets SALE movements against the CANCELLATION
+ *   movements it has already written and restores only the outstanding
+ *   remainder, so a second cancellation of the same order finds nothing left to
+ *   restore and writes nothing. That idempotence was deliberate — see its
+ *   doc comment, which states it does not rely on the terminal-status guard.
+ * - Physical impossibility. A DELIVERED order moving back to PENDING says
+ *   something untrue about where the goods are. Nothing in the code depends on
+ *   it being false, and `OrderStatusHistory` records every hop with its actor,
+ *   so a correction stays visible as a correction rather than silently
+ *   rewriting the past.
+ *
+ * `RESTOCKABLE_ON_CANCEL_STATUSES` is now the only thing standing between a
+ * delivered order and phantom stock — cancelling from SHIPPED or later writes
+ * the status without crediting stock nobody has. Keep that list accurate.
+ *
+ * If a forward-only flow is ever wanted back, restore the map below rather than
+ * scattering per-transition checks:
+ *   PENDING:   [CONFIRMED, PROCESSING, CANCELLED]
+ *   CONFIRMED: [PROCESSING, SHIPPED, CANCELLED]
+ *   PROCESSING:[PACKED, SHIPPED, CANCELLED]
+ *   PACKED:    [SHIPPED, CANCELLED]
+ *   SHIPPED:   [DELIVERED]   DELIVERED: [COMPLETED]   CANCELLED/COMPLETED: []
  * See openspec/changes/add-order-fulfillment-documents, design.md Decision 6.
  */
-const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-    [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.CANCELLED],
-    [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-    [OrderStatus.PROCESSING]: [OrderStatus.PACKED, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-    [OrderStatus.PACKED]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-    [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
-    [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
-    [OrderStatus.CANCELLED]: [],
-    [OrderStatus.COMPLETED]: [],
-};
+const ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus);
 
-/** The transitions still available from `from` — the admin offers exactly these. */
+/**
+ * The transitions still available from `from` — the admin offers exactly these.
+ *
+ * Every status except the current one: `updateOrderStatus` rejects a no-op
+ * separately with a clearer message, and offering the current status in the
+ * admin's dropdown would only invite that error.
+ */
 const allowedOrderTransitions = (from: OrderStatus): OrderStatus[] =>
-    ORDER_STATUS_TRANSITIONS[from] ?? [];
+    ORDER_STATUSES.filter((candidate) => candidate !== from);
 
 const assertOrderTransitionAllowed = (from: OrderStatus, to: OrderStatus) => {
     if (!allowedOrderTransitions(from).includes(to)) {
@@ -1533,9 +1550,15 @@ const updateOrderStatus = async (
 
         /*
          * Cancelling before fulfilment returns the goods to the shelf — they
-         * never left. Past that the transition map above does not offer
-         * CANCELLED at all, so this condition is belt-and-braces rather than
-         * the only thing standing between a delivered order and phantom stock.
+         * never left. Past that they are with the courier or the customer, and
+         * crediting them back would invent stock nobody has.
+         *
+         * This condition is now the ONLY thing preventing that: the transition
+         * map used to withhold CANCELLED from SHIPPED onward, but transitions
+         * are unrestricted (see ORDER_STATUS_TRANSITIONS above), so cancelling a
+         * delivered order is reachable and must write the status without
+         * touching stock. Goods with the customer come back through the return
+         * flow, which credits stock on its own terms.
          */
         if (
             payload.status === OrderStatus.CANCELLED &&

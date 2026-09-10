@@ -14,9 +14,11 @@
  *    rather than picking a warehouse — a fixture below forces that split and
  *    checks each warehouse individually, because a restock that returns the
  *    right TOTAL to the wrong shelf still passes a naive total-only check.
- *  - Restocking twice must be impossible. The terminal-status guard is one
- *    defence; the restock's own netting of SALE against CANCELLATION is the
- *    other, and this proves the second independently by calling it directly.
+ *  - Restocking twice must be impossible. This used to have two defences: the
+ *    terminal-status guard, and the restock's own netting of SALE against
+ *    CANCELLATION. The first is gone — transitions are unrestricted now, so a
+ *    cancelled order can be revived and cancelled again — which makes the
+ *    netting the ONLY defence, and section 3 walks that exact loop.
  *
  * NOT read-only: creates warehouses, a product, a customer and orders, all
  * prefixed `VERIFY-ORDER-CANCEL`, and removes them in a `finally` so a failure
@@ -188,57 +190,101 @@ async function main() {
     );
 
     // ---- 2. it cannot happen twice ----
+    //
+    // The no-op guard is all that is left of the old terminal-status rule:
+    // moving a cancelled order onward is now permitted (section 3 proves the
+    // restock stays idempotent through it), but re-cancelling one is still a
+    // no-op and still refused.
 
     await expectRejection("refuses to cancel an already-CANCELLED order", () =>
         OrderService.updateOrderStatus(order.id, { status: OrderStatus.CANCELLED }, user.id),
     );
 
-    await expectRejection("refuses to revive a cancelled order as DELIVERED", () =>
-        OrderService.updateOrderStatus(order.id, { status: OrderStatus.DELIVERED }, user.id),
-    );
-
     const afterRefusedA = await stockAt(warehouseA.id);
     const afterRefusedB = await stockAt(warehouseB.id);
     check(
-        "the refused attempts moved no stock",
+        "the refused attempt moved no stock",
         afterRefusedA === afterA && afterRefusedB === afterB,
         `A ${afterA} -> ${afterRefusedA}, B ${afterB} -> ${afterRefusedB}, both expected unchanged`,
     );
 
     // ---- 3. transition guards ----
+    //
+    // Transitions themselves are no longer restricted — the forward-only map was
+    // removed on the merchant's instruction so a mis-clicked status could be
+    // walked back, and every status is now reachable from every other. That
+    // moves the whole weight of stock correctness onto
+    // RESTOCKABLE_ON_CANCEL_STATUSES, which is what this section proves: a late
+    // cancellation is ACCEPTED (an operator may need to record it) but must
+    // credit nothing, because the goods are with the courier or the customer.
 
     const shipped = await makeSplitOrder("B", OrderStatus.SHIPPED);
 
-    await expectRejection("refuses to cancel a SHIPPED order — goods are with the customer", () =>
-        OrderService.updateOrderStatus(shipped.id, { status: OrderStatus.CANCELLED }, user.id),
+    await OrderService.updateOrderStatus(shipped.id, { status: OrderStatus.CANCELLED }, user.id);
+    const shippedCancelled = await prisma.order.findUniqueOrThrow({ where: { id: shipped.id } });
+    check(
+        "cancelling a SHIPPED order is accepted — transitions are unrestricted",
+        shippedCancelled.status === OrderStatus.CANCELLED,
+        `SHIPPED -> CANCELLED left the order ${shippedCancelled.status}`,
     );
 
-    const afterShippedAttemptA = await stockAt(warehouseA.id);
+    const afterShippedCancelA = await stockAt(warehouseA.id);
     check(
-        "the refused shipped-cancel credited no stock",
-        afterShippedAttemptA === afterRefusedA,
-        `A ${afterRefusedA} -> ${afterShippedAttemptA}, expected unchanged`,
+        "the shipped-cancel credited NO stock — the goods are with the customer",
+        afterShippedCancelA === afterRefusedA,
+        `A ${afterRefusedA} -> ${afterShippedCancelA}, expected unchanged`,
+    );
+
+    const shippedReversals = await prisma.stockMovement.count({
+        where: { referenceId: shipped.id, type: StockMovementType.CANCELLATION },
+    });
+    check(
+        "the shipped-cancel wrote no CANCELLATION movement either",
+        shippedReversals === 0,
+        `${shippedReversals} CANCELLATION movement(s), expected 0`,
+    );
+
+    // Reviving a cancelled order is the correction the unrestricted map exists
+    // for. It must not hand the goods back a second time on the way out: the
+    // restock nets SALE against the CANCELLATION movements it already wrote, so
+    // a second cancellation finds nothing outstanding.
+    const revived = await makeSplitOrder("C", OrderStatus.PROCESSING);
+    const beforeRevive = await stockAt(warehouseA.id);
+
+    await OrderService.updateOrderStatus(revived.id, { status: OrderStatus.CANCELLED }, user.id);
+    const afterFirstCancel = await stockAt(warehouseA.id);
+
+    await OrderService.updateOrderStatus(revived.id, { status: OrderStatus.PROCESSING }, user.id);
+    check(
+        "a CANCELLED order can be revived — this is the mis-click correction path",
+        (await prisma.order.findUniqueOrThrow({ where: { id: revived.id } })).status ===
+            OrderStatus.PROCESSING,
+        `CANCELLED -> PROCESSING left the order unchanged`,
+    );
+
+    await OrderService.updateOrderStatus(revived.id, { status: OrderStatus.CANCELLED }, user.id);
+    const afterSecondCancel = await stockAt(warehouseA.id);
+    check(
+        "cancel -> revive -> cancel credits the stock ONCE, not twice",
+        afterSecondCancel === afterFirstCancel && afterFirstCancel > beforeRevive,
+        `A ${beforeRevive} -> ${afterFirstCancel} (first cancel) -> ${afterSecondCancel} (second), expected the last two equal`,
     );
 
     check(
-        "a CANCELLED order offers no onward transition",
-        OrderService.allowedOrderTransitions(OrderStatus.CANCELLED).length === 0,
+        "a CANCELLED order offers every other status back",
+        OrderService.allowedOrderTransitions(OrderStatus.CANCELLED).includes(OrderStatus.PENDING),
         `allowed from CANCELLED: [${OrderService.allowedOrderTransitions(OrderStatus.CANCELLED).join(", ")}]`,
     );
     check(
-        "a DELIVERED order cannot be cancelled, only completed",
-        !OrderService.allowedOrderTransitions(OrderStatus.DELIVERED).includes(OrderStatus.CANCELLED),
+        "no status offers itself — a no-op is rejected separately",
+        OrderService.allowedOrderTransitions(OrderStatus.DELIVERED).every(
+            (to) => to !== OrderStatus.DELIVERED,
+        ),
         `allowed from DELIVERED: [${OrderService.allowedOrderTransitions(OrderStatus.DELIVERED).join(", ")}]`,
     );
 
-    // A legal move must still work — a guard that refuses everything passes
-    // every rejection check above and is useless.
-    await OrderService.updateOrderStatus(shipped.id, { status: OrderStatus.DELIVERED }, user.id);
-    const delivered = await prisma.order.findUniqueOrThrow({ where: { id: shipped.id } });
-    check(
-        "a legal transition still succeeds",
-        delivered.status === OrderStatus.DELIVERED,
-        `SHIPPED -> DELIVERED left the order ${delivered.status}`,
+    await expectRejection("still refuses a no-op status change", () =>
+        OrderService.updateOrderStatus(revived.id, { status: OrderStatus.CANCELLED }, user.id),
     );
 
     console.log(`\n${failures === 0 ? "All checks passed." : `${failures} check(s) FAILED.`}`);
