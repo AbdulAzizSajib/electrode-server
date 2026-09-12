@@ -547,19 +547,26 @@ const receivePurchaseOrder = async (
              */
             const product = await tx.product.findUnique({
                 where: { id: item.productId },
-                select: { stockQuantity: true, purchasePrice: true, offerPrice: true },
+                select: { purchasePrice: true, offerPrice: true },
             });
 
             const variant = item.variantId
                 ? await tx.productVariant.findUnique({
                       where: { id: item.variantId },
-                      select: { stockQuantity: true, purchasePrice: true, offerPrice: true },
+                      select: { purchasePrice: true, offerPrice: true },
                   })
                 : null;
 
-            const onHandBefore = variant
-                ? variant.stockQuantity
-                : (product?.stockQuantity ?? 0);
+            const onHandBefore =
+                (
+                    await tx.stock.aggregate({
+                        where: {
+                            productId: item.productId,
+                            variantId: item.variantId,
+                        },
+                        _sum: { quantity: true },
+                    })
+                )._sum.quantity ?? 0;
 
             const existingCostRaw = variant
                 ? (variant.purchasePrice ?? product?.purchasePrice)

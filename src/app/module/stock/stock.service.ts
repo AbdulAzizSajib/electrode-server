@@ -15,24 +15,33 @@ const STOCK_INCLUDE = {
 };
 
 /**
- * Applies `delta` to whichever denormalized total a `Stock` row's
- * productId/variantId maps to — `ProductVariant.stockQuantity` when the
- * stock is variant-scoped, `Product.stockQuantity` otherwise. Keeps Phase
- * 1's public read paths accurate whenever a `StockMovement` changes the
- * warehouse-scoped ledger (adjustment or purchase-order receipt — see
- * `api/inventory` spec). Shared by stock adjustment, purchase-order
- * receiving, and checkout's stock deduction.
+ * Rebuilds the denormalized mirrors from the warehouse ledger. The ledger is
+ * authoritative: assigning the aggregate repairs an old mirror that drifted
+ * after an operator removed stock rows directly, while incrementing a delta
+ * would preserve that corruption forever.
  */
-const applyDenormalizedStockDelta = async (
+const reconcileDenormalizedStock = async (
     tx: Prisma.TransactionClient,
     productId: string,
     variantId: string | null,
-    delta: number,
 ) => {
+    const [productStock, variantStock] = await Promise.all([
+        tx.stock.aggregate({
+            where: { productId },
+            _sum: { quantity: true },
+        }),
+        variantId
+            ? tx.stock.aggregate({
+                  where: { productId, variantId },
+                  _sum: { quantity: true },
+              })
+            : Promise.resolve(null),
+    ]);
+
     if (variantId) {
         await tx.productVariant.update({
             where: { id: variantId },
-            data: { stockQuantity: { increment: delta } },
+            data: { stockQuantity: variantStock?._sum.quantity ?? 0 },
         });
     }
 
@@ -51,8 +60,24 @@ const applyDenormalizedStockDelta = async (
      */
     await tx.product.update({
         where: { id: productId },
-        data: { stockQuantity: { increment: delta } },
+        data: { stockQuantity: productStock._sum.quantity ?? 0 },
     });
+};
+
+/**
+ * Compatibility name for existing stock mutation callers. The `delta` is
+ * intentionally ignored: callers have already changed Stock in the same
+ * transaction, so the correct mirror is the ledger aggregate, not the old
+ * denormalized value plus a delta.
+ */
+const applyDenormalizedStockDelta = async (
+    tx: Prisma.TransactionClient,
+    productId: string,
+    variantId: string | null,
+    delta: number,
+) => {
+    void delta;
+    return reconcileDenormalizedStock(tx, productId, variantId);
 };
 
 /**
@@ -292,23 +317,11 @@ const reassignStockVariant = async (
             ],
         });
 
-        /*
-         * Only the variant mirrors move. `Product.stockQuantity` is the sum
-         * across the product's variants and the units never left the product,
-         * so passing this through `applyDenormalizedStockDelta` — which credits
-         * the product on every call — would double-count the move as a gain.
-         */
-        if (source.variantId) {
-            await tx.productVariant.update({
-                where: { id: source.variantId },
-                data: { stockQuantity: { decrement: payload.quantity } },
-            });
-        }
-
-        await tx.productVariant.update({
-            where: { id: payload.variantId },
-            data: { stockQuantity: { increment: payload.quantity } },
-        });
+        // Reconcile both variant mirrors and the shared product total from
+        // the post-transfer ledger. Rebuilding the product total once from
+        // Stock avoids counting the transfer as new product stock.
+        await reconcileDenormalizedStock(tx, source.productId, source.variantId);
+        await reconcileDenormalizedStock(tx, source.productId, payload.variantId);
 
         return updatedDestination;
     });
@@ -344,6 +357,7 @@ export const StockService = {
     reassignStockVariant,
     getStockMovements,
     applyDenormalizedStockDelta,
+    reconcileDenormalizedStock,
     checkLowStock,
     notifyIfLowStock,
 };

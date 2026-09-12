@@ -297,52 +297,16 @@ const deductStockForOrderLines = async (
 
     await tx.stockMovement.createMany({ data: movements });
 
-    // Denormalized totals, batched the same way — variant-scoped lines update
-    // ProductVariant, and EVERY line updates its Product (see
-    // applyDenormalizedStockDelta, which this mirrors for the single-row case).
-    //
-    // The product total counts variant lines too: it is the sum of everything
-    // held for the product, so selling a variant lowers it. Deducting only the
-    // variant here — while receiving credits both — would let a variable
-    // product's total climb forever.
-    const variantDeltas = new Map<string, number>();
-    const productDeltas = new Map<string, number>();
+    // Rebuild mirrors from the ledger rather than decrementing their previous
+    // values. This also repairs a stale mirror if an operator removed stock
+    // rows outside the application before this checkout ran.
+    const reconciled = new Set<string>();
     for (const line of lines) {
-        if (line.variantId) {
-            variantDeltas.set(
-                line.variantId,
-                (variantDeltas.get(line.variantId) ?? 0) + line.quantity,
-            );
-        }
-        productDeltas.set(line.productId, (productDeltas.get(line.productId) ?? 0) + line.quantity);
-    }
+        const key = `${line.productId}:${line.variantId ?? ""}`;
+        if (reconciled.has(key)) continue;
 
-    if (variantDeltas.size > 0) {
-        await tx.$executeRaw`
-            UPDATE "ProductVariant" AS pv
-            SET "stockQuantity" = pv."stockQuantity" - v.qty
-            FROM (
-                SELECT * FROM unnest(
-                    ${[...variantDeltas.keys()]}::text[],
-                    ${[...variantDeltas.values()]}::int[]
-                ) AS t(id, qty)
-            ) AS v
-            WHERE pv.id = v.id
-        `;
-    }
-
-    if (productDeltas.size > 0) {
-        await tx.$executeRaw`
-            UPDATE "Product" AS p
-            SET "stockQuantity" = p."stockQuantity" - v.qty
-            FROM (
-                SELECT * FROM unnest(
-                    ${[...productDeltas.keys()]}::text[],
-                    ${[...productDeltas.values()]}::int[]
-                ) AS t(id, qty)
-            ) AS v
-            WHERE p.id = v.id
-        `;
+        reconciled.add(key);
+        await StockService.reconcileDenormalizedStock(tx, line.productId, line.variantId);
     }
 };
 
@@ -1354,6 +1318,22 @@ const assertOrderTransitionAllowed = (from: OrderStatus, to: OrderStatus) => {
  * but stock is not something to protect with only one guard.
  */
 const restockCancelledOrder = async (tx: Prisma.TransactionClient, orderId: string) => {
+    // Guard: only attempt restock if there are actual SALE movements to reverse.
+    // If an order has no SALE movement (stock was never deducted), restocking
+    // would invent phantom stock. This prevents 50 -> 51 scenarios where an order
+    // was created without proper stock deduction but then cancelled.
+    const hasSaleMovement = await tx.stockMovement.findFirst({
+        where: {
+            referenceId: orderId,
+            type: StockMovementType.SALE,
+        },
+        select: { id: true },
+    });
+
+    if (!hasSaleMovement) {
+        return;  // No SALE movement to reverse — nothing to restore
+    }
+
     const movements = await tx.stockMovement.findMany({
         where: {
             referenceId: orderId,
@@ -1458,6 +1438,35 @@ const restockCancelledOrder = async (tx: Prisma.TransactionClient, orderId: stri
 };
 
 /**
+ * Repairs orders created by older/non-checkout paths that reached delivery
+ * without a SALE movement. Normal checkout orders already have one, so this
+ * is idempotent and cannot deduct stock twice.
+ */
+const ensureDeliveredOrderStockDeducted = async (
+    tx: Prisma.TransactionClient,
+    orderId: string,
+) => {
+    const existingSale = await tx.stockMovement.findFirst({
+        where: { referenceId: orderId, type: StockMovementType.SALE },
+        select: { id: true },
+    });
+
+    if (existingSale) return;
+
+    const items = await tx.orderItem.findMany({
+        where: { orderId },
+        select: {
+            productId: true,
+            variantId: true,
+            quantity: true,
+            productName: true,
+        },
+    });
+
+    await deductStockForOrderLines(tx, orderId, items);
+};
+
+/**
  * Customer self-service cancellation — deliberately a separate endpoint from
  * the staff-only `updateOrderStatus` above (see design.md's "Self-cancel is
  * a separate endpoint" decision) rather than widening that one's role gate.
@@ -1547,6 +1556,10 @@ const updateOrderStatus = async (
 
     const updated = await prisma.$transaction(async (tx) => {
         await tx.order.update({ where: { id: orderId }, data: { status: payload.status } });
+
+        if (payload.status === OrderStatus.DELIVERED) {
+            await ensureDeliveredOrderStockDeducted(tx, orderId);
+        }
 
         /*
          * Cancelling before fulfilment returns the goods to the shelf — they
