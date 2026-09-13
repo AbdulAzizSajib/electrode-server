@@ -39,8 +39,46 @@ import {
 } from "./order.interface";
 import { IPricingLine, quoteCharges, roundMoney } from "./order.pricing";
 
+/**
+ * What the items read needs to paint each line's thumbnail.
+ *
+ * The item snapshot faithfully replays the product's name and sku from
+ * PLACEMENT, and it must — those are the words the shopper was sold. The image
+ * is deliberately not treated the same way: a picture is decoration, not a
+ * fact the parcel is accountable for, and marketing swaps the primary thumbnail
+ * without that lying about anything the order won. So the image ships as
+ * today's catalog picture, read through the same primary-first order the admin
+ * product list uses — a staff read naming money needs to say what the parcel
+ * actually looks like now, the same way it would if the operator asked for the
+ * product. See the `image` COLLAPSE below.
+ *
+ * `variant` carries its own derived `image` (see `ProductVariant.image`); an
+ * item naming a variant prefers that, and one sold as a plain product falls
+ * back to the product's primary image, sharing the `PRIMARY_IMAGE_FIRST` order
+ * so the two read identically.
+ */
+const ORDER_ITEM_IMAGE_INCLUDE = {
+    product: {
+        select: {
+            /*
+             * Primary image first, then authored order — the same ordering
+             * `ORDER_DETAIL_INCLUDE`'s sibling in product.service.ts declares
+             * as `PRIMARY_IMAGE_FIRST`. Kept inline here rather than imported:
+             * that constant is this module's neighbour, not something worth a
+             * cross-module dependency for one `orderBy`.
+             */
+            images: {
+                orderBy: [{ isPrimary: "desc" as const }, { sortOrder: "asc" as const }],
+                take: 1,
+                select: { url: true },
+            },
+        },
+    },
+    variant: { select: { image: true } },
+} as const;
+
 const ORDER_DETAIL_INCLUDE = {
-    items: true,
+    items: { include: ORDER_ITEM_IMAGE_INCLUDE },
     payments: true,
     shipments: true,
     statusHistory: { orderBy: { createdAt: "desc" as const } },
@@ -66,7 +104,32 @@ const ORDER_DETAIL_INCLUDE = {
 };
 
 const ORDER_LIST_INCLUDE = {
-    customer: { select: { id: true, firstName: true, lastName: true } },
+    /*
+     * Customer contact, so the admin's orders list can show who is ordering —
+     * name, phone and email — without a per-row detail request for a customer
+     * that is already sitting in the row. The address ships below as its own
+     * relation, since it is the parcel's address rather than the account's.
+     */
+    customer: {
+        select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+    },
+    /*
+     * The delivery address, so the list can show where each parcel goes.
+     * Whole row — the same shape the detail read returns — so list and detail
+     * render an address identically. Null for collection orders, which have no
+     * address at all.
+     */
+    shippingAddress: true,
+    /*
+     * Line items, so the admin's orders list can name what each order bought.
+     * Detached from the N+1 concern that shaped `shipments` below: items are a
+     * single relation on the already-fetched order rows, not a query per row.
+     *
+     * The staff list keeps `unitCost` (same include detail uses); the
+     * customer-facing list strips it in `getOrders`, because an order list a
+     * customer can read must never carry supplier cost.
+     */
+    items: true,
     /*
      * Courier state, so the admin's orders list can show at a glance which
      * parcels are with Steadfast and where they are.
@@ -89,6 +152,37 @@ const ORDER_LIST_INCLUDE = {
 };
 
 /**
+ * Collapses the nested image relations `ORDER_ITEM_IMAGE_INCLUDE` returns on
+ * each line — `variant.image`, else the product's primary thumbnail — into one
+ * flat `image: string | null`, and drops the nested `product`/`variant` rows
+ * from the item.
+ *
+ * Dropped rather than left riding along: the include exists to fetch exactly
+ * three bytes of picture, and the two relations it adds ARE those three bytes
+ * plus a lot of row they were never meant to carry. A flattened item is one
+ * scalar richer and whole relations lighter; any read that forgets the flatten
+ * would ship both full rows where the design said one thumbnail.
+ *
+ * Images stay on every path — staff and customer — because pictures are not
+ * the supplier-cost concern `withoutItemCosts` guards; a customer's own order
+ * may know what the product they bought looks like.
+ */
+const flattenItemImages = <T extends { items: unknown[] }>(order: T): T => ({
+    ...order,
+    items: order.items.map((item) => {
+        const {
+            product,
+            variant,
+            ...rest
+        } = item as Record<string, unknown> & {
+            product?: { images?: { url: string }[] } | null;
+            variant?: { image?: string | null } | null;
+        };
+        return { ...rest, image: variant?.image ?? product?.images?.[0]?.url ?? null };
+    }),
+}) as unknown as T;
+
+/**
  * Drops `OrderItem.unitCost` from an order on its way to a shopper.
  *
  * `ORDER_DETAIL_INCLUDE` above spreads whole `OrderItem` rows, so the cost
@@ -100,17 +194,21 @@ const ORDER_LIST_INCLUDE = {
  * SAME include serves the staff reads that exist precisely to see cost. A
  * narrowed include would have to be duplicated and would then drift.
  *
- * `ORDER_LIST_INCLUDE` needs no equivalent: it returns no items at all.
+ * `ORDER_LIST_INCLUDE` now returns items too — the admin's orders table names
+ * what each order bought — so the same boundary strip applies to a CUSTOMER's
+ * own order list. Staff keep the cost, and never the other way round.
  */
-const withoutItemCosts = <T extends { items: unknown[] }>(order: T): T =>
-    ({
-        ...order,
-        items: order.items.map((item) => {
-            const visible = { ...(item as Record<string, unknown>) };
-            delete visible.unitCost;
-            return visible;
+const withoutItemCosts = <T extends { items: unknown[] }>(order: T): T => {
+    const visible = flattenItemImages(order);
+    return {
+        ...visible,
+        items: visible.items.map((item) => {
+            const row = { ...(item as Record<string, unknown>) };
+            delete row.unitCost;
+            return row;
         }),
-    }) as unknown as T;
+    } as unknown as T;
+};
 
 const isStaffRole = (role: RoleName) =>
     role === RoleName.OWNER || role === RoleName.ADMIN || role === RoleName.STAFF;
@@ -1148,7 +1246,24 @@ const getOrders = async (userId: string, role: RoleName, queryParams: IQueryPara
         queryBuilder.where({ customerId: customer.id });
     }
 
-    return queryBuilder.execute();
+    const result = await queryBuilder.execute();
+
+    /*
+     * `ORDER_LIST_INCLUDE` now carries `items`, and with them `unitCost`
+     * (admin-only, like `Product.purchasePrice`). A customer's own order list
+     * must not see supplier cost, so strip it exactly where the detail read
+     * does — at the boundary for the non-staff path, never by narrowing the
+     * include that staff rely on for real numbers.
+     */
+    if (!isStaffRole(role)) {
+        // QueryBuilder works on `unknown` rows; the rows are orders built from
+        // ORDER_LIST_INCLUDE, which always carry `items`.
+        result.data = result.data.map((order) =>
+            withoutItemCosts(order as { items: unknown[] }),
+        );
+    }
+
+    return result;
 };
 
 const getOrderById = async (userId: string, role: RoleName, orderId: string) => {
