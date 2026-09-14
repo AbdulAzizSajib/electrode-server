@@ -49,6 +49,31 @@ enum OrderStatus {
   COMPLETED
 }
 
+/// How the CUSTOMER reached the shop — not how the order was entered.
+///
+/// WEBSITE means the shopper placed it themselves through the storefront, and
+/// is the default because it is true of every order placed before this existed.
+/// The rest are conversations a seller turned into an order by hand; which
+/// staff member did that is `Order.createdByUserId`, and the ABSENCE of one is
+/// what says the customer placed it themselves. The two fields answer different
+/// questions and a manual order needs both.
+///
+/// There is deliberately no LANDING_PAGE member, and adding one later would be
+/// a mistake. `Order.landingPageId` already records campaign attribution, and
+/// two independently-written fields answering one question is exactly how the
+/// two come to disagree with no way to tell which is right. A landing-page
+/// order reads WEBSITE — which is true, it came through the storefront — and
+/// carries its campaign on `landingPageId`.
+/// See add-manual-orders-and-item-images design.md, Decision 6.
+enum OrderChannel {
+  WEBSITE
+  WHATSAPP
+  MESSENGER
+  PHONE
+  IN_STORE
+  OTHER
+}
+
 enum PaymentStatus {
   PENDING
   PROCESSING

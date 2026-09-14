@@ -33,6 +33,7 @@ import {
     ICheckoutItemPayload,
     ICheckoutOverrides,
     ICreateOrderPayload,
+    IManualOrderPayload,
     IOrderItemData,
     IQuoteCheckoutPayload,
     IUpdateOrderStatusPayload,
@@ -75,7 +76,23 @@ const ORDER_ITEM_IMAGE_INCLUDE = {
         },
     },
     variant: { select: { image: true } },
-} as const;
+};
+/*
+ * Note the absence of a trailing `as const`, which this object carried when it
+ * was introduced and which did not compile.
+ *
+ * `as const` makes `orderBy` above a READONLY tuple, and Prisma's
+ * `Product$imagesArgs.orderBy` is a mutable array — so the whole include failed
+ * to typecheck, and with it Prisma's inference for every read that used it:
+ * `order.items` and `order.customer` stopped existing on the result type, which
+ * is where the rest of the module's errors came from. Fourteen in total, none
+ * of them visible in dev, because `tsx` does not typecheck and the server has
+ * no test runner.
+ *
+ * The per-string `as const` above is the part that was actually needed — it
+ * pins `"desc"`/`"asc"` to their literal types, which is all Prisma asks for.
+ * Widening the object to readonly was never required and is what broke it.
+ */
 
 const ORDER_DETAIL_INCLUDE = {
     items: { include: ORDER_ITEM_IMAGE_INCLUDE },
@@ -128,8 +145,15 @@ const ORDER_LIST_INCLUDE = {
      * The staff list keeps `unitCost` (same include detail uses); the
      * customer-facing list strips it in `getOrders`, because an order list a
      * customer can read must never carry supplier cost.
+     *
+     * Each line carries its thumbnail too, on the same reasoning: the picture is
+     * a join onto order rows already being fetched, not a request per row. An
+     * operator packing parcels reads the LIST, and making them open every order
+     * to see what is in it costs exactly as much as not showing the picture at
+     * all. Shares `ORDER_ITEM_IMAGE_INCLUDE` with the detail read so the two
+     * surfaces resolve an image identically.
      */
-    items: true,
+    items: { include: ORDER_ITEM_IMAGE_INCLUDE },
     /*
      * Courier state, so the admin's orders list can show at a glance which
      * parcels are with Steadfast and where they are.
@@ -166,6 +190,15 @@ const ORDER_LIST_INCLUDE = {
  * Images stay on every path — staff and customer — because pictures are not
  * the supplier-cost concern `withoutItemCosts` guards; a customer's own order
  * may know what the product they bought looks like.
+ *
+ * That claim used to be false in exactly the way it was written to prevent.
+ * This function was only ever reached from INSIDE `withoutItemCosts`, so the
+ * cost strip's audience silently became the flatten's audience: staff reads,
+ * which never strip cost, never flattened either, and returned the raw nested
+ * `product`/`variant` relations that no client reads. Every order read calls
+ * this directly now, and `withoutItemCosts` does one job — cost — on top.
+ * Two different questions ("may this reader see supplier cost?" and "what shape
+ * is a line?") must not be answered by one call.
  */
 const flattenItemImages = <T extends { items: unknown[] }>(order: T): T => ({
     ...order,
@@ -197,18 +230,32 @@ const flattenItemImages = <T extends { items: unknown[] }>(order: T): T => ({
  * `ORDER_LIST_INCLUDE` now returns items too — the admin's orders table names
  * what each order bought — so the same boundary strip applies to a CUSTOMER's
  * own order list. Staff keep the cost, and never the other way round.
+ *
+ * Cost ONLY. This used to call `flattenItemImages` as its first step, which
+ * made the image shape a property of who was reading rather than of the
+ * endpoint — see that function's comment. Callers flatten; this strips.
  */
-const withoutItemCosts = <T extends { items: unknown[] }>(order: T): T => {
-    const visible = flattenItemImages(order);
-    return {
-        ...visible,
-        items: visible.items.map((item) => {
-            const row = { ...(item as Record<string, unknown>) };
-            delete row.unitCost;
-            return row;
-        }),
-    } as unknown as T;
-};
+const withoutItemCosts = <T extends { items: unknown[] }>(order: T): T => ({
+    ...order,
+    items: order.items.map((item) => {
+        const row = { ...(item as Record<string, unknown>) };
+        delete row.unitCost;
+        return row;
+    }),
+}) as unknown as T;
+
+/**
+ * Both boundary steps in one: flatten each line's image, then drop supplier
+ * cost. What every read that must not disclose cost returns.
+ *
+ * Named for what it does rather than for who reads it, deliberately. The
+ * placement response uses it for EVERY actor including staff, which predates
+ * this change and is left alone — a name asserting an audience would be wrong
+ * there, and that wrongness is what let the flatten's audience drift in the
+ * first place.
+ */
+const flattenedWithoutCosts = <T extends { items: unknown[] }>(order: T): T =>
+    withoutItemCosts(flattenItemImages(order));
 
 const isStaffRole = (role: RoleName) =>
     role === RoleName.OWNER || role === RoleName.ADMIN || role === RoleName.STAFF;
@@ -640,6 +687,51 @@ const resolveCheckoutContext = async (
         };
     }
 
+    /* --- Staff, placing an order on a customer's behalf ---
+     *
+     * Identical to the guest branch below in the two things that make an order
+     * deliverable — the phone is the customer's identity, the address is typed
+     * in — and deliberately different in everything that exists to police an
+     * anonymous shopper.
+     *
+     * NOT applied here, each for its own reason:
+     *
+     *   - `enforceGuestOrderLimits`. Both caps exist because a guest checkout
+     *     has nobody accountable behind it. This one has an authenticated,
+     *     audited employee, recorded on the order. The per-IP cap would also be
+     *     counting the SHOP's own address, so a busy afternoon at the counter
+     *     would throttle itself.
+     *   - `checkoutConfig`'s six-field map and `allowGuestCheckout`. That config
+     *     decides what the STOREFRONT'S FORM asks a shopper for. An operator
+     *     recording a sale that already happened is not its audience, and a shop
+     *     requiring a postal code online would otherwise refuse a phone order
+     *     for a field nobody was in a position to ask.
+     *
+     * Still applied, because neither is about policing anyone: the phone floor
+     * (an order nobody can look up or deliver is not a favour to anyone) and a
+     * delivery address. See the spec's "Guest abuse limits do not apply to
+     * staff-placed orders".
+     */
+    if (actor.kind === "staff") {
+        if (!payload.phone) {
+            throw new AppError(status.BAD_REQUEST, "The customer's phone number is required");
+        }
+
+        const customer = await CustomerService.getOrCreateCustomerByPhone(
+            payload.phone,
+            payload.fullName?.trim() || GUEST_FALLBACK_NAME,
+        );
+
+        const address = await createInlineShippingAddress(customer, payload);
+
+        return {
+            customer,
+            shippingAddressId: address.id,
+            shippingAddress: address,
+            cartId: undefined,
+        };
+    }
+
     // --- Guest ---
 
     if (payload.shippingAddressId) {
@@ -778,6 +870,18 @@ const placeOrder = async (
             });
         }
 
+        /*
+         * A staff-placed order always carries its own lines, so this is
+         * unreachable today — `usePayloadItems` returns above. Stated anyway
+         * rather than left to fall through to the customer-cart read below,
+         * which would load the CUSTOMER'S OWN live cart and turn whatever they
+         * happened to be shopping for into an order the operator never agreed
+         * to. That is a silent, plausible, data-destroying failure, and the
+         * only thing standing between it and production is a validation rule in
+         * another file requiring at least one line.
+         */
+        if (actor.kind === "staff") return Promise.resolve(null);
+
         return prisma.cart.findUnique({
             where: { customerId: customer.id },
             include: { items: { include: { product: true, variant: true } } },
@@ -809,7 +913,7 @@ const placeOrder = async (
         );
         // Checkout answers a shopper, never staff — cost is stripped on all
         // three of this function's returns.
-        return { order: withoutItemCosts(replayedOrder), isReplay: true };
+        return { order: flattenedWithoutCosts(replayedOrder), isReplay: true };
     }
 
     const lines: ICheckoutLine[] = usePayloadItems
@@ -923,7 +1027,29 @@ const placeOrder = async (
     const couponResult = appliedCoupon
         ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
         : null;
-    const discountAmount = couponResult?.discountAmount ?? 0;
+
+    /*
+     * The order's one discount figure, from a coupon or from an operator, never
+     * from both — the manual endpoint accepts no coupon code at all, so the two
+     * sources cannot meet (design.md, Decision 5).
+     *
+     * The subtotal bound is checked HERE and not in the validation schema
+     * because the subtotal is not knowable until the lines have been read and
+     * priced from the catalog; a request body cannot be judged against it.
+     * `allocateDiscount` would cap it internally anyway, so this is not what
+     * keeps the arithmetic sound — it is what stops an order committing for a
+     * total the operator did not intend, silently, instead of telling them.
+     */
+    const staffDiscount = overrides?.manual?.discount;
+    if (staffDiscount && staffDiscount.amount > subtotal) {
+        const money = currencyFormatOf(await StoreSettingService.getStoreSetting());
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Discount ${formatMoney(staffDiscount.amount, money)} is more than the order's ${formatMoney(subtotal, money)} — it cannot exceed the subtotal`,
+        );
+    }
+
+    const discountAmount = staffDiscount?.amount ?? couponResult?.discountAmount ?? 0;
 
     // `freeShippingThreshold` still comes from the shop settings — it is a
     // property of the order's value, not of any one product. The tax rate there
@@ -983,7 +1109,28 @@ const placeOrder = async (
                     taxAmount,
                     totalAmount,
                     couponCode: appliedCoupon?.code,
+                    /*
+                     * Set only when a person decided the discount. A coupon
+                     * discount is already explained by `couponCode` above, and
+                     * writing a reason for one would be inventing a sentence
+                     * nobody said.
+                     */
+                    discountReason: staffDiscount?.reason,
                     notes: payload.notes,
+                    /*
+                     * Provenance. `channel` defaults to WEBSITE at the database
+                     * level, so a shopper's own order needs nothing here and
+                     * every row placed before this column existed reads
+                     * correctly without a backfill.
+                     *
+                     * `createdByUserId` is the operator, taken from the ACTOR —
+                     * a verified session — and never from the payload, so an
+                     * order cannot claim to have been taken by someone else.
+                     * Left null for a self-service order, which is what says
+                     * the customer placed it themselves.
+                     */
+                    channel: overrides?.manual?.channel,
+                    createdByUserId: actor.kind === "staff" ? actor.staffUserId : undefined,
                     /*
                      * The delivery choice, captured. `deliveryOptionLabel` is
                      * written once and never updated, for the same reason
@@ -1014,11 +1161,39 @@ const placeOrder = async (
                     landingPageId: overrides?.landingPage?.id,
                     landingPageTitle: overrides?.landingPage?.title,
                     items: { createMany: { data: orderItemsData } },
-                    statusHistory: { create: { toStatus: OrderStatus.PENDING } },
-                    // Guest checkout is cash-on-delivery only. The Payment row
-                    // is created inside this transaction so a COD order can
-                    // never commit without one and go missing from reconciliation.
-                    ...(isGuest
+                    /*
+                     * A manual order opens its history naming the operator, so
+                     * "who entered this" survives even if `createdByUserId` is
+                     * ever nulled by a staff account being deleted. A shopper's
+                     * own order has nobody to name.
+                     */
+                    statusHistory: {
+                        create: {
+                            toStatus: OrderStatus.PENDING,
+                            changedById:
+                                actor.kind === "staff" ? actor.staffUserId : undefined,
+                        },
+                    },
+                    /*
+                     * The condition is "this order is cash-on-delivery", not
+                     * "this actor is a guest" — it read as the latter only
+                     * because guests were once the only COD population. A
+                     * staff-placed order is COD by definition here: the customer
+                     * agreed to pay the courier, and money already collected in
+                     * advance is recorded afterwards through
+                     * `POST /orders/:id/payments` rather than at creation, so
+                     * there is one way to record a payment rather than two.
+                     *
+                     * The row is created inside this transaction so a COD order
+                     * can never commit without one and go missing from
+                     * reconciliation.
+                     *
+                     * An AUTHENTICATED storefront order still gets no Payment
+                     * row. That predates this change and is left alone —
+                     * widening it to every order changes existing reconciliation
+                     * and is not what this change is for.
+                     */
+                    ...(isGuest || actor.kind === "staff"
                         ? {
                               payments: {
                                   create: {
@@ -1083,7 +1258,7 @@ const placeOrder = async (
             if (payload.idempotencyKey && violatedTarget(error, "idempotencyKey")) {
                 const winner = await findReplayableOrder(payload.idempotencyKey, customer.id);
                 if (winner) {
-                    return { order: withoutItemCosts(winner), isReplay: true };
+                    return { order: flattenedWithoutCosts(winner), isReplay: true };
                 }
             }
 
@@ -1116,7 +1291,81 @@ const placeOrder = async (
         { link: `/orders/${created.id}` },
     ).catch((error) => console.error("New-order staff notification failed after checkout:", error));
 
-    return { order: withoutItemCosts(created), isReplay: false };
+    return { order: flattenedWithoutCosts(created), isReplay: false };
+};
+
+/**
+ * Records an order a customer placed off-site — over WhatsApp, Messenger, a
+ * phone call or at the counter.
+ *
+ * Everything that makes an order an order happens in `placeOrder`, the same
+ * core the storefront checkout and the campaign landing page both run through:
+ * the order number and its collision retry, catalog pricing, stock deduction,
+ * the COD payment, the status history, idempotency, and both notifications.
+ * This function's whole job is to turn the admin form's payload into that
+ * core's payload and to say how a staff-placed order differs. A second
+ * implementation of order creation is the risk that shape exists to avoid —
+ * see `ICheckoutOverrides` and add-single-product-landing-page design.md,
+ * Decision 3.
+ *
+ * What differs, and nothing else does:
+ *
+ *   Customer            resolved by PHONE, not by session (the operator has one,
+ *                       the customer does not)
+ *   Guest COD caps      not enforced — an accountable employee placed this, and
+ *                       the per-IP cap would be counting the shop's own address
+ *   checkoutConfig      bypassed, fields and `allowGuestCheckout` alike: it
+ *                       governs what the STOREFRONT'S FORM asks a shopper
+ *   isGuestOrder/IP     false / null
+ *   COD Payment row     always created
+ *   changedById         the operator, on the opening status-history row
+ *   discountAmount      stated by the operator, with a reason, instead of a coupon
+ *   channel/createdBy   recorded; a shopper's own order records neither
+ *
+ * Not in that list, deliberately: the phone floor and the delivery address,
+ * which still apply. Neither polices anyone — an order with no phone cannot be
+ * looked up or delivered.
+ *
+ * If this list ever grows past about a dozen rows, the core has stopped being
+ * shared and that is the signal to revisit rather than to add a fourteenth.
+ */
+const placeManualOrder = async (staffUserId: string, payload: IManualOrderPayload) => {
+    /*
+     * The discount reaches pricing through `ICheckoutOverrides`, not through
+     * the payload below, so it stays unreachable from any request body the
+     * storefront's own schema accepts. `placeOrder` bounds it against the
+     * subtotal once the lines have been priced.
+     *
+     * `reason` is non-optional in the override's type, and the validation
+     * schema requires it whenever an amount is present — so a discount with no
+     * stated reason cannot be constructed here.
+     */
+    const discount =
+        payload.discountAmount && payload.discountAmount > 0
+            ? { amount: payload.discountAmount, reason: (payload.discountReason ?? "").trim() }
+            : undefined;
+
+    return placeOrder(
+        { kind: "staff", staffUserId },
+        {
+            fullName: payload.fullName,
+            phone: payload.phone,
+            shippingAddress: payload.shippingAddress,
+            // The cart bypass. A staff-placed order always names its own lines;
+            // it must never consume the CUSTOMER'S live cart, which holds what
+            // they are still shopping for rather than what they just agreed to.
+            items: payload.items,
+            deliveryOptionKey: payload.deliveryOptionKey,
+            paymentMethod: PaymentMethod.COD,
+            notes: payload.notes,
+            idempotencyKey: payload.idempotencyKey,
+            // No couponCode: a manual order takes a stated discount instead, and
+            // the two must never both write the order's one discount figure.
+        },
+        {
+            manual: { channel: payload.channel, ...(discount ? { discount } : {}) },
+        },
+    );
 };
 
 /**
@@ -1137,24 +1386,46 @@ const placeOrder = async (
  * "what does this cost" is exactly how a quote and a charge drift apart.
  */
 const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPayload) => {
+    /*
+     * A staff quote prices lines the operator has typed, for a customer who has
+     * no session here and may not exist yet. It resolves NO customer — `user`
+     * below would run `getOrCreateCustomerByUserId` on the operator's own
+     * account, quietly filing an employee in the customer list every time they
+     * priced a basket, and inflating any count derived from those rows. Pricing
+     * must have no side effects.
+     */
+    const isStaffQuote = actor.kind === "staff";
+
+    if (isStaffQuote && !payload.items?.length) {
+        // There is no cart to fall back to — see `cart` below.
+        throw new AppError(status.BAD_REQUEST, "Add at least one product to price this order");
+    }
+
     const customer =
         actor.kind === "user"
             ? await CustomerService.getOrCreateCustomerByUserId(actor.userId)
             : null;
 
-    const cart = payload.items?.length
-        ? null
-        : await (actor.kind === "guest"
-              ? actor.guestToken
-                  ? prisma.cart.findUnique({
-                        where: { guestToken: actor.guestToken },
+    /*
+     * No cart read on the staff path either, and not merely because the guard
+     * above makes it unreachable: the `user` branch keys on `customer.id`,
+     * which is null here, and the customer whose order this is has a cart of
+     * their own that has nothing to do with what the operator is pricing.
+     */
+    const cart =
+        payload.items?.length || isStaffQuote
+            ? null
+            : await (actor.kind === "guest"
+                  ? actor.guestToken
+                      ? prisma.cart.findUnique({
+                            where: { guestToken: actor.guestToken },
+                            include: { items: { include: { product: true, variant: true } } },
+                        })
+                      : Promise.resolve(null)
+                  : prisma.cart.findUnique({
+                        where: { customerId: (customer as { id: string }).id },
                         include: { items: { include: { product: true, variant: true } } },
-                    })
-                  : Promise.resolve(null)
-              : prisma.cart.findUnique({
-                    where: { customerId: (customer as { id: string }).id },
-                    include: { items: { include: { product: true, variant: true } } },
-                }));
+                    }));
 
     const lines: ICheckoutLine[] = payload.items?.length
         ? await loadPayloadLines(payload.items)
@@ -1178,13 +1449,34 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         taxRuleId: line.product.taxRuleId,
     }));
 
-    const appliedCoupon = payload.couponCode
-        ? await CouponService.getActiveCouponByCode(payload.couponCode)
-        : null;
+    // No coupon on the staff path — a manual order takes a stated discount
+    // instead, and the two must never both write the order's one discount
+    // figure (design.md, Decision 5).
+    const appliedCoupon =
+        payload.couponCode && !isStaffQuote
+            ? await CouponService.getActiveCouponByCode(payload.couponCode)
+            : null;
     const couponResult =
         appliedCoupon && customer
             ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
             : null;
+
+    /*
+     * The discount this order is priced under: an operator's stated figure on a
+     * staff quote, a coupon's computed one otherwise.
+     *
+     * Capped at the subtotal, which is only knowable here — the lines had to be
+     * read and priced first. `allocateDiscount` caps internally too, so this is
+     * not what keeps the arithmetic sound; it is what stops the QUOTE reporting
+     * a total the placement will refuse, which on this endpoint means an
+     * operator reading an impossible figure to a customer.
+     */
+    const quotedSubtotal = roundMoney(
+        pricingLines.reduce((sum, line) => sum + line.lineTotal, 0),
+    );
+    const discountAmount = isStaffQuote
+        ? Math.min(roundMoney(payload.discountAmount ?? 0), quotedSubtotal)
+        : (couponResult?.discountAmount ?? 0);
 
     const storeSetting = await StoreSettingService.getStoreSetting();
 
@@ -1196,7 +1488,7 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
      */
     const charges = await quoteCharges({
         lines: pricingLines,
-        discountAmount: couponResult?.discountAmount ?? 0,
+        discountAmount,
         deliveryOptionKey: payload.deliveryOptionKey,
         couponWaivesShipping: Boolean(couponResult?.freeShipping),
         freeShippingThreshold:
@@ -1204,8 +1496,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
                 ? null
                 : Number(storeSetting.freeShippingThreshold),
     });
-
-    const discountAmount = couponResult?.discountAmount ?? 0;
 
     return {
         subtotal: charges.subtotal,
@@ -1236,7 +1526,14 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
 const getOrders = async (userId: string, role: RoleName, queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.order, queryParams, {
         searchableFields: ["orderNumber"],
-        filterableFields: ["status"],
+        /*
+         * `channel` joins `status` here rather than being filtered by a client:
+         * the admin list is paginated, so filtering a page would answer "WhatsApp
+         * orders among the ten you happen to be looking at" while reading as
+         * "WhatsApp orders". Served by `@@index([channel])`, and the two combine
+         * — an operator narrows by both at once.
+         */
+        filterableFields: ["status", "channel"],
     });
 
     queryBuilder.search().filter().sort().paginate().include(ORDER_LIST_INCLUDE);
@@ -1249,19 +1546,24 @@ const getOrders = async (userId: string, role: RoleName, queryParams: IQueryPara
     const result = await queryBuilder.execute();
 
     /*
-     * `ORDER_LIST_INCLUDE` now carries `items`, and with them `unitCost`
-     * (admin-only, like `Product.purchasePrice`). A customer's own order list
-     * must not see supplier cost, so strip it exactly where the detail read
-     * does — at the boundary for the non-staff path, never by narrowing the
-     * include that staff rely on for real numbers.
+     * `ORDER_LIST_INCLUDE` carries `items`, and with them two things that need
+     * handling at the boundary rather than in the include.
+     *
+     * The image relations are flattened for EVERYONE: a line's shape is a
+     * property of the endpoint, not of who is asking, and staff read this list
+     * to match parcels against a shelf. The `unitCost` strip is the one that
+     * genuinely depends on the reader — it is supplier cost, admin-only, like
+     * `Product.purchasePrice` — so only the non-staff path takes it, and never
+     * by narrowing the include that staff rely on for real numbers.
+     *
+     * QueryBuilder works on `unknown` rows; the rows are orders built from
+     * ORDER_LIST_INCLUDE, which always carry `items`.
      */
-    if (!isStaffRole(role)) {
-        // QueryBuilder works on `unknown` rows; the rows are orders built from
-        // ORDER_LIST_INCLUDE, which always carry `items`.
-        result.data = result.data.map((order) =>
-            withoutItemCosts(order as { items: unknown[] }),
-        );
-    }
+    result.data = result.data.map((order) =>
+        isStaffRole(role)
+            ? flattenItemImages(order as { items: unknown[] })
+            : flattenedWithoutCosts(order as { items: unknown[] }),
+    );
 
     return result;
 };
@@ -1283,7 +1585,7 @@ const getOrderById = async (userId: string, role: RoleName, orderId: string) => 
             throw new AppError(status.NOT_FOUND, "Order not found");
         }
 
-        return withoutItemCosts(order);
+        return flattenedWithoutCosts(order);
     }
 
     /*
@@ -1291,8 +1593,16 @@ const getOrderById = async (userId: string, role: RoleName, orderId: string) => 
      * offers exactly what the service will accept. Derived from the same map
      * the guard enforces — a UI listing the statuses independently is how a
      * completed return became re-completable in the returns module.
+     *
+     * Flattened like every other read. Staff keep `unitCost`; what they do not
+     * keep is a DIFFERENT item shape from the one the customer branch above
+     * returns, which is what this branch used to hand back — the raw nested
+     * `product`/`variant` relations, which no client reads.
      */
-    return { ...order, allowedTransitions: allowedOrderTransitions(order.status) };
+    return {
+        ...flattenItemImages(order),
+        allowedTransitions: allowedOrderTransitions(order.status),
+    };
 };
 
 /**
@@ -1324,7 +1634,7 @@ const getGuestOrderByNumberAndPhone = async (orderNumber: string, phone: string)
     }
 
     // Guest tracking has no staff variant — this read is always a shopper's.
-    return withoutItemCosts(order);
+    return flattenedWithoutCosts(order);
 };
 
 /** Order states from which a customer may still cancel their own order — before fulfillment has actually started. */
@@ -1639,7 +1949,7 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
     );
 
     // Customer self-cancel — staff use `updateOrderStatus` instead.
-    return withoutItemCosts(cancelled);
+    return flattenedWithoutCosts(cancelled);
 };
 
 /**
@@ -1733,11 +2043,22 @@ const updateOrderStatus = async (
         );
     }
 
-    return updated;
+    /*
+     * Flattened on the way out, like every other order read. Deliberately here
+     * and not before the audit record above: that log stores the database row
+     * as it is, and a shape invented for a client does not belong in a trail
+     * kept for reconciliation.
+     *
+     * Cost is NOT stripped — this path is staff-only (`checkAuth` on the route
+     * admits OWNER/ADMIN/STAFF), which is exactly the audience `unitCost` is
+     * for.
+     */
+    return flattenItemImages(updated);
 };
 
 export const OrderService = {
     placeOrder,
+    placeManualOrder,
     quoteCheckout,
     getOrders,
     getOrderById,

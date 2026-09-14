@@ -1,8 +1,23 @@
+import { OrderChannel } from "../../../generated/prisma/client";
+
 /**
  * Who is checking out. A discriminated union rather than an optional
  * `userId`, so "neither a session nor a guest identity" is unconstructible
  * instead of being a runtime guard buried in the middle of checkout — and so
- * TypeScript flags any branch that forgets one of the two cases.
+ * TypeScript flags any branch that forgets one of the cases.
+ *
+ * `staff` is the third case and the odd one: it has a session, but the session
+ * does not belong to the person the order is FOR. An operator recording a sale
+ * agreed over WhatsApp is acting on a customer's behalf, which is neither of
+ * the other two — treating it as `user` would place the order against the
+ * operator's own account, and treating it as `guest` would subject an
+ * accountable employee to the anonymous-abuse caps and record the shop's own IP
+ * as the customer's.
+ *
+ * Widening this type rather than adding a flag elsewhere is deliberate: every
+ * `switch` on `kind` fails to compile until it accounts for the new case, which
+ * is the only reliable way to find the branches that must differ. See
+ * add-manual-orders-and-item-images design.md, Decision 1.
  */
 export type ICheckoutActor =
     | { kind: "user"; userId: string }
@@ -12,6 +27,16 @@ export type ICheckoutActor =
           guestToken?: string;
           /** Client address, recorded on the order to back the per-IP rate limit. */
           ip: string;
+      }
+    | {
+          kind: "staff";
+          /**
+           * The operator, recorded on the order as `createdByUserId` and on its
+           * opening status-history row. Never read from a request body — the
+           * controller takes it from the verified session, so an order cannot
+           * claim to have been taken by someone else.
+           */
+          staffUserId: string;
       };
 
 /** A shipping address supplied inline, as a guest has none saved to reference. */
@@ -118,6 +143,66 @@ export interface ICheckoutOverrides {
     bypassCheckoutConfig?: boolean;
     /** Campaign attribution recorded on the resulting order. */
     landingPage?: { id: string; title: string };
+    /**
+     * The two things a STAFF-placed order states that no checkout can: where
+     * the customer reached the shop, and a price the operator negotiated.
+     *
+     * Here rather than on `ICreateOrderPayload` for the same reason
+     * `shippingOverride` above is: `createOrderZodSchema` has no idea this type
+     * exists, so neither field is reachable from any request body. A shopper who
+     * could name their own discount would be a shopper who shops for free.
+     *
+     * `placeManualOrder` fills it from the manual endpoint's own validated
+     * payload, which is the only place either value may come from.
+     */
+    manual?: {
+        /** Recorded as `Order.channel`. */
+        channel: OrderChannel;
+        /**
+         * A negotiated reduction and the reason for it, both recorded on the
+         * order. Absent when the operator gave no discount.
+         *
+         * One order-level figure rather than per-line prices: every line stays
+         * provably catalog-priced, and the whole negotiation lands in one
+         * auditable number. `reason` is not optional — a discount nobody
+         * explained is an unexplained hole in the day's takings once the
+         * conversation that produced it is gone. See design.md, Decision 4.
+         */
+        discount?: { amount: number; reason: string };
+    };
+}
+
+/**
+ * What the admin's manual order form sends.
+ *
+ * Deliberately not `ICreateOrderPayload`: that one describes a SHOPPER'S
+ * checkout and carries `shippingAddressId`, `couponCode` and `expectedTotal`,
+ * none of which a manual order may use — a staff-placed order types its address
+ * in, takes a stated discount rather than a coupon (design.md, Decision 5), and
+ * is priced by the quote the operator already saw.
+ *
+ * `placeManualOrder` maps this onto the checkout core's payload; nothing here
+ * reaches `placeOrder` directly.
+ */
+export interface IManualOrderPayload {
+    /** The customer's number — their identity, per the platform's phone-first rule. */
+    phone: string;
+    fullName?: string;
+    shippingAddress: IGuestAddressPayload;
+    /** At least one, enforced by the validation schema. No price field, by design. */
+    items: ICheckoutItemPayload[];
+    deliveryOptionKey: string;
+    channel: OrderChannel;
+    /** Required whenever `discountAmount` is above zero. */
+    discountAmount?: number;
+    discountReason?: string;
+    notes?: string;
+    /**
+     * Not accepted from the request body — the controller reads it from the
+     * `Idempotency-Key` header, exactly as checkout does. An operator's double
+     * click must not send the customer two parcels.
+     */
+    idempotencyKey?: string;
 }
 
 /**
@@ -138,6 +223,18 @@ export interface IQuoteCheckoutPayload {
     items?: ICheckoutItemPayload[];
     /** Injected by the controller from the applied-coupon cookie, as checkout is. */
     couponCode?: string;
+    /**
+     * A staff discount to price the order under. Staff actor only — the
+     * storefront's quote schema has no such field, so a shopper cannot name
+     * their own discount.
+     *
+     * It exists because the admin's manual order form must show the operator a
+     * total before they read it aloud to a customer, and the discount cannot be
+     * subtracted from an undiscounted quote afterwards: `allocateDiscount`
+     * spreads it across the lines BEFORE tax, so a discounted order's tax is
+     * not its undiscounted tax minus anything the client can compute.
+     */
+    discountAmount?: number;
 }
 
 export interface IUpdateOrderStatusPayload {

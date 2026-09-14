@@ -1793,7 +1793,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{base_url}}/orders?page=1&limit=10",
+                  "raw": "{{base_url}}/orders?page=1&limit=10&channel=WHATSAPP",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -1808,10 +1808,15 @@
                     {
                       "key": "limit",
                       "value": "10"
+                    },
+                    {
+                      "key": "channel",
+                      "value": "WHATSAPP",
+                      "description": "Optional. Omit for every channel."
                     }
                   ]
                 },
-                "description": "Own orders only for a customer; every order for OWNER/ADMIN/STAFF."
+                "description": "Own orders only for a customer; every order for OWNER/ADMIN/STAFF.\n\nFilterable by status and by channel, both server-side via QueryBuilder — e.g. ?status=PENDING&channel=WHATSAPP. The two combine. Filtering on the client would answer \"WhatsApp orders among the ten on this page\" while reading as \"WhatsApp orders\".\n\nEach line carries items[].image: the variant image when the line names a variant that has one, else the product primary image, else null. One flat value per line on EVERY order read — list and detail, staff and customer alike.\n\nDeliberately today catalog picture rather than a snapshot taken at placement, unlike the line productName, sku and unitPrice. Those are what the customer was sold and are accountable facts of the transaction; a photograph is not, so replacing a product image shows through to past orders and does not make their record untrue.\n\nStaff reads also carry the order provenance: channel (WEBSITE | WHATSAPP | MESSENGER | PHONE | IN_STORE | OTHER), createdByUserId (the staff member who recorded a manual order, null when the customer placed it themselves — the absence is the signal), and discountReason (why a staff discount was given; null for a coupon discount, which couponCode already explains).\n\nCampaign attribution is NOT on channel — landingPageId answers that, and two fields answering one question is how the two come to disagree. A landing-page order reads WEBSITE."
               },
               "response": []
             },
@@ -1829,7 +1834,8 @@
                     "orders",
                     "{{orderId}}"
                   ]
-                }
+                },
+                "description": "Own order only for a customer (404, not 403, for someone else — that avoids confirming the order exists); any order for OWNER/ADMIN/STAFF.\n\nA staff read additionally carries allowedTransitions and keeps items[].unitCost; a customer read has neither.\n\nEach line carries items[].image: the variant image when the line names a variant that has one, else the product primary image, else null. One flat value per line on EVERY order read — list and detail, staff and customer alike.\n\nDeliberately today catalog picture rather than a snapshot taken at placement, unlike the line productName, sku and unitPrice. Those are what the customer was sold and are accountable facts of the transaction; a photograph is not, so replacing a product image shows through to past orders and does not make their record untrue.\n\nStaff reads also carry the order provenance: channel (WEBSITE | WHATSAPP | MESSENGER | PHONE | IN_STORE | OTHER), createdByUserId (the staff member who recorded a manual order, null when the customer placed it themselves — the absence is the signal), and discountReason (why a staff discount was given; null for a coupon discount, which couponCode already explains).\n\nCampaign attribution is NOT on channel — landingPageId answers that, and two fields answering one question is how the two come to disagree. A landing-page order reads WEBSITE."
               },
               "response": []
             },
@@ -5390,6 +5396,68 @@
           "name": "Orders",
           "item": [
             {
+              "name": "Admin - Create Manual Order (WhatsApp/Messenger)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}",
+                    "description": "A double-submitted manual order must not send the customer two parcels."
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders/manual",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "manual"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"01712345678\",\n  \"fullName\": \"Rahim Uddin\",\n  \"channel\": \"WHATSAPP\",\n  \"shippingAddress\": {\n    \"addressLine1\": \"House 12, Road 5, Dhanmondi\",\n    \"city\": \"Dhaka\",\n    \"postalCode\": \"1205\"\n  },\n  \"deliveryOptionKey\": \"inside-dhaka\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    },\n    {\n      \"productId\": \"{{productId}}\",\n      \"variantId\": \"{{variantId}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"discountAmount\": 500,\n  \"discountReason\": \"Agreed over WhatsApp — returning customer\",\n  \"notes\": \"Customer asked for delivery after 5pm\"\n}"
+                },
+                "description": "OWNER/ADMIN/STAFF only. Records an order a customer placed off-site.\n\nThe customer is resolved BY PHONE — an existing customer with that number is reused, an unknown one is created. Lines are priced from the catalog; a unit price sent here is not accepted (the schema has no such field). A negotiated price is one order-level discountAmount, and discountReason is REQUIRED whenever it is above zero. The discount may not exceed the subtotal, which is checked after the lines are priced.\n\nchannel is one of WHATSAPP | MESSENGER | PHONE | IN_STORE | OTHER. WEBSITE is deliberately not selectable — it is the column default and means the customer placed the order themselves.\n\nThe order starts PENDING with a PENDING cash-on-delivery Payment for its total, deducts stock in the same transaction, and is refused (409) in full if any line is short. An advance already collected is recorded afterwards through POST /orders/:id/payments.\n\nGuest COD abuse caps and the shop-wide checkout field config do not apply; the phone and an address line still do. Send Idempotency-Key (UUID) — a repeat returns the first order with 200 instead of creating a second."
+              },
+              "response": []
+            },
+            {
+              "name": "Admin - Quote Manual Order (price before recording)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/orders/quote/manual",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "quote",
+                    "manual"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"deliveryOptionKey\": \"inside-dhaka\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    },\n    {\n      \"productId\": \"{{productId}}\",\n      \"variantId\": \"{{variantId}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"discountAmount\": 500\n}"
+                },
+                "description": "OWNER/ADMIN/STAFF only. Prices an order the operator is still typing, so they can read the total back to the customer before committing.\n\nSeparate from POST /orders/quote because that route runs under optionalAuth: an admin shopping on the storefront is a shopper like any other and their own cart must still price there. Here the actor is staff because the ROUTE is staff.\n\nResolves NO cart and NO customer — in particular it does not file the operator own account in the customer list, which getOrCreateCustomerByUserId would. items is required for that reason; there is no cart to fall back to.\n\ndiscountAmount is spellable here and on POST /orders/manual and nowhere else. It must be quoted rather than subtracted client-side: the discount is allocated across lines BEFORE tax, so a discounted order tax is not its undiscounted tax minus anything the client can compute. Returns the same subtotal/discount/delivery/tax/total the placement will produce."
+              },
+              "response": []
+            },
+            {
               "name": "Admin - Update Order Status",
               "request": {
                 "method": "PATCH",
@@ -5414,7 +5482,7 @@
                   "mode": "raw",
                   "raw": "{\n  \"status\": \"CONFIRMED\",\n  \"note\": \"Payment verified\"\n}"
                 },
-                "description": "OWNER/ADMIN/STAFF only — writes an OrderStatusHistory row."
+                "description": "OWNER/ADMIN/STAFF only — writes an OrderStatusHistory row.\n\nReturns the updated order in the same shape GET /orders/:id returns for staff, including items[].image and the provenance fields."
               },
               "response": []
             }

@@ -83,6 +83,93 @@ export const quoteCheckoutZodSchema = z.object({
 });
 
 /**
+ * A price quote for an order an operator is still typing.
+ *
+ * Separate from `quoteCheckoutZodSchema` above so `discountAmount` is spellable
+ * on the staff route and nowhere else. The storefront's quote goes through the
+ * other schema, which has no such field — a shopper who could name their own
+ * discount would be a shopper who shops for free.
+ *
+ * `items` is required here, unlike the shopper's quote: there is no cart behind
+ * a manual order to fall back to, and the customer's own cart holds what they
+ * are still shopping for rather than what they just agreed to buy.
+ */
+export const quoteManualOrderZodSchema = z.object({
+    deliveryOptionKey: z.string().min(1).max(60),
+    items: z.array(checkoutItemZodSchema).min(1).max(50),
+    discountAmount: z.number().nonnegative().optional(),
+});
+
+/**
+ * An order an operator took over WhatsApp, Messenger, a phone call or at the
+ * counter.
+ *
+ * Deliberately NOT `createOrderZodSchema` with extra fields. That schema
+ * describes a shopper's checkout, and the two differ in what each must be
+ * unable to say:
+ *
+ *   - no `shippingAddressId` — a staff-placed order types its address in, and
+ *     honouring a stored id would let an operator ship to an address they
+ *     merely guessed, exactly as it would a guest
+ *   - no `couponCode` — a manual order takes a stated discount instead, and the
+ *     two must never both write the order's one discount figure (design.md,
+ *     Decision 5)
+ *   - no per-line price — lines carry ids and a quantity, nothing else, so a
+ *     price in the body is not merely ignored but unspellable (Decision 4)
+ *   - no `expectedTotal` — the operator was shown the quote this endpoint
+ *     re-computes
+ *
+ * What it requires that a checkout does not: a phone (the customer's identity),
+ * an address line, a delivery option, and a channel.
+ */
+export const createManualOrderZodSchema = z
+    .object({
+        phone: z.string().refine(isValidPhone, "Please enter a valid Bangladeshi mobile number"),
+        fullName: z.string().trim().min(1).max(200).optional(),
+        /*
+         * `addressLine1` is required here where the guest schema leaves it
+         * optional. The guest schema cannot require it because a merchant may
+         * have switched the field off for the storefront form; a manual order
+         * bypasses that config entirely, so nothing else would ever ask.
+         */
+        shippingAddress: guestAddressZodSchema.extend({
+            addressLine1: z.string().trim().min(1).max(255),
+        }),
+        items: z.array(checkoutItemZodSchema).min(1).max(50),
+        deliveryOptionKey: z.string().min(1).max(60),
+        channel: z.enum(["WHATSAPP", "MESSENGER", "PHONE", "IN_STORE", "OTHER"]),
+        discountAmount: z.number().nonnegative().optional(),
+        discountReason: z.string().trim().max(500).optional(),
+        notes: z.string().max(1000).optional(),
+    })
+    /*
+     * A discount must say why. Enforced here rather than in the service because
+     * it is a property of the request alone — unlike the "discount must not
+     * exceed the subtotal" rule, which needs the lines priced from the catalog
+     * first and therefore lives in order.service.ts.
+     *
+     * `path` names the reason field so the admin form marks the control the
+     * operator has to fill in, rather than the form as a whole.
+     */
+    .refine((body) => !(body.discountAmount && body.discountAmount > 0) || !!body.discountReason, {
+        message: "Give a reason for the discount — it is what makes it auditable later",
+        path: ["discountReason"],
+    });
+
+/**
+ * WEBSITE is deliberately absent from `channel` above.
+ *
+ * It is what the column already defaults to, and it means "the customer placed
+ * this themselves" — which is precisely what a staff-placed order is not. An
+ * operator able to select it could file a manual order as self-service and
+ * make the two populations indistinguishable in exactly the reports the field
+ * exists to serve.
+ *
+ * LANDING_PAGE is absent from the enum itself; see `OrderChannel` in the Prisma
+ * schema for why campaign attribution is not expressed there.
+ */
+
+/**
  * The `Idempotency-Key` header, not a body field — so `validateRequest`
  * (which only ever parses `req.body`) can't reach it; order.controller.ts
  * applies this schema itself.

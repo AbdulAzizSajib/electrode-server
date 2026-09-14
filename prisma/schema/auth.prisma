@@ -20,6 +20,12 @@ model User {
 
   customer           Customer?
   orderStatusChanges OrderStatusHistory[]
+  /// Orders this staff member placed on a customer's behalf — the manual order
+  /// path, not orders they placed as a shopper. Named because `Order` carries
+  /// no other relation to `User`; `orderStatusChanges` above is the adjacent
+  /// one and covers a different thing entirely (who moved an order's status,
+  /// whoever placed it).
+  createdOrders      Order[]              @relation("OrdersCreatedByStaff")
   notifications      Notification[]
   assignedTickets    SupportTicket[]
   sentMessages       SupportMessage[]

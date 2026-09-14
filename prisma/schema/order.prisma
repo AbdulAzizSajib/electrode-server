@@ -42,6 +42,42 @@ model Order {
 
   couponCode String?
 
+  /// Why a discount was given, when a person decided to give one.
+  ///
+  /// Set only on a staff-placed order, where `discountAmount` above comes from
+  /// an operator rather than from a coupon — a price negotiated in a WhatsApp
+  /// conversation has no code to point at, and a discount with no stated reason
+  /// is an unexplained hole in the day's takings once that conversation is
+  /// gone. Null for a coupon discount, which is already explained by
+  /// `couponCode`, and null for no discount at all.
+  ///
+  /// Free text on purpose. A fixed reason taxonomy invented before anyone has
+  /// used the feature would be wrong; if reasons cluster, that is the evidence
+  /// for one later.
+  discountReason String?
+
+  /// How the CUSTOMER reached the shop. See the `OrderChannel` enum for why
+  /// campaign attribution is NOT expressed here.
+  ///
+  /// Defaulted rather than nullable because every order placed before this
+  /// column existed genuinely was a storefront order — the manual path did not
+  /// exist — so WEBSITE is a fact about those rows, not a guess standing in for
+  /// one.
+  channel OrderChannel @default(WEBSITE)
+
+  /// Which staff member placed this order on the customer's behalf.
+  ///
+  /// Nullable, and the null is the point: it means nobody placed this for the
+  /// customer, i.e. they placed it themselves. That is why this is not derived
+  /// from `channel` and why `channel` is not derived from this — a phone order
+  /// taken by staff and a website order are distinguishable by either field
+  /// alone, but only both together say who did what.
+  ///
+  /// SetNull, NOT Cascade: deleting a staff account must never delete the
+  /// orders that person took. The order outlives the employment.
+  createdByUserId String?
+  createdBy       User?   @relation("OrdersCreatedByStaff", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
   notes String?
 
   /// Recorded at checkout rather than derived from `customer.userId`: a guest
@@ -99,6 +135,10 @@ model Order {
   @@index([customerId])
   @@index([status])
   @@index([createdAt])
+  /// Serves the admin orders list's channel filter, which runs alongside the
+  /// status filter on the same paginated read, and any later "what did WhatsApp
+  /// sell" report built on these rows.
+  @@index([channel])
   /// Serves the per-IP guest-order rate limit: count guest orders from one
   /// address inside a rolling window (order.service.ts).
   @@index([guestIp, createdAt])

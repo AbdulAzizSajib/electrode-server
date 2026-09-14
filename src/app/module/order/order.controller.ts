@@ -87,6 +87,67 @@ const quoteCheckout = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+/**
+ * Records an order a customer placed off-site — the seller's side of a WhatsApp
+ * or Messenger conversation.
+ *
+ * Two values are taken from outside the body on purpose, and neither may ever
+ * move into it: the operator's id, which comes from the verified session so an
+ * order cannot claim to have been taken by someone else, and the idempotency
+ * key, which is a header for the same reason it is one at checkout.
+ *
+ * No applied-coupon cookie is read here, unlike `placeOrder` above. A manual
+ * order takes a stated discount instead of a coupon, and picking up whatever
+ * coupon happened to be sitting in the OPERATOR'S OWN browser would apply a
+ * discount nobody agreed to — the cookie belongs to whoever last shopped in
+ * that browser, which on a shared shop machine is anybody.
+ */
+const placeManualOrder = catchAsync(async (req: Request, res: Response) => {
+    const parsedKey = idempotencyKeyZodSchema.safeParse(req.headers["idempotency-key"]);
+    if (!parsedKey.success) {
+        throw new AppError(status.BAD_REQUEST, "Idempotency-Key must be a UUID");
+    }
+
+    const { order, isReplay } = await OrderService.placeManualOrder(req.user.userId, {
+        ...req.body,
+        idempotencyKey: parsedKey.data,
+    });
+
+    // 200 on a replay, matching checkout: an operator's double click is absorbed
+    // rather than acted on, and a client that reads the status can tell.
+    sendResponse(res, {
+        httpStatusCode: isReplay ? status.OK : status.CREATED,
+        success: true,
+        message: isReplay ? "Order already recorded" : "Order recorded successfully",
+        data: order,
+    });
+});
+
+/**
+ * Prices an order an operator is still typing, so they can read the total back
+ * to the customer before committing to it.
+ *
+ * A separate handler from `quoteCheckout` rather than a branch inside it. That
+ * one runs under `optionalAuth` and builds a `user` actor from any session —
+ * which is correct, because an ADMIN shopping on the storefront is a shopper
+ * like any other and their own cart should price. Deciding the actor by role
+ * there would break that. Here the actor is staff because the ROUTE is staff,
+ * which is a property of the endpoint rather than a guess about the person.
+ */
+const quoteManualOrder = catchAsync(async (req: Request, res: Response) => {
+    const quote = await OrderService.quoteCheckout(
+        { kind: "staff", staffUserId: req.user.userId },
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Manual order quote calculated",
+        data: quote,
+    });
+});
+
 const getOrders = catchAsync(async (req: Request, res: Response) => {
     const { data, meta } = await OrderService.getOrders(
         req.user.userId,
@@ -165,7 +226,9 @@ const updateOrderStatus = catchAsync(async (req: Request, res: Response) => {
 
 export const OrderController = {
     placeOrder,
+    placeManualOrder,
     quoteCheckout,
+    quoteManualOrder,
     getOrders,
     getOrderById,
     getGuestOrder,
