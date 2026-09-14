@@ -57,7 +57,7 @@
     DELETE Delete Address
   [FOLDER] Orders
     POST Get Checkout Quote (price before ordering)
-    POST Get Checkout Quote (guest, inline destination)
+    POST Get Checkout Quote (guest)
     POST Place Order (Checkout)
     POST Place Order (collect in person)
     GET Get My Orders
@@ -104,6 +104,16 @@
   [FOLDER] Pages
     GET Public - Get Published Pages
     GET Public - Get Page by Slug
+  [FOLDER] Blog
+    GET Public - Get Recent Blog Posts
+    GET Public - Get Blog Posts
+    GET Public - Get Blog Post by Slug
+  [FOLDER] Testimonials
+    GET Public - Get Testimonials
+  [FOLDER] Landing Pages
+    GET Public - Get Landing Page by Slug
+    POST Public - Quote Landing Page Order
+    POST Public - Place Landing Page Order
 [FOLDER] Private (Admin Panel)
   [FOLDER] Users
     GET Get All Users
@@ -141,6 +151,11 @@
     PATCH Admin - Update Attribute (remove a value products sell, expect 409)
     PATCH Admin - Update Attribute (force removal)
     DELETE Admin - Delete Attribute in use (expect 409)
+    POST Admin - Add Value to Attribute
+    POST Admin - Add Value to Attribute (duplicate label, expect 409)
+    PATCH Admin - Update Attribute Value (rename / recolour)
+    DELETE Admin - Delete Attribute Value in use (expect 409)
+    DELETE Admin - Delete Attribute Value (confirmed)
     DELETE Admin - Delete Attribute (confirmed)
   [FOLDER] Tax Rules
     POST Admin - Create Tax Rule (VAT 5%)
@@ -151,25 +166,6 @@
     PATCH Admin - Update Tax Rule
     DELETE Admin - Delete Tax Rule in use (expect 409)
     DELETE Admin - Delete Tax Rule (reassigning its products)
-  [FOLDER] Shipping Rules
-    POST Admin - Create Shipping Rule (region, country, catch-all)
-    POST Admin - Create Shipping Rule (replacement)
-    POST Admin - Create Shipping Rule (region without a country, expect 400)
-    POST Admin - Create Shipping Rule (two places, same destination, expect 400)
-    GET Admin - Get All Shipping Rules (unpaginated, for pickers)
-    GET Admin - Get Shipping Rules (paginated)
-    GET Admin - Get Shipping Rule By Id
-    PATCH Admin - Update Shipping Rule (reconcile places)
-    PATCH Admin - Update Shipping Rule (remove every place, expect 400)
-    DELETE Admin - Delete Shipping Rule in use (expect 409)
-    DELETE Admin - Delete Shipping Rule (reassigning its products)
-  [FOLDER] Collections
-    POST Admin - Create Collection
-    GET Admin - Get All Collections (unpaginated, for pickers)
-    GET Admin - Get Collections (paginated)
-    GET Admin - Get Collection By Id
-    PATCH Admin - Update Collection (hide it)
-    DELETE Admin - Delete Collection
   [FOLDER] Bundle Deals
     POST Admin - Create Bundle Deal (buy 2 get 1 free)
     POST Admin - Create Bundle Deal (gives nothing away, expect 400)
@@ -190,7 +186,7 @@
     GET Admin - Get All Products
     GET Admin - Get Product By Id
     PATCH Admin - Update Product (scalar fields)
-    PATCH Admin - Update Product (rules, facts, collections, keywords)
+    PATCH Admin - Update Product (rules, facts, keywords)
     PATCH Admin - Update Product Variants/Images/Attributes (sync)
     PATCH Admin - Update Product Images (reassign/clear by variantId)
     POST Admin - Add Product Category Tag
@@ -205,10 +201,22 @@
     POST Admin - Upload Image
     POST Admin - Upload Video (with poster frame)
   [FOLDER] Orders
+    POST Admin - Create Manual Order (WhatsApp/Messenger)
+    POST Admin - Quote Manual Order (price before recording)
     PATCH Admin - Update Order Status
   [FOLDER] Shipments
     POST Admin - Create Shipment
     PATCH Admin - Update Shipment
+  [FOLDER] Courier
+    POST Admin - Preview Dispatch
+    POST Admin - Dispatch Orders
+    GET Admin - Courier Balance
+    GET Admin - Courier Configuration
+    POST Admin - Create Courier Return
+    POST Courier - Webhook (per provider)
+    POST Courier - Webhook (legacy path, Steadfast alias)
+    POST Courier - Webhook (legacy path, Steadfast alias)
+    POST Cron - Reconcile Quiet Consignments
   [FOLDER] Returns
     PATCH Admin - Update Return Status
     PATCH Admin - Complete Return (Restocks Inventory)
@@ -280,6 +288,30 @@
     POST Admin - Create Page
     PATCH Admin - Update Page
     DELETE Admin - Delete Page
+  [FOLDER] Blog
+    GET Admin - List Blog Posts
+    GET Admin - Get Blog Post by Id
+    POST Admin - Create Blog Post (image)
+    POST Admin - Create Blog Post (video)
+    PATCH Admin - Update Blog Post
+    PATCH Admin - Update Blog Post (switch to no media)
+    DELETE Admin - Delete Blog Post
+  [FOLDER] Testimonials
+    GET Admin - List Testimonials
+    GET Admin - Get Testimonial by Id
+    POST Admin - Create Testimonial
+    POST Admin - Create Testimonial (no photo)
+    PATCH Admin - Update Testimonial
+    DELETE Admin - Delete Testimonial
+  [FOLDER] Landing Pages
+    GET Admin - List Landing Pages
+    POST Admin - Create Landing Page
+    GET Admin - List Published Landing Pages
+    GET Admin - Preview Landing Page by Slug
+    GET Admin - Get Landing Page by Id
+    PATCH Admin - Update Landing Page
+    POST Admin - Duplicate Landing Page
+    DELETE Admin - Delete Landing Page
   [FOLDER] Customers
     GET Admin - Get All Customers
     GET Admin - Get Customer By Id
@@ -307,9 +339,17 @@
     GET Admin - Payment History (money out only)
     GET Admin - Payment History (CSV export)
     GET Admin - Sales Report (backwards range, expect 400)
+  [FOLDER] Fonts
+    GET Admin - List Fonts
+    GET Admin - List All Fonts
+    GET Admin - Get Font
+    POST Admin - Add Font
+    PATCH Admin - Update Font
+    DELETE Admin - Delete Font
   [FOLDER] Store Settings
     GET Admin - Get Store Settings
     PATCH Admin - Update Store Settings
+    PATCH Admin - Update Free Shipping Threshold
   [FOLDER] Roles & Permissions
     POST Owner - Create Permission
     GET Owner - Get All Permissions

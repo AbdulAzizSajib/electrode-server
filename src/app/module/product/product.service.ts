@@ -59,7 +59,6 @@ const PRODUCT_DETAIL_INCLUDE = {
     variants: { include: { optionValues: VARIANT_OPTION_VALUES_INCLUDE } },
     attributes: true,
     categories: { include: { category: true } },
-    collections: { include: { collection: true } },
     tags: { include: { tag: true } },
     taxRule: true,
     bundleDeal: true,
@@ -225,9 +224,7 @@ const PUBLIC_PRODUCT_DETAIL_SELECT = {
     },
     attributes: true,
     categories: { include: { category: true } },
-    // Visible collections and tags only — these are merchandising the shopper
-    // is meant to see.
-    collections: { where: { collection: { isVisible: true } }, include: { collection: true } },
+    // Tags only — the merchandising the shopper is meant to see.
     tags: { include: { tag: true } },
     /*
      * Deliberately NOT projected: `taxRule`. It is commercial policy, not
@@ -645,7 +642,7 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
             .then((existing) => Boolean(existing)),
     );
 
-    const { options, variants, images, attributes, collectionIds, tags, ...rest } = payload;
+    const { options, variants, images, attributes, tags, ...rest } = payload;
 
     /*
      * Three phases, in a transaction: option values must exist before a variant
@@ -673,10 +670,6 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
          * now() and rows written inside one transaction can share a timestamp,
          * leaving the order — and therefore every `variantIndex` — undefined.
          */
-        if (collectionIds) {
-            await syncProductCollections(tx, created.id, collectionIds);
-        }
-
         if (tags) {
             await TagService.syncProductTags(tx, created.id, tags);
         }
@@ -735,41 +728,6 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
     return deriveProductOptions(product);
 };
 
-/**
- * Replaces a product's collection memberships with exactly those given.
- *
- * Replace rather than merge, matching how variants, images and attributes are
- * synced: the payload is the intended set, so a collection the merchant
- * unticked is simply absent from it.
- */
-const syncProductCollections = async (
-    tx: Prisma.TransactionClient,
-    productId: string,
-    collectionIds: string[],
-) => {
-    await tx.productCollection.deleteMany({ where: { productId } });
-
-    const unique = [...new Set(collectionIds)];
-    if (unique.length === 0) return;
-
-    const existing = await tx.collection.findMany({
-        where: { id: { in: unique } },
-        select: { id: true },
-    });
-
-    if (existing.length !== unique.length) {
-        const known = new Set(existing.map((c) => c.id));
-        const missing = unique.filter((id) => !known.has(id));
-        throw new AppError(
-            status.BAD_REQUEST,
-            `Collection${missing.length === 1 ? "" : "s"} ${missing.join(", ")} do${missing.length === 1 ? "es" : ""} not exist`,
-        );
-    }
-
-    await tx.productCollection.createMany({
-        data: unique.map((collectionId) => ({ productId, collectionId })),
-    });
-};
 
 /**
  * Rebuilds a product's `options` from the attribute values its variants sell.
@@ -865,11 +823,12 @@ const attachCampaignPricing = async <T extends { id: string; offerPrice: Prisma.
             return { ...product, campaignPrice: null, activeCampaign: null };
         }
 
-        const basePrice = Number(product.offerPrice);
-        const campaignPrice =
-            discount.discountType === "PERCENTAGE"
-                ? basePrice * (1 - discount.discountValue / 100)
-                : Math.max(0, basePrice - discount.discountValue);
+        // Shared with checkout deliberately — see applyCampaignDiscount. This
+        // display figure and the charged one must come from one implementation.
+        const campaignPrice = CampaignService.applyCampaignDiscount(
+            Number(product.offerPrice),
+            discount,
+        );
 
         return { ...product, campaignPrice, activeCampaign: discount };
     });
@@ -1675,7 +1634,7 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         );
     }
 
-    const { options, variants, images, attributes, collectionIds, tags, ...rest } = payload;
+    const { options, variants, images, attributes, tags, ...rest } = payload;
 
     const updated = await prisma.$transaction(async (tx) => {
         await tx.product.update({ where: { id }, data: { ...rest, slug } });
@@ -1720,10 +1679,6 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
 
         if (attributes) {
             await syncProductAttributes(tx, id, attributes);
-        }
-
-        if (collectionIds) {
-            await syncProductCollections(tx, id, collectionIds);
         }
 
         if (tags) {

@@ -5,6 +5,14 @@
  * `courier.service.ts` changes, because the service orchestrates and the
  * adapter translates (see `courier.provider.ts`).
  *
+ * Nor does the ADMIN change. A courier declares which credentials it needs in
+ * `module/integration/integration.constant.ts`, and the Integrations page
+ * renders the form from that declaration — so a courier needing four fields
+ * instead of Steadfast's two is still one adapter and one registry entry.
+ * Credentials are resolved from encrypted storage and passed into each call
+ * rather than read from the environment; see `courier.provider.ts` for why the
+ * service resolves them once per operation.
+ *
  * The registry is keyed by the `CourierProvider` enum, so TypeScript's
  * exhaustiveness check catches a member added to the schema without an adapter
  * at compile time rather than at dispatch time. `resolveProvider` throws for an

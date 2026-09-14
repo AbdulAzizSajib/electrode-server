@@ -3,6 +3,7 @@ import { envVars } from "../config/env";
 import { auth } from "../lib/auth";
 import { prisma } from "../lib/prisma";
 import { STARTER_FONT_EMBEDS } from "../module/font/font.constant";
+import { IntegrationService } from "../module/integration/integration.service";
 import { parseGoogleFontEmbed } from "../module/store-setting/google-font";
 
 /**
@@ -89,6 +90,17 @@ export const seedSuperAdmin = async () => {
         await seedRoles();
         await seedStoreSettings();
         await seedFonts();
+        /*
+         * Carries any courier credentials still in the environment into
+         * encrypted storage, filling only what is absent.
+         *
+         * Also called lazily on first credential resolution — see
+         * `integration.bootstrap.ts`. Both call sites are needed: this one runs
+         * locally, and the lazy one is what covers Vercel, where `api.ts`
+         * exports the app without ever listening and so nothing here runs at
+         * all.
+         */
+        await IntegrationService.importEnvCredentials();
 
         if (!envVars.SUPER_ADMIN_EMAIL || !envVars.SUPER_ADMIN_PASSWORD) {
             console.log(

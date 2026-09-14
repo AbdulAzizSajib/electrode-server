@@ -17,7 +17,11 @@ import {
 } from "../../utils/revalidateStorefront";
 import {
     DEFAULT_CHECKOUT_CONFIG,
+    DEFAULT_HOME_CONFIG,
     DEFAULT_PUBLIC_SETTINGS,
+    HOME_SECTION_KEYS,
+    HomeSectionConfig,
+    HomeSectionKey,
     SINGLETON_ID,
 } from "./store-setting.constant";
 import {
@@ -90,6 +94,105 @@ const mergeSeoConfig = (stored: unknown): ISeoConfig => {
         },
         verification: { ...defaults.verification, ...((s.verification as object | undefined) ?? {}) },
     } as ISeoConfig;
+};
+
+/**
+ * Fills a stored `homeConfig` out to a complete, current section list.
+ *
+ * Neither `merge()` below nor the per-key spread `catalogConfig` uses applies
+ * here: both repair an OBJECT against a default object, and this value is an
+ * ORDERED ARRAY whose order is itself the data. So it gets its own read rule:
+ *
+ *   1. keep stored entries whose key is still in the registry, in stored order,
+ *      collapsing a repeated key to its FIRST occurrence;
+ *   2. splice every registry section the stored list does not mention back in,
+ *      ENABLED, at its registry-relative position;
+ *   3. a value that is not an array at all resolves to the full default list.
+ *
+ * STEP 2 IS THE LOAD-BEARING ONE. Without it, a section added in a later
+ * release would never render for any shop that had already saved a config — the
+ * key simply would not be in their stored list, and nothing would put it there.
+ * That is indistinguishable from the new section being broken, and it would
+ * need a data migration over every row to fix. With it, adding a section to
+ * HOME_SECTION_KEYS is the whole job.
+ *
+ * Enabled rather than disabled on that splice, for the same reason
+ * DEFAULT_HOME_CONFIG is all-enabled: it reproduces what the storefront would
+ * do if the setting did not exist. A merchant who does not want the new section
+ * turns it off; a merchant who never notices still gets the homepage the
+ * release intended.
+ *
+ * "Absent from the list" is the trigger, NOT "the list is empty". An explicitly
+ * disabled section is still IN the list, carrying `enabled: false`, so it is
+ * never re-added — which is what makes the all-sections-off homepage a
+ * reachable state rather than one that silently heals back to the default.
+ *
+ * Read-side only, and deliberately forgiving: `homeConfigSchema` already
+ * rejects duplicates and unknown keys on the WRITE path, so anything this
+ * repairs arrived by a route the API does not control — a hand-edited row, or a
+ * config written before the registry changed. A homepage that throws is worse
+ * than one that ignores a corrupt value, which is the same direction
+ * `resolveSiteMode` fails in below.
+ *
+ * See openspec/changes/add-homepage-section-toggles, design.md Decision 2.
+ */
+export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
+    if (!Array.isArray(stored)) return DEFAULT_HOME_CONFIG;
+
+    const registry = new Set<string>(HOME_SECTION_KEYS);
+    const seen = new Map<HomeSectionKey, boolean>();
+
+    for (const entry of stored) {
+        if (typeof entry !== "object" || entry === null) continue;
+
+        const { key, enabled } = entry as { key?: unknown; enabled?: unknown };
+
+        // An unregistered key is dropped rather than carried: a section removed
+        // from the registry has no component left to render, and passing it
+        // through would hand the storefront a key it cannot map.
+        if (typeof key !== "string" || !registry.has(key)) continue;
+        // First occurrence wins — see the duplicate note above.
+        if (seen.has(key as HomeSectionKey)) continue;
+
+        // A non-boolean `enabled` is treated as ON, matching the splice
+        // direction: the safe failure is showing a section, not hiding one.
+        seen.set(key as HomeSectionKey, enabled !== false);
+    }
+
+    /*
+     * Rebuilt in stored order, then missing sections inserted at their registry
+     * position. Walking the registry and asking "where does this go" would lose
+     * the merchant's ordering; walking the stored list and appending the
+     * remainder would drop every new section to the bottom of the page
+     * regardless of where it belongs. So: walk the registry to find the gaps,
+     * and splice each one against its nearest already-placed neighbour.
+     */
+    const ordered: HomeSectionConfig[] = [];
+
+    for (const [key, enabled] of seen) ordered.push({ key, enabled });
+
+    HOME_SECTION_KEYS.forEach((key, registryIndex) => {
+        if (seen.has(key)) return;
+
+        /*
+         * The insertion point is just after the last section that precedes this
+         * one in the REGISTRY and is already placed. With nothing before it,
+         * that is the front of the list — so a section added at the top of the
+         * registry lands at the top of the merchant's page rather than the
+         * bottom.
+         */
+        const precedingKeys = new Set(HOME_SECTION_KEYS.slice(0, registryIndex));
+
+        let insertAt = 0;
+
+        ordered.forEach((section, index) => {
+            if (precedingKeys.has(section.key)) insertAt = index + 1;
+        });
+
+        ordered.splice(insertAt, 0, { key, enabled: true });
+    });
+
+    return ordered;
 };
 
 /**
@@ -222,6 +325,28 @@ const getPublicStoreSetting = async () => {
         },
 
         /*
+         * Which sections the homepage is composed of, and in what order.
+         *
+         * Public because the homepage decides what to render from it before any
+         * shopper session exists, and it travels on the settings payload the
+         * storefront ALREADY fetches in its layout on every page — so routing
+         * the homepage costs no second request and needs no second cache, the
+         * same reasoning `siteMode` below is on this row for. Opted in one line
+         * like everything else here; this stays an allow-list. Nothing leaks: a
+         * list of which blocks a shop shows is apparent to anyone who loads it.
+         *
+         * NEITHER `merge()` NOR the per-key spread one block up. Both repair an
+         * object against a default object; this value is an ordered array, and
+         * spreading two arrays by key would produce nonsense. `merge()` would
+         * be worse than useless — it only substitutes when the whole value is
+         * null, so a config saved before a section existed would be served
+         * as-is, permanently missing that section. That is precisely the bug
+         * `withDeliveryDefault` exists to paper over for checkoutConfig, and
+         * reconcileHomeConfig is how this column avoids ever needing one.
+         */
+        homeConfig: reconcileHomeConfig(stored?.homeConfig),
+
+        /*
          * A PER-KEY merge with a nested repair for both font keys, not the
          * wholesale `merge()` this used to be — the same correction
          * `withDeliveryDefault` and `catalogConfig` above already carry.
@@ -269,6 +394,33 @@ const getPublicStoreSetting = async () => {
          * withdraws a page from search by omission. See mergeSeoConfig.
          */
         seoConfig: mergeSeoConfig(stored?.seoConfig),
+
+        /*
+         * The shop-wide Meta pixel, and ONLY the pixel.
+         *
+         * Public because the storefront cannot fire a pixel it cannot read, and
+         * because a pixel id is published to every visitor by the very act of
+         * using it — it is interpolated into a script tag on every page, so
+         * withholding it here would cost a round trip and buy nothing.
+         *
+         * WHAT IS DELIBERATELY ABSENT IS THE POINT. `integrationConfig` also
+         * carries `facebookCapi`, whose settings are for the SERVER to read; and
+         * the CAPI access token is not on this row at all, it is encrypted in
+         * `IntegrationCredential`. Projecting one named sub-object rather than
+         * the whole column is what keeps this an allow-list: a field added to
+         * `integrationConfig` later is private until someone opts it in here,
+         * which is exactly the property a public endpoint needs.
+         *
+         * Per-key spread against the default, like `catalogConfig` above and for
+         * the same reason: a blob written before a key existed would otherwise
+         * be served without it, and a missing `enabled` reads as `undefined` —
+         * falsy — which withdraws the feature by accident.
+         */
+        facebookPixel: {
+            ...DEFAULT_PUBLIC_SETTINGS.facebookPixel,
+            ...(((stored?.integrationConfig as { facebookPixel?: object } | null)
+                ?.facebookPixel as object | undefined) ?? {}),
+        },
 
         /*
          * What the storefront routes its ROOT on. Public because it decides

@@ -4,6 +4,7 @@ import { CouponStatus, CouponType, OrderStatus } from "../../../generated/prisma
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { CampaignService } from "../campaign/campaign.service";
 import { CustomerService } from "../customer/customer.service";
 import {
     ICartItemForDiscount,
@@ -200,11 +201,35 @@ const resolveExistingCart = async (userId: string | undefined, guestTokenCookie:
     return { cart: null, customerId: undefined };
 };
 
-const computeCartSubtotal = (items: ICartItemForDiscount[]) =>
-    items.reduce((sum, item) => {
-        const unitPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
+/**
+ * The basket's value a coupon is judged and computed against — campaign
+ * discounts already applied.
+ *
+ * A coupon stacks ON TOP of a campaign, and must therefore measure the amount
+ * the shopper is actually being asked to pay. Off the undiscounted total a 10%
+ * coupon would take 10% of a price nobody is charging, so the two discounts
+ * together would exceed the basket's own value — and `minimumOrderAmount`
+ * would admit a coupon on a basket that never reaches its threshold.
+ *
+ * Async because campaign eligibility is a database read; every caller already
+ * awaited this function's callers, so this costs one query per validation.
+ */
+const computeCartSubtotal = async (items: ICartItemForDiscount[]) => {
+    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
+        items.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            unitPrice: Number(item.variant?.offerPrice ?? item.product.offerPrice),
+        })),
+    );
+
+    return items.reduce((sum, item) => {
+        const listPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
+        const unitPrice =
+            campaignPriceByKey.get(`${item.productId}:${item.variantId ?? ""}`) ?? listPrice;
         return sum + unitPrice * item.quantity;
     }, 0);
+};
 
 /**
  * Validates a coupon against a cart per `api/marketing` spec — status,
@@ -275,7 +300,7 @@ const validateCouponForCart = async (
         }
     }
 
-    const subtotal = computeCartSubtotal(items);
+    const subtotal = await computeCartSubtotal(items);
 
     if (coupon.minimumOrderAmount !== null && subtotal < Number(coupon.minimumOrderAmount)) {
         throw new AppError(

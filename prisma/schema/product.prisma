@@ -149,9 +149,6 @@ model Product {
   /// discoverable via its primary `category`.
   categories ProductCategory[]
 
-  /// Merchandising groupings, independent of `category` above.
-  collections ProductCollection[]
-
   /// Keywords, shared across the shop so they can be suggested rather than
   /// retyped.
   tags ProductTag[]

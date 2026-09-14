@@ -37,8 +37,10 @@ import {
     ICourierEligibility,
     ICourierOrderForDispatch,
 } from "./courier.interface";
+import { IntegrationService } from "../integration/integration.service";
 import {
     ICourierConsignmentResult,
+    ICourierCredentials,
     ICourierProvider,
     ICourierStatusReading,
     ICourierWebhookReading,
@@ -140,14 +142,50 @@ const assertCapability = (
     }
 };
 
-/** Refuses a provider whose credentials are unset, naming it. */
-const assertConfigured = (provider: ICourierProvider) => {
-    if (!provider.isConfigured()) {
+/**
+ * Refuses a provider that is switched off or unconfigured, naming which, and
+ * returns the resolved credentials so the caller does not read them twice.
+ *
+ * TWO SEPARATE REFUSALS, because they are two different states with two
+ * different fixes:
+ *
+ *  - **Switched off** — the merchant disabled the integration at admin UI →
+ *    Integrations. Its credentials are intact and it works the moment it is
+ *    switched back on. Telling them it is "not configured" would send them
+ *    looking for a missing key that is not missing.
+ *  - **Not configured** — no readable credentials. Switching it on changes
+ *    nothing until they are entered.
+ *
+ * The enabled check is enforced HERE rather than only in the admin, following
+ * the same rule as `assertCapability`: hiding alone leaves an endpoint that
+ * fails confusingly when called directly, and an integration a merchant
+ * deliberately switched off must not keep dispatching because a button was
+ * reachable another way.
+ *
+ * RESOLVED ONCE PER OPERATION, then threaded through. A dispatch batches at 50
+ * and persists each batch before sending the next, so a large run spans a window
+ * in which a merchant could save a new key; re-reading per batch would send half
+ * a dispatch to one account and half to another, with nothing recording which
+ * parcels went where. See `courier.provider.ts`.
+ */
+const assertConfigured = async (provider: ICourierProvider): Promise<ICourierCredentials> => {
+    if (!(await IntegrationService.isEnabled(provider.id))) {
         throw new AppError(
             status.SERVICE_UNAVAILABLE,
-            `${provider.displayName} is selected but not configured. Set its API credentials in the environment.`,
+            `${provider.displayName} is switched off at admin UI → Integrations. Switch it back on, or select a different courier.`,
         );
     }
+
+    const credentials = await provider.resolveCredentials();
+
+    if (!(await provider.isConfigured())) {
+        throw new AppError(
+            status.SERVICE_UNAVAILABLE,
+            `${provider.displayName} is selected but not configured. Add its API credentials at admin UI → Integrations.`,
+        );
+    }
+
+    return credentials;
 };
 
 /**
@@ -327,7 +365,12 @@ const dispatchOrders = async (
     const provider = await getConfiguredProvider();
 
     assertCapability(provider, "dispatch", "dispatching orders");
-    assertConfigured(provider);
+
+    /*
+     * Resolved HERE, before the batch loop below, and reused for every batch.
+     * One dispatch run goes to one account — see `assertConfigured`.
+     */
+    const credentials = await assertConfigured(provider);
 
     const verdicts = await previewDispatch(orderIds);
     const results: ICourierDispatchResult[] = [];
@@ -384,7 +427,7 @@ const dispatchOrders = async (
 
         if (requests.length === 0) continue;
 
-        const response = await provider.createConsignments!(requests);
+        const response = await provider.createConsignments!(requests, credentials);
 
         if (response.outcome === "unconfirmed") {
             /*
@@ -771,6 +814,40 @@ const reconcileQuietConsignments = async () => {
     let failed = 0;
     let unreconcilable = 0;
 
+    /*
+     * Credentials per PROVIDER, cached across the loop.
+     *
+     * Not one resolution for the whole run, because this loop routes on
+     * `shipment.courierProvider` — a batch can legitimately span two couriers
+     * when a shop has switched and parcels from the old one are still in flight.
+     * Not one per shipment either, which would be a decrypt round trip per row.
+     */
+    const credentialsByProvider = new Map<CourierProvider, ICourierCredentials>();
+
+    const credentialsFor = async (provider: ICourierProvider): Promise<ICourierCredentials> => {
+        const cached = credentialsByProvider.get(provider.id);
+        if (cached) return cached;
+
+        const resolved = await provider.resolveCredentials();
+        credentialsByProvider.set(provider.id, resolved);
+        return resolved;
+    };
+
+    /*
+     * NOTE: reconciliation deliberately does NOT check whether the integration
+     * is switched off, unlike dispatch.
+     *
+     * Switching a courier off stops NEW parcels going to it; it cannot un-send
+     * the ones already in their van. Those consignments still need their
+     * statuses read back, or an order sits in SHIPPED forever and the customer
+     * is never told it arrived. The same reasoning routes this loop on
+     * `Shipment.courierProvider` rather than the current setting — what matters
+     * here is who is carrying the parcel, not what the shop would choose today.
+     *
+     * Credentials being absent is a different matter and IS reported below: a
+     * courier we cannot authenticate against cannot be polled at all.
+     */
+
     // Sequential, not parallel: couriers document no rate limit, and a fan-out
     // against an undocumented limit is how one gets a limit imposed.
     for (const shipment of stale) {
@@ -783,7 +860,7 @@ const reconcileQuietConsignments = async () => {
          * can no longer be reached will never settle on its own, and a job that
          * quietly passes over it looks identical to one finding nothing wrong.
          */
-        if (!provider.capabilities.status || !provider.isConfigured()) {
+        if (!provider.capabilities.status || !(await provider.isConfigured())) {
             unreconcilable += 1;
             console.warn(
                 `Consignment ${shipment.consignmentId} cannot be reconciled: ${provider.displayName} ${
@@ -793,7 +870,10 @@ const reconcileQuietConsignments = async () => {
             continue;
         }
 
-        const response = await provider.getStatus!(shipment.consignmentId as string);
+        const response = await provider.getStatus!(
+            shipment.consignmentId as string,
+            await credentialsFor(provider),
+        );
 
         if (response.outcome !== "ok") {
             // Left untouched. A courier outage must not be written into the
@@ -826,9 +906,9 @@ const getBalance = async () => {
     const provider = await getConfiguredProvider();
 
     assertCapability(provider, "balance", "balance enquiries");
-    assertConfigured(provider);
+    const credentials = await assertConfigured(provider);
 
-    const response = await provider.getBalance!();
+    const response = await provider.getBalance!(credentials);
 
     if (response.outcome !== "ok") {
         throw new AppError(
@@ -863,11 +943,12 @@ const createReturnRequest = async (orderId: string, reason: string | undefined) 
     const provider = resolveProvider(shipment.courierProvider);
 
     assertCapability(provider, "returns", "return requests");
-    assertConfigured(provider);
+    const credentials = await assertConfigured(provider);
 
     const response = await provider.createReturnRequest!(
         shipment.consignmentId as string,
         reason,
+        credentials,
     );
 
     if (response.outcome !== "ok") {
@@ -883,23 +964,39 @@ const createReturnRequest = async (orderId: string, reason: string | undefined) 
 /**
  * What the admin needs to render the courier surface honestly.
  *
- * Derived state about the environment and the registry, not a stored setting —
- * which is why it is served from here rather than round-tripping through the
+ * Derived state about stored credentials and the registry, not a stored setting
+ * — which is why it is served from here rather than round-tripping through the
  * writable settings row. Reports only WHETHER each credential is present, never
  * its value.
+ *
+ * Read per request rather than cached, so a credential saved at admin UI →
+ * Integrations is reflected on the next load with no restart. `Promise.all`
+ * because each provider's answer is now a database read.
  */
 const getProviderConfiguration = async () => {
     const configured = await getConfiguredProvider();
 
-    return {
-        configured: configured.id,
-        providers: listProviders().map((provider) => ({
+    const providers = await Promise.all(
+        listProviders().map(async (provider) => ({
             id: provider.id,
             displayName: provider.displayName,
             capabilities: provider.capabilities,
-            credentialsConfigured: provider.isConfigured(),
-            webhookConfigured: provider.isWebhookConfigured(),
+            credentialsConfigured: await provider.isConfigured(),
+            webhookConfigured: await provider.isWebhookConfigured(),
+            /*
+             * Whether the merchant has this integration switched on. Reported
+             * so the admin can refuse to OFFER a disabled courier rather than
+             * letting it be selected and then refused on save — the panel and
+             * the service enforce the same rule from the same fact, which is
+             * how `capabilities` already works.
+             */
+            enabled: await IntegrationService.isEnabled(provider.id),
         })),
+    );
+
+    return {
+        configured: configured.id,
+        providers,
     };
 };
 

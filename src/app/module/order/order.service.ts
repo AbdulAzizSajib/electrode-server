@@ -18,8 +18,10 @@ import { currencyFormatOf, formatMoney } from "../../utils/formatMoney";
 import { normalizePhone } from "../../utils/phone";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { CampaignService } from "../campaign/campaign.service";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
+import { reportPurchaseToCapi } from "../integration/facebook-capi";
 import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
 import { StoreSettingService } from "../store-setting/store-setting.service";
@@ -959,6 +961,28 @@ const placeOrder = async (
         ]),
     );
 
+    /*
+     * Campaign pricing for this basket, resolved ONCE before the loop — the
+     * same resolver and window the storefront's displayed price came from.
+     *
+     * Without this the order charged `offerPrice` while the product card, the
+     * Deal of the Week row and the PDP all advertised the discounted figure:
+     * the shopper saw 800, paid 1000, and the order recorded 1000 as if that
+     * were the agreed price. A campaign that is not honoured at checkout is
+     * worse than no campaign, so this must stay ahead of the pricing below.
+     *
+     * Resolved here rather than per line so one basket means one query, and so
+     * every line is priced against the same instant — a campaign expiring
+     * mid-loop must not charge two lines under different rules.
+     */
+    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
+        lines.map((line) => ({
+            productId: line.productId,
+            variantId: line.variantId,
+            unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
+        })),
+    );
+
     for (const item of lines) {
         if (item.product.status !== ProductStatus.ACTIVE) {
             throw new AppError(status.CONFLICT, `"${item.product.name}" is no longer available`);
@@ -976,11 +1000,23 @@ const placeOrder = async (
             );
         }
 
-        // Charged from the offer price. `unitPrice`/`totalPrice` below are
-        // OrderItem's own captured columns and keep their names — an order
-        // records what was charged, not which catalogue field it came from.
-        const unitPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
-        const totalPrice = unitPrice * item.quantity;
+        /*
+         * Charged from the offer price, less any active campaign discount.
+         * `unitPrice`/`totalPrice` below are OrderItem's own captured columns
+         * and keep their names — an order records what was charged, not which
+         * catalogue field it came from, which is exactly why the campaign
+         * price belongs here rather than as a separate discount line: the
+         * campaign sets what the goods cost, it does not rebate them.
+         *
+         * Rounded to 2dp at the unit, before multiplying: a percentage
+         * discount rarely lands on a whole paisa, and rounding only the line
+         * total would record a `unitPrice` that does not divide into it.
+         */
+        const listPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
+        const unitPrice = roundMoney(
+            campaignPriceByKey.get(stockKey(item.productId, item.variantId)) ?? listPrice,
+        );
+        const totalPrice = roundMoney(unitPrice * item.quantity);
         subtotal += totalPrice;
 
         /*
@@ -1291,6 +1327,32 @@ const placeOrder = async (
         { link: `/orders/${created.id}` },
     ).catch((error) => console.error("New-order staff notification failed after checkout:", error));
 
+    /*
+     * The server-side half of Purchase measurement. Not awaited, for the same
+     * reason as the two calls above — and additionally because a shopper must
+     * never wait on Meta to see their confirmation.
+     *
+     * `created.id` is the deduplication key: the confirmation page fires the
+     * browser pixel with this same id, and Meta collapses the pair into one
+     * conversion. Sending a different id in either place double-counts every
+     * sale. See module/integration/facebook-capi.ts.
+     *
+     * No .catch() here: the function is `void`-returning and swallows its own
+     * failures by construction, because a measurement error must never surface
+     * on a completed order.
+     */
+    reportPurchaseToCapi({
+        orderId: created.id,
+        value: Number(created.totalAmount),
+        // Falls back to BDT only if the column is null, which the seed prevents.
+        // Meta rejects an event with no currency outright, so an empty string
+        // here would silently drop every conversion.
+        currency: storeSetting.currency ?? "BDT",
+        email: created.customer?.email,
+        phone: created.customer?.phone,
+        createdAt: created.createdAt,
+    });
+
     return { order: flattenedWithoutCosts(created), isReplay: false };
 };
 
@@ -1441,13 +1503,34 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         throw new AppError(status.BAD_REQUEST, "Your cart is empty");
     }
 
-    const pricingLines: IPricingLine[] = lines.map((line) => ({
-        productId: line.productId,
-        productName: line.product.name,
-        quantity: line.quantity,
-        lineTotal: Number(line.variant?.offerPrice ?? line.product.offerPrice) * line.quantity,
-        taxRuleId: line.product.taxRuleId,
-    }));
+    /*
+     * The same campaign resolution the placement path runs, for the same
+     * reason and by the same call. A quote that omitted campaigns would show a
+     * total the order then undercuts — the mirror of the bug this fixes, and
+     * just as damaging to trust in the number.
+     */
+    const quotedCampaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
+        lines.map((line) => ({
+            productId: line.productId,
+            variantId: line.variantId,
+            unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
+        })),
+    );
+
+    const pricingLines: IPricingLine[] = lines.map((line) => {
+        const listPrice = Number(line.variant?.offerPrice ?? line.product.offerPrice);
+        const unitPrice = roundMoney(
+            quotedCampaignPriceByKey.get(`${line.productId}:${line.variantId ?? ""}`) ?? listPrice,
+        );
+
+        return {
+            productId: line.productId,
+            productName: line.product.name,
+            quantity: line.quantity,
+            lineTotal: roundMoney(unitPrice * line.quantity),
+            taxRuleId: line.product.taxRuleId,
+        };
+    });
 
     // No coupon on the staff path — a manual order takes a stated discount
     // instead, and the two must never both write the order's one discount

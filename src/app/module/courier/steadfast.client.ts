@@ -31,7 +31,7 @@ const TIMEOUT_MS = 15_000;
 export class CourierNotConfiguredError extends Error {
     constructor() {
         super(
-            "Steadfast is not configured. Set STEADFAST_API_KEY and STEADFAST_SECRET_KEY.",
+            "Steadfast is not configured. Add its API key and secret key at admin UI → Integrations.",
         );
         this.name = "CourierNotConfiguredError";
     }
@@ -42,9 +42,24 @@ export type CourierResult<T> =
     | { outcome: "failed"; status: number; message: string }
     | { outcome: "unconfirmed"; message: string };
 
-/** Whether the credentials are present, without disclosing them. */
-export const isCourierConfigured = (): boolean =>
-    Boolean(envVars.STEADFAST_API_KEY && envVars.STEADFAST_SECRET_KEY);
+/**
+ * The credentials one Steadfast call is made with.
+ *
+ * PASSED IN, NOT READ FROM MODULE STATE. They used to come from `envVars` at
+ * call time, which meant a dispatch of 200 orders could not be sure every batch
+ * went to the same account, and meant a verify script could not exercise this
+ * client without a configured environment. Now the caller resolves them once and
+ * threads them through — see `courier.provider.ts` for why that matters to the
+ * batching loop.
+ */
+export interface ISteadfastCredentials {
+    apiKey: string;
+    secretKey: string;
+}
+
+/** Whether a resolved credential set is usable, without disclosing it. */
+export const isCourierConfigured = (credentials: Partial<ISteadfastCredentials>): boolean =>
+    Boolean(credentials.apiKey && credentials.secretKey);
 
 const baseUrl = () =>
     (envVars.STEADFAST_BASE_URL || STEADFAST_DEFAULT_BASE_URL).replace(/\/$/, "");
@@ -54,17 +69,18 @@ const baseUrl = () =>
  * `Api-Key` / `Secret-Key`; HTTP header names are case-insensitive, but they are
  * written as documented so a reader comparing the two sees the same strings.
  */
-const headers = (): Record<string, string> => {
-    if (!isCourierConfigured()) throw new CourierNotConfiguredError();
+const headers = (credentials: ISteadfastCredentials): Record<string, string> => {
+    if (!isCourierConfigured(credentials)) throw new CourierNotConfiguredError();
 
     return {
-        "Api-Key": envVars.STEADFAST_API_KEY as string,
-        "Secret-Key": envVars.STEADFAST_SECRET_KEY as string,
+        "Api-Key": credentials.apiKey,
+        "Secret-Key": credentials.secretKey,
         "Content-Type": "application/json",
     };
 };
 
 const request = async <T>(
+    credentials: ISteadfastCredentials,
     path: string,
     init: { method: "GET" | "POST"; body?: unknown } = { method: "GET" },
 ): Promise<CourierResult<T>> => {
@@ -74,7 +90,7 @@ const request = async <T>(
     try {
         response = await fetch(url, {
             method: init.method,
-            headers: headers(),
+            headers: headers(credentials),
             body: init.body === undefined ? undefined : JSON.stringify(init.body),
             signal: AbortSignal.timeout(TIMEOUT_MS),
         });
@@ -266,9 +282,10 @@ const parseBulkResponse = (
 };
 
 const createBulkOrders = async (
+    credentials: ISteadfastCredentials,
     orders: SteadfastOrderPayload[],
 ): Promise<CourierResult<SteadfastBulkResultItem[]>> => {
-    const result = await request<unknown>("/create_order/bulk-order", {
+    const result = await request<unknown>(credentials, "/create_order/bulk-order", {
         method: "POST",
         body: { data: orders },
     });
@@ -283,23 +300,30 @@ export interface SteadfastStatusResponse {
     delivery_status: string;
 }
 
-const getStatusByConsignmentId = (consignmentId: string) =>
-    request<SteadfastStatusResponse>(`/status_by_cid/${encodeURIComponent(consignmentId)}`);
+const getStatusByConsignmentId = (credentials: ISteadfastCredentials, consignmentId: string) =>
+    request<SteadfastStatusResponse>(
+        credentials,
+        `/status_by_cid/${encodeURIComponent(consignmentId)}`,
+    );
 
 /**
  * Status by the invoice we sent. This is the reconciliation path for a dispatch
  * whose outcome was never confirmed: we know exactly which invoices were in
  * flight, so each can be resolved without a manual portal check.
  */
-const getStatusByInvoice = (invoice: string) =>
-    request<SteadfastStatusResponse>(`/status_by_invoice/${encodeURIComponent(invoice)}`);
+const getStatusByInvoice = (credentials: ISteadfastCredentials, invoice: string) =>
+    request<SteadfastStatusResponse>(
+        credentials,
+        `/status_by_invoice/${encodeURIComponent(invoice)}`,
+    );
 
 export interface SteadfastBalanceResponse {
     status: number;
     current_balance: number;
 }
 
-const getBalance = () => request<SteadfastBalanceResponse>("/get_balance");
+const getBalance = (credentials: ISteadfastCredentials) =>
+    request<SteadfastBalanceResponse>(credentials, "/get_balance");
 
 export interface SteadfastReturnResponse {
     id: number;
@@ -309,8 +333,12 @@ export interface SteadfastReturnResponse {
     [key: string]: unknown;
 }
 
-const createReturnRequest = (consignmentId: string, reason?: string) =>
-    request<SteadfastReturnResponse>("/create_return_request", {
+const createReturnRequest = (
+    credentials: ISteadfastCredentials,
+    consignmentId: string,
+    reason?: string,
+) =>
+    request<SteadfastReturnResponse>(credentials, "/create_return_request", {
         method: "POST",
         body: {
             consignment_id: Number(consignmentId),

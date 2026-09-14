@@ -6,9 +6,14 @@
  * buyable, that a rule in use refuses to be deleted, that an ordered variant
  * cannot be removed, and that deleting a grouping does not damage its products.
  *
- * Everything it creates, it removes again — the products, rules, collections
- * and deals below are all named `__verify_*` and deleted in a `finally`. It
- * does NOT touch anything already in the catalogue except to read it.
+ * Everything it creates, it removes again — the products, rules and deals below
+ * are all named `__verify_*` and deleted in a `finally`. It does NOT touch
+ * anything already in the catalogue except to read it.
+ *
+ * Collections were one of the groupings this covered; the feature was removed
+ * (it was never rendered to a shopper), and check 9.8 — that deleting a
+ * grouping leaves its products intact — went with it. The equivalent property
+ * for bundle deals is still asserted below.
  *
  * Run with: npx tsx scripts/verify-catalog-change.ts
  */
@@ -16,7 +21,6 @@ import { ChargeType, ProductStatus } from "../src/generated/prisma/client";
 import { prisma } from "../src/app/lib/prisma";
 import { AttributeService } from "../src/app/module/attribute/attribute.service";
 import { BundleDealService } from "../src/app/module/bundle-deal/bundle-deal.service";
-import { CollectionService } from "../src/app/module/collection/collection.service";
 import { ProductService } from "../src/app/module/product/product.service";
 import { TaxRuleService } from "../src/app/module/tax-rule/tax-rule.service";
 
@@ -54,7 +58,6 @@ const main = async () => {
         productIds: [] as string[],
         attributeIds: [] as string[],
         taxRuleIds: [] as string[],
-        collectionIds: [] as string[],
         bundleDealIds: [] as string[],
     };
 
@@ -201,11 +204,6 @@ const main = async () => {
         });
         created.taxRuleIds.push(replacementTax.id);
 
-        const collection = await CollectionService.createCollection(actor.id, {
-            name: `${PREFIX} Collection`,
-        });
-        created.collectionIds.push(collection.id);
-
         const bundleDeal = await BundleDealService.createBundleDeal(actor.id, {
             name: `${PREFIX} Deal`,
             buyQuantity: 2,
@@ -226,7 +224,6 @@ const main = async () => {
             categoryId: category?.id,
             brandId: brand?.id,
             taxRuleId: taxRule.id,
-            collectionIds: [collection.id],
             bundleDealId: bundleDeal.id,
             tags: ["verify-keyword", "Verify-Keyword", " verify-keyword "],
             unit: "1 kg",
@@ -450,20 +447,11 @@ const main = async () => {
 
         // ---------------------------------------------------------------
         // 9.8 — deleting a grouping does not damage its products
+        //
+        // The collection half of this check went with the feature. Bundle
+        // deals, which are still here, assert the same property from the other
+        // direction: the deletion is refused rather than cascading.
         // ---------------------------------------------------------------
-        const inCollection = await prisma.productCollection.count({
-            where: { collectionId: collection.id },
-        });
-        await CollectionService.deleteCollection(actor.id, collection.id);
-        created.collectionIds = created.collectionIds.filter((id) => id !== collection.id);
-
-        const survivingProduct = await prisma.product.findUnique({ where: { id: bare.id } });
-        check(
-            "9.8 deleting a collection leaves its products intact",
-            Boolean(survivingProduct) && inCollection > 0,
-            `${inCollection} membership(s) removed, the product itself untouched`,
-        );
-
         const dealRefusal = await refusal(() =>
             BundleDealService.deleteBundleDeal(actor.id, bundleDeal.id),
         );
@@ -505,7 +493,6 @@ const main = async () => {
             await prisma.productVariant.deleteMany({ where: { productId: id } });
             await prisma.productImage.deleteMany({ where: { productId: id } });
             await prisma.productTag.deleteMany({ where: { productId: id } });
-            await prisma.productCollection.deleteMany({ where: { productId: id } });
             await prisma.productCategory.deleteMany({ where: { productId: id } });
             await prisma.stock.deleteMany({ where: { productId: id } });
             await prisma.stockMovement.deleteMany({ where: { productId: id } });
@@ -513,9 +500,6 @@ const main = async () => {
         }
         for (const id of created.attributeIds) {
             await prisma.attribute.delete({ where: { id } }).catch(() => undefined);
-        }
-        for (const id of created.collectionIds) {
-            await prisma.collection.delete({ where: { id } }).catch(() => undefined);
         }
         for (const id of created.bundleDealIds) {
             await prisma.bundleDeal.delete({ where: { id } }).catch(() => undefined);

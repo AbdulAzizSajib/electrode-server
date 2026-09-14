@@ -39,12 +39,19 @@ export const ManualProvider: ICourierProvider = {
     capabilities: NO_CAPABILITIES,
 
     /*
+     * No credentials, and none to resolve. Async only because the interface is —
+     * every other provider reads encrypted storage here, and this one has
+     * nothing to read.
+     */
+    resolveCredentials: async () => ({}),
+
+    /*
      * Configured by definition. There is nothing to configure, and answering
      * false would make the admin report a working setup as broken — the exact
      * confusion this provider exists to prevent.
      */
-    isConfigured: () => true,
-    isWebhookConfigured: () => false,
+    isConfigured: async () => true,
+    isWebhookConfigured: async () => false,
 
     /*
      * Unreachable in practice: dispatch is refused at the capability gate before

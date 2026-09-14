@@ -24,6 +24,7 @@
     "verify:catalog": "tsx scripts/verify-catalog-change.ts",
     "verify:product-pricing": "tsx scripts/verify-product-pricing.ts",
     "verify:checkout": "tsx scripts/verify-checkout-totals.ts",
+  "verify:campaign-checkout": "tsx scripts/verify-campaign-checkout.ts",
     "verify:manual-order": "tsx scripts/verify-manual-order.ts",
     "verify:settings": "tsx scripts/verify-site-settings.ts",
     "verify:supplier-payments": "tsx scripts/verify-supplier-payments.ts",

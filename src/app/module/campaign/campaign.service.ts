@@ -96,12 +96,37 @@ const deleteCampaign = async (id: string) => {
 };
 
 /**
+ * What `basePrice` becomes under `discount`. The ONE definition of that
+ * arithmetic — display and checkout both call it, and must.
+ *
+ * Split out when checkout was found charging `offerPrice` while the storefront
+ * advertised the discounted figure: a shopper saw 800 on the card and was
+ * billed 1000. Two implementations of "what does this cost" is how that
+ * happens, so there is now one. If this rounds or clamps differently for one
+ * caller than the other, the bug is back.
+ *
+ * Floored at zero: a FIXED discount larger than the price must not produce a
+ * negative line that silently pays the shopper to take the goods.
+ */
+export const applyCampaignDiscount = (
+    basePrice: number,
+    discount: Pick<IActiveCampaignDiscount, "discountType" | "discountValue">,
+) =>
+    discount.discountType === "PERCENTAGE"
+        ? Math.max(0, basePrice * (1 - discount.discountValue / 100))
+        : Math.max(0, basePrice - discount.discountValue);
+
+/**
  * Resolves each product's best (largest) currently-active `CampaignProduct`
  * discount, for `api/catalog`'s public product read endpoints to reflect
  * automatically — per `api/marketing` spec, no separate customer-facing
  * endpoint or customer action is needed. "Best" (rather than stacking) is
  * this implementation's choice for when more than one active campaign
  * targets the same product — the spec doesn't define stacking behavior.
+ *
+ * Also the resolver CHECKOUT uses, via `getActiveDiscountsForLines` below —
+ * the same window, the same best-of rule, so an order is priced under exactly
+ * the campaign the shopper was shown.
  */
 const getActiveDiscountsForProducts = async (
     productIds: string[],
@@ -129,16 +154,14 @@ const getActiveDiscountsForProducts = async (
             continue;
         }
 
-        const candidateResultingPrice =
-            campaignProduct.discountType === "PERCENTAGE"
-                ? basePrice * (1 - Number(campaignProduct.discountValue) / 100)
-                : basePrice - Number(campaignProduct.discountValue);
+        const candidateResultingPrice = applyCampaignDiscount(basePrice, {
+            discountType: campaignProduct.discountType,
+            discountValue: Number(campaignProduct.discountValue),
+        });
 
         const current = bestByProductId.get(campaignProduct.productId);
         const currentResultingPrice = current
-            ? current.discountType === "PERCENTAGE"
-                ? basePrice * (1 - current.discountValue / 100)
-                : basePrice - current.discountValue
+            ? applyCampaignDiscount(basePrice, current)
             : Infinity;
 
         if (candidateResultingPrice < currentResultingPrice) {
@@ -152,6 +175,79 @@ const getActiveDiscountsForProducts = async (
     }
 
     return bestByProductId;
+};
+
+/**
+ * What each checkout line's unit actually costs once any active campaign is
+ * applied — the checkout counterpart to `attachCampaignPricing`.
+ *
+ * Keyed by `productId:variantId` rather than by product, because a campaign
+ * targets a PRODUCT while a line is priced from its VARIANT. The discount is
+ * applied to the price that line would otherwise be charged (the variant's own
+ * `offerPrice`, falling back to the product's), so every variant of a
+ * campaigned product gets the same proportional cut rather than one computed
+ * off a price the shopper is not paying. A 20% campaign takes 20% off the
+ * 256GB model's own price, not 20% of the 128GB's.
+ *
+ * Note the consequence, which is real and accepted: the storefront currently
+ * renders ONE product-level `campaignPrice` regardless of the selected
+ * variant, so on a product whose variants are priced differently the cart can
+ * charge a different figure than the product card showed. The charge is the
+ * defensible one — it is the selected variant's price, discounted — but
+ * closing that gap means returning per-variant campaign prices from the
+ * product endpoints, which is its own change.
+ *
+ * Returns an empty map when nothing is campaigned, so callers stay on their
+ * existing `offerPrice` path untouched.
+ */
+const getActiveDiscountsForLines = async (
+    lines: { productId: string; variantId: string | null; unitPrice: number }[],
+): Promise<Map<string, number>> => {
+    if (lines.length === 0) {
+        return new Map();
+    }
+
+    /*
+     * One lookup for the whole basket.
+     *
+     * `getActiveDiscountsForProducts` needs a price per PRODUCT only to rank
+     * competing campaigns against each other (is 10% better than ৳100 off?).
+     * Two variants of one product can carry different prices, so the lowest is
+     * used deliberately rather than whichever line happened to be last: on the
+     * cheapest variant a percentage discount is at its least valuable, so
+     * ranking there never overstates it and never picks a campaign that turns
+     * out worse for the line actually being charged.
+     *
+     * The chosen discount is then applied to each line's OWN price below, so
+     * this figure never reaches the shopper's total.
+     */
+    const priceByProductId = new Map<string, number>();
+    for (const line of lines) {
+        const current = priceByProductId.get(line.productId);
+        if (current === undefined || line.unitPrice < current) {
+            priceByProductId.set(line.productId, line.unitPrice);
+        }
+    }
+    const discounts = await getActiveDiscountsForProducts(
+        [...new Set(lines.map((line) => line.productId))],
+        priceByProductId,
+    );
+
+    const priceByLineKey = new Map<string, number>();
+
+    for (const line of lines) {
+        const discount = discounts.get(line.productId);
+        if (!discount) {
+            continue;
+        }
+
+        priceByLineKey.set(
+            `${line.productId}:${line.variantId ?? ""}`,
+            applyCampaignDiscount(line.unitPrice, discount),
+        );
+    }
+
+    return priceByLineKey;
 };
 
 /**
@@ -188,4 +284,6 @@ export const CampaignService = {
     updateCampaign,
     deleteCampaign,
     getActiveDiscountsForProducts,
+    getActiveDiscountsForLines,
+    applyCampaignDiscount,
 };

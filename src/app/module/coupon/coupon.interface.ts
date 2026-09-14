@@ -25,6 +25,14 @@ export interface IApplyCouponPayload {
 /** Minimal shape `CouponService`'s validation logic needs from a cart line item — deliberately loose on the Decimal-typed price fields (see coupon.service.ts). */
 export interface ICartItemForDiscount {
     productId: string;
+    /**
+     * Which variant this line is for, if any. Needed because a campaign
+     * discount is resolved per product but applied to the variant's own price,
+     * so the subtotal a coupon is measured against cannot be computed without
+     * knowing which variant was chosen. Optional so the cart's own rows, which
+     * type it as `string | null`, satisfy this unchanged.
+     */
+    variantId?: string | null;
     quantity: number;
     /** A cart line is priced from the offer price — what the shopper is charged. */
     product: { offerPrice: unknown };

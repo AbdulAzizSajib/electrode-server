@@ -117,6 +117,43 @@ for (const provider of listProviders()) {
     }
 }
 
+console.log("\n--- The credential contract is async on every provider ---\n");
+
+/*
+ * Credentials moved out of the environment into encrypted storage, which made
+ * these three predicates async. A provider left synchronous would still satisfy
+ * TypeScript at the call site in some positions — `if (provider.isConfigured())`
+ * is legal and always true for a Promise — so the shape is asserted here, where
+ * a regression is visible rather than silently permissive.
+ */
+for (const provider of listProviders()) {
+    check(
+        `${provider.displayName} implements resolveCredentials`,
+        typeof provider.resolveCredentials === "function",
+        "the service resolves once per operation and threads the result through every call",
+    );
+
+    check(
+        `${provider.displayName}.isConfigured returns a promise`,
+        provider.isConfigured() instanceof Promise,
+        "a synchronous one would make `if (isConfigured())` always true, dispatching with no credentials",
+    );
+
+    check(
+        `${provider.displayName}.resolveCredentials returns a promise`,
+        provider.resolveCredentials() instanceof Promise,
+        "it reads encrypted storage, so it cannot be synchronous",
+    );
+
+    if (provider.capabilities.webhook) {
+        check(
+            `${provider.displayName}.webhookToken returns a promise`,
+            provider.webhookToken!() instanceof Promise,
+            "the guard awaits it; a bare string would be compared against a Promise and never match",
+        );
+    }
+}
+
 console.log("\n--- MANUAL declares nothing ---\n");
 
 check(
@@ -125,10 +162,28 @@ check(
     "it exists to mean 'we hand parcels over ourselves', not 'the courier is broken'",
 );
 
+/*
+ * Awaited, not truthiness-checked. These predicates became async when
+ * credentials moved into encrypted storage, and an un-awaited Promise is always
+ * truthy — so the un-awaited form of this check passes whatever the provider
+ * answers, which is worse than not having it.
+ */
 check(
     "MANUAL reports itself configured",
-    ManualProvider.isConfigured(),
+    (await ManualProvider.isConfigured()) === true,
     "there is nothing to configure, and reporting false would show a working setup as broken",
+);
+
+check(
+    "MANUAL resolves an empty credential set",
+    Object.keys(await ManualProvider.resolveCredentials()).length === 0,
+    "it declares no credentials, so there is nothing to read and nothing to fail reading",
+);
+
+check(
+    "MANUAL reports no webhook configuration",
+    (await ManualProvider.isWebhookConfigured()) === false,
+    "it receives no callbacks, so claiming otherwise would offer a callback URL that never fires",
 );
 
 check(

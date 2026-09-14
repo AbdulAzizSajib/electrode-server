@@ -1,0 +1,64 @@
+/// One third-party service this shop can connect: a courier, a tracking pixel,
+/// whatever comes next.
+///
+/// THIS ROW IS THE INTEGRATION; `IntegrationCredential` HOLDS ITS SECRETS. The
+/// split exists because "is Steadfast enabled?" must have exactly one answer,
+/// and Steadfast holds two credentials (an API key and a secret key). Putting
+/// `enabled` on each credential row would give that question two answers that
+/// can disagree, with nothing in the schema to say which one wins — and the
+/// requirement is that a disabled integration is used by NO server-side
+/// operation, which is not a property a per-credential flag can express.
+///
+/// `publicId` has the same problem for the same reason: it identifies the
+/// integration in `/api/v1/webhooks/<provider>/<publicId>`, so a per-credential
+/// publicId would leave the webhook URL ambiguous about which row minted it.
+///
+/// The split also states the lifecycle plainly. An integration exists before it
+/// has any credentials — that is precisely the state the admin renders as "not
+/// configured" — and MANUAL exists permanently with none at all, because
+/// "we hand parcels over ourselves" is a real choice rather than a
+/// misconfiguration.
+///
+/// See openspec/changes/rename-courier-setting-to-integrations, design.md
+/// Decision 1.
+model Integration {
+  /// The integration's stable identity, and the primary key.
+  ///
+  /// A plain string rather than an enum: the roster spans couriers (which do
+  /// have a `CourierProvider` enum) and non-couriers like the Meta pixel (which
+  /// do not, and should not be forced into a courier enum to be storable). The
+  /// set of valid values is owned by the integration registry in application
+  /// code, which is where the rest of what a provider can do is already
+  /// declared.
+  provider String @id
+
+  /// Whether this integration may be used at all.
+  ///
+  /// Deliberately INDEPENDENT of whether credentials are present. "Configured
+  /// but switched off" and "switched on but not yet configured" are both real,
+  /// distinguishable states, and collapsing them would mean a merchant could
+  /// only disable an integration by deleting the credentials they would have to
+  /// type back in later.
+  ///
+  /// Defaults true so that importing an existing environment's credentials
+  /// yields a working integration without a second step — a shop upgrading
+  /// across this change must not stop dispatching because nothing flipped a
+  /// flag.
+  enabled Boolean @default(true)
+
+  /// The unguessable segment of this integration's webhook callback URL.
+  ///
+  /// An IDENTIFIER, NOT A SECRET — the bearer token in `IntegrationCredential`
+  /// remains the authentication boundary. What this buys is that the endpoint is
+  /// not enumerable, and that a notification can be attributed to an integration
+  /// before any authentication work happens.
+  ///
+  /// Nullable because most integrations never receive a webhook. It is minted
+  /// when one is first needed, not preemptively for every row.
+  publicId String? @unique
+
+  credentials IntegrationCredential[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

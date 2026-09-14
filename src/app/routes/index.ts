@@ -25,8 +25,9 @@ import { PermissionRoutes, RoleRoutes } from "../module/role/role.route";
 import { ReturnNestedRoutes, ReturnRoutes } from "../module/return/return.route";
 import { AttributeRoutes } from "../module/attribute/attribute.route";
 import { BundleDealRoutes } from "../module/bundle-deal/bundle-deal.route";
-import { CollectionRoutes } from "../module/collection/collection.route";
 import { CourierRoutes } from "../module/courier/courier.route";
+import { WebhookRoutes } from "../module/courier/webhook.route";
+import { IntegrationRoutes } from "../module/integration/integration.route";
 import { TagRoutes } from "../module/tag/tag.route";
 import { TaxRuleRoutes } from "../module/tax-rule/tax-rule.route";
 import { TestimonialRoutes } from "../module/testimonial/testimonial.route";
@@ -52,7 +53,6 @@ router.use("/categories", CategoryRoutes);
 router.use("/brands", BrandRoutes);
 router.use("/attributes", AttributeRoutes);
 router.use("/tax-rules", TaxRuleRoutes);
-router.use("/collections", CollectionRoutes);
 router.use("/bundle-deals", BundleDealRoutes);
 router.use("/tags", TagRoutes);
 router.use("/products/:id/reviews", ReviewNestedRoutes);
@@ -130,6 +130,27 @@ router.use("/reports", ReportRoutes);
 // /:id. Its two machine-to-machine routes authenticate by shared secret rather
 // than session, since Steadfast and Vercel Cron have no session here.
 router.use("/courier", CourierRoutes);
+// Merchant-editable credentials for couriers and marketing integrations, all
+// OWNER/ADMIN. No ordering constraint against /courier — the paths do not
+// overlap — but note that INSIDE this router the literal sub-paths
+// (/:provider/credentials, /:provider/webhook) sit under a /:provider segment,
+// so nothing may be mounted here whose first segment could be mistaken for a
+// provider id.
+//
+// Kept separate from /settings deliberately: /settings has a public sibling
+// that serves its whole row, and these are secrets. The PUBLIC half of
+// integration config (the Meta pixel id) lives on StoreSetting instead, so the
+// storefront never needs to reach this router.
+router.use("/integrations", IntegrationRoutes);
+// Where couriers POST their delivery notifications:
+// /webhooks/<provider>/<publicId>. Machine-to-machine, authenticated by the
+// per-integration bearer token rather than a session — a courier has no session
+// here. Mounted at the top level rather than under /courier because it is the
+// URL pasted into someone else's panel, and because the next integration that
+// receives callbacks will not be a courier.
+//
+// The older /courier/webhook paths still work and authenticate identically.
+router.use("/webhooks", WebhookRoutes);
 router.use("/uploads", UploadRoutes);
 
 export const IndexRoutes = router;

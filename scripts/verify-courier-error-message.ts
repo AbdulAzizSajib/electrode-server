@@ -27,8 +27,6 @@
  * whether or not the Steadfast account is active. Run with:
  *   npx tsx scripts/verify-courier-error-message.ts
  */
-import { envVars } from "../src/app/config/env";
-
 let failures = 0;
 
 const check = (label: string, ok: boolean, detail: string) => {
@@ -38,15 +36,14 @@ const check = (label: string, ok: boolean, detail: string) => {
 
 /*
  * The client throws CourierNotConfiguredError before it ever calls fetch, and
- * this script must not depend on a configured account. Placeholders are set
- * only if the real ones are absent, and never printed.
+ * this script must not depend on a configured account.
+ *
+ * Credentials are now a plain argument rather than module-level env state, so
+ * this is a literal instead of the `envVars` mutation it used to be — which is
+ * one of the reasons the contract was changed: a script can exercise this client
+ * with no environment and no database in the way.
  */
-if (!envVars.STEADFAST_API_KEY) {
-    (envVars as { STEADFAST_API_KEY?: string }).STEADFAST_API_KEY = "__verify_key";
-}
-if (!envVars.STEADFAST_SECRET_KEY) {
-    (envVars as { STEADFAST_SECRET_KEY?: string }).STEADFAST_SECRET_KEY = "__verify_secret";
-}
+const CREDENTIALS = { apiKey: "__verify_key", secretKey: "__verify_secret" };
 
 const realFetch = globalThis.fetch;
 
@@ -61,7 +58,7 @@ const { SteadfastClient } = await import("../src/app/module/courier/steadfast.cl
 /** One dispatch attempt against the stubbed response. */
 const dispatchWith = async (status: number, body: string) => {
     stubResponse(status, body);
-    return SteadfastClient.createBulkOrders([
+    return SteadfastClient.createBulkOrders(CREDENTIALS, [
         {
             invoice: "__verify_invoice",
             recipient_name: "Verify",

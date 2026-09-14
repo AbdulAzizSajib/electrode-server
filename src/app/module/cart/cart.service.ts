@@ -3,6 +3,7 @@ import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
 import { ProductStatus } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
+import { CampaignService } from "../campaign/campaign.service";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
 import { IAddCartItemPayload } from "./cart.interface";
@@ -104,6 +105,55 @@ const resolveCartId = async (userId: string | undefined, guestTokenCookie: strin
 };
 
 /**
+ * Attaches each line's `effectiveUnitPrice` — what that unit will actually be
+ * charged, once any active campaign is applied.
+ *
+ * The cart deliberately returns no other monetary field: the storefront
+ * derives every total from the catalogue prices on each row. That worked only
+ * while the price a shopper is charged WAS `offerPrice`. Campaign pricing
+ * broke it — the cart page, the drawer and the pre-quote checkout summary all
+ * multiplied out `offerPrice` and showed a subtotal the order then undercut.
+ *
+ * So the effective price is resolved here, server side, rather than teaching
+ * each of those surfaces about campaigns: they all read one field, and the
+ * charged figure comes from `CampaignService` either way, so the cart cannot
+ * drift from checkout without the two disagreeing about the same call.
+ *
+ * `offerPrice` is left on the row untouched — it is the struck-through
+ * comparison the cart shows next to a discounted line.
+ */
+const withEffectivePrices = async <
+    T extends {
+        productId: string;
+        variantId: string | null;
+        product: { offerPrice: unknown };
+        variant: { offerPrice: unknown } | null;
+    },
+>(
+    items: T[],
+) => {
+    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
+        items.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            unitPrice: Number(item.variant?.offerPrice ?? item.product.offerPrice),
+        })),
+    );
+
+    return items.map((item) => {
+        const listPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
+        const campaignPrice = campaignPriceByKey.get(`${item.productId}:${item.variantId ?? ""}`);
+
+        return {
+            ...item,
+            effectiveUnitPrice: campaignPrice ?? listPrice,
+            /** Null unless a campaign is cutting this line's price. */
+            campaignUnitPrice: campaignPrice ?? null,
+        };
+    });
+};
+
+/**
  * `appliedCouponCode` (read from the `appliedCoupon` cookie by
  * cart.controller.ts) is re-validated against the current cart on every
  * fetch so the discount preview never shows a stale/no-longer-applicable
@@ -118,13 +168,12 @@ const getCart = async (
 ) => {
     const { cart, newGuestToken, customerId } = await resolveCart(userId, guestTokenCookie);
 
-    const discount = await CouponService.getAppliedDiscountForCart(
-        cart.items,
-        customerId,
-        appliedCouponCode,
-    );
+    const [items, discount] = await Promise.all([
+        withEffectivePrices(cart.items),
+        CouponService.getAppliedDiscountForCart(cart.items, customerId, appliedCouponCode),
+    ]);
 
-    return { cart, newGuestToken, discount };
+    return { cart: { ...cart, items }, newGuestToken, discount };
 };
 
 /**
@@ -148,13 +197,12 @@ const reloadCart = async (
         include: CART_INCLUDE,
     });
 
-    const discount = await CouponService.getAppliedDiscountForCart(
-        cart.items,
-        customerId,
-        appliedCouponCode,
-    );
+    const [items, discount] = await Promise.all([
+        withEffectivePrices(cart.items),
+        CouponService.getAppliedDiscountForCart(cart.items, customerId, appliedCouponCode),
+    ]);
 
-    return { ...cart, discount };
+    return { ...cart, items, discount };
 };
 
 const addItem = async (

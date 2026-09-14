@@ -1,0 +1,29 @@
+-- Which sections the storefront homepage is composed of, and in what order.
+-- See openspec/changes/add-homepage-section-toggles.
+--
+-- Purely additive and nullable with NO BACKFILL. Null is not a placeholder here
+-- — it is the meaningful value "never configured", which the read path resolves
+-- to every section enabled in registry order, i.e. exactly the homepage that
+-- rendered before this column existed. So every existing store renders
+-- identically the moment this applies, and there is nothing to reconcile
+-- afterwards.
+--
+-- The value is an ORDERED array of { key, enabled }. Postgres constrains none
+-- of that; `homeConfigSchema` in store-setting.validation.ts is the only gate,
+-- which is the standing arrangement for every Json column on this table.
+--
+-- NOTE: the DROP INDEX statements `prisma migrate dev` generated alongside this
+-- have again been removed. Those are the pg_trgm GIN indexes
+-- (Product_name_trgm_idx, Product_sku_trgm_idx, Brand_name_trgm_idx) created by
+-- raw SQL in 20260831000000_add_product_search_indexes and not modelled in
+-- schema.prisma, which Prisma reads as drift on EVERY generated migration.
+-- Dropping them would silently degrade ProductService.searchProducts to a
+-- sequential scan. Expect to remove them again next time one is generated.
+--
+-- This one was generated with `--create-only` and edited BEFORE being applied,
+-- which is the correction the previous migration's note asked for: that one was
+-- generated and applied in the same breath, the DROPs went through, and the
+-- three indexes had to be recreated by hand. Keep using `--create-only` here.
+
+-- AlterTable
+ALTER TABLE "StoreSetting" ADD COLUMN     "homeConfig" JSONB;

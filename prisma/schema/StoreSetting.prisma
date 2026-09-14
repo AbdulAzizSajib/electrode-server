@@ -230,6 +230,51 @@ model StoreSetting {
   /// their shoppers' saved lists intact.
   catalogConfig Json?
 
+  /// Which sections the storefront HOMEPAGE is composed of, and in what order:
+  /// an ORDERED array of `{ key, enabled }`, where position in the array is the
+  /// order the storefront renders them in.
+  ///
+  /// Zod-validated on write like every blob above — `homeConfigSchema` in
+  /// store-setting.validation.ts is the ONLY gate on its shape. `key` is
+  /// constrained there to HOME_SECTION_KEYS in store-setting.constant.ts, which
+  /// is simultaneously the closed key set, the default order and (all-enabled)
+  /// the default config.
+  ///
+  /// An ARRAY rather than a map of booleans or a column per section, because
+  /// order has to be expressible and an array makes it intrinsic — position IS
+  /// the order, so it cannot be internally inconsistent the way eleven separate
+  /// sort integers could (two sections claiming position 3, or gaps).
+  ///
+  /// READ BY RECONCILING AGAINST THE REGISTRY — see reconcileHomeConfig in
+  /// store-setting.service.ts. NOT the wholesale `merge()` the nested blobs use,
+  /// and NOT the per-key spread `catalogConfig` uses one field up: both of those
+  /// repair an OBJECT against a default object, and neither does anything
+  /// meaningful to an array. Reconciliation instead drops entries whose key is
+  /// not in the registry, collapses duplicates to the first occurrence, and
+  /// splices in any registry section the stored list is missing, enabled, at its
+  /// registry-relative position.
+  ///
+  /// That splice is the load-bearing part: WITHOUT IT, A SECTION ADDED IN A
+  /// LATER RELEASE WOULD NEVER RENDER for any shop that had already saved a
+  /// configuration — indistinguishable from the new section being broken. With
+  /// it, adding a section is never a data migration.
+  ///
+  /// A malformed value (not an array, entries that are not objects) resolves to
+  /// the full default list rather than throwing. A homepage that fails to render
+  /// is worse than one that ignores a corrupt value, and this is the same
+  /// direction `siteMode` below already fails in against a hand-edited row.
+  ///
+  /// Nullable with no backfill: null means "never configured" and resolves to
+  /// every section enabled in registry order, which is exactly what the homepage
+  /// rendered before this column existed. The migration changes no storefront on
+  /// deploy.
+  ///
+  /// SCOPE IS THE HOMEPAGE ONLY. Header, footer, announcement bar, cart drawer
+  /// and mobile nav are rendered by the storefront's shop layout on EVERY route
+  /// and are deliberately not addressable here — see
+  /// openspec/changes/add-homepage-section-toggles, proposal.md.
+  homeConfig Json?
+
   /// Whether the storefront root serves the full shop or a single campaign
   /// landing page, and which landing page that is.
   ///
@@ -260,9 +305,11 @@ model StoreSetting {
   ///
   /// THE SELECTION LIVES HERE; THE CREDENTIALS DO NOT. This row is served by a
   /// public endpoint, so a secret on it is one careless field selection away
-  /// from being published — which is why the Steadfast keys sit in the
-  /// environment and stay there. An enum naming a courier grants nothing to
-  /// whoever reads it, so it is safe on the same row.
+  /// from being published. The courier keys therefore live in
+  /// `IntegrationCredential`, encrypted, where no public projection joins to
+  /// them; they were in the server environment before that, for the same reason.
+  /// An enum naming a courier grants nothing to whoever reads it, so it is safe
+  /// on the same row. Do not move a credential onto this model.
   ///
   /// Defaults to STEADFAST so an installation that predates this column keeps
   /// dispatching exactly as before, with no configuration step. There is no
@@ -278,6 +325,36 @@ model StoreSetting {
   /// See openspec/changes/add-courier-provider-selection, design.md Decisions 4
   /// and 8.
   courierProvider CourierProvider @default(STEADFAST)
+
+  /// The PUBLIC half of every integration's configuration.
+  ///
+  /// `{ facebookPixel: { enabled, pixelId }, facebookCapi: { enabled, testMode,
+  /// testEventCode } }`.
+  ///
+  /// THE SPLIT WITH `IntegrationCredential` IS DELIBERATE, NOT AN INCONSISTENCY.
+  /// A Meta pixel id is published to every visitor by the very act of using it —
+  /// it is interpolated into a script tag on every page — so hiding it would
+  /// cost a round trip and buy nothing. A CAPI access token can post events as
+  /// the merchant's business, so it goes in `IntegrationCredential` and never
+  /// appears here.
+  ///
+  /// The rule, for whatever integration comes next: what the browser sees anyway
+  /// goes in this column; what it must never see goes in the credential table.
+  /// Storing them together would mean either putting a secret on this public row
+  /// or making the storefront fetch its pixel id through an authenticated
+  /// endpoint, and neither is acceptable.
+  ///
+  /// `testEventCode` sits here despite being rendered as a masked input in the
+  /// admin: it is a Meta debug-panel code, not a credential, and whoever is
+  /// debugging has to be able to read it back.
+  ///
+  /// Postgres does not constrain a Json column, so — as with every other Json
+  /// column on this model — the Zod schema in `store-setting.validation.ts` is
+  /// the ONLY gate. No code path may persist an unvalidated value here.
+  ///
+  /// See openspec/changes/rename-courier-setting-to-integrations, design.md
+  /// Decision 7.
+  integrationConfig Json?
 
   updatedAt DateTime @updatedAt
 }

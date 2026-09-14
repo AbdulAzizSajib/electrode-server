@@ -12,6 +12,7 @@ import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { revalidateStorefront, STORE_SETTINGS_TAG } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { CampaignService } from "../campaign/campaign.service";
 import type { ICheckoutActor } from "../order/order.interface";
 import { quoteCharges, roundMoney } from "../order/order.pricing";
 import { OrderService } from "../order/order.service";
@@ -462,14 +463,38 @@ const buildProductSnapshot = async (productId: string): Promise<ILandingPageProd
     const available =
         (stock._sum.quantity ?? 0) - (stock._sum.reservedQuantity ?? 0);
 
+    /*
+     * A landing page sells the base product, so it is priced by the same
+     * resolver the order path uses — a campaign discounting this product must
+     * reach the page that sells it, or the ad quotes one price and the order
+     * charges another. `variantId: null` because the page has no picker.
+     */
+    const offerPrice = Number(product.offerPrice);
+    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines([
+        { productId: product.id, variantId: null, unitPrice: offerPrice },
+    ]);
+    const unitPrice = campaignPriceByKey.get(`${product.id}:`) ?? offerPrice;
+
     return {
         id: product.id,
         name: product.name,
         slug: product.slug,
         // `unitPrice` keeps its name — it is this snapshot's own field, and what
-        // a landing page charges per unit is the product's offer price.
-        unitPrice: Number(product.offerPrice),
-        sellingPrice: product.sellingPrice === null ? null : Number(product.sellingPrice),
+        // a landing page charges per unit is the product's offer price, less any
+        // campaign discount currently running against it.
+        unitPrice,
+        /*
+         * The struck-through comparison. Under a campaign the offer price is
+         * itself a saving, so it stands in when the merchant set no separate
+         * selling price — otherwise a discounted page would show a cut price
+         * with nothing to compare it against.
+         */
+        sellingPrice:
+            product.sellingPrice === null
+                ? unitPrice < offerPrice
+                    ? offerPrice
+                    : null
+                : Number(product.sellingPrice),
         unit: product.unit,
         images: product.images.map((image) => ({ url: image.url, alt: image.altText })),
         available: Math.max(0, available),

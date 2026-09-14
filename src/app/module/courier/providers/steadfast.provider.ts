@@ -8,16 +8,26 @@
  * by the existing courier scripts is the behaviour that still runs.
  *
  * What lives here rather than in the service is everything Steadfast-specific:
- * its field limits and address composition (via `courier.mapper.ts`) and its
- * eleven-value status vocabulary (via `courier.status.ts`). Both of those files
- * were always Steadfast's, and they move behind this boundary without their
- * contents changing.
+ * its field limits and address composition (via `courier.mapper.ts`), its
+ * eleven-value status vocabulary (via `courier.status.ts`), and the names of its
+ * two credentials (`toSteadfastCredentials`). All of those were always
+ * Steadfast's, and they sit behind this boundary without their contents
+ * changing.
+ *
+ * CREDENTIALS COME FROM THE DATABASE, NOT THE ENVIRONMENT. They are entered by
+ * the merchant at admin UI → Integrations and stored encrypted; the
+ * `STEADFAST_*` env vars survive only as a one-time import source for shops
+ * upgrading across that change. This adapter therefore never reads `envVars` for
+ * a credential, and a key saved in the panel takes effect on the next call
+ * without a restart.
  *
  * See openspec/changes/add-courier-provider-selection, design.md Decisions 1
- * and 2.
+ * and 2, and openspec/changes/rename-courier-setting-to-integrations, design.md
+ * Decision 3.
  */
 import { CourierProvider } from "../../../../generated/prisma/client";
-import { envVars } from "../../../config/env";
+import { CredentialKind, IntegrationId } from "../../integration/integration.constant";
+import { IntegrationService } from "../../integration/integration.service";
 import { ICourierOrderForDispatch } from "../courier.interface";
 import { mapOrderToConsignment } from "../courier.mapper";
 import {
@@ -26,6 +36,7 @@ import {
     ICourierCapabilities,
     ICourierConsignmentRequest,
     ICourierConsignmentResult,
+    ICourierCredentials,
     ICourierProvider,
     ICourierReturnResult,
     ICourierStatusReading,
@@ -39,6 +50,7 @@ import {
     toShipmentStatus,
 } from "../courier.status";
 import {
+    ISteadfastCredentials,
     SteadfastClient,
     SteadfastOrderPayload,
 } from "../steadfast.client";
@@ -69,6 +81,31 @@ const readStatus = (raw: string): ICourierStatusReading => ({
     needsAttention: needsAttention(raw),
 });
 
+/**
+ * Narrows the open credential map to what this client needs.
+ *
+ * The service threads around a `Record<string, string>` because the shape
+ * differs per courier; this is the one place that says what Steadfast's two
+ * values are called. An absent kind becomes an empty string, which
+ * `isCourierConfigured` then reports as unconfigured rather than sending a
+ * request with a blank header.
+ */
+const toSteadfastCredentials = (credentials: ICourierCredentials): ISteadfastCredentials => ({
+    apiKey: credentials[CredentialKind.API_KEY] ?? "",
+    secretKey: credentials[CredentialKind.SECRET_KEY] ?? "",
+});
+
+/**
+ * This provider's credentials, from encrypted storage.
+ *
+ * The env vars that used to hold these are now only an import source — the
+ * integration service copies them into the table once and reads the table
+ * thereafter, so a key the merchant saves in the panel takes effect on the next
+ * call with no restart.
+ */
+const resolveCredentials = (): Promise<ICourierCredentials> =>
+    IntegrationService.resolveCredentials(IntegrationId.STEADFAST);
+
 const mapOrder = (order: ICourierOrderForDispatch): CourierMapResult => {
     const mapped = mapOrderToConsignment(order);
 
@@ -92,10 +129,14 @@ const mapOrder = (order: ICourierOrderForDispatch): CourierMapResult => {
  */
 const createConsignments = async (
     requests: ICourierConsignmentRequest[],
+    credentials: ICourierCredentials,
 ): Promise<CourierResult<ICourierConsignmentResult[]>> => {
     const payloads = requests.map((request) => request.payload as SteadfastOrderPayload);
 
-    const response = await SteadfastClient.createBulkOrders(payloads);
+    const response = await SteadfastClient.createBulkOrders(
+        toSteadfastCredentials(credentials),
+        payloads,
+    );
 
     if (response.outcome !== "ok") return response;
 
@@ -114,8 +155,12 @@ const createConsignments = async (
 
 const getStatus = async (
     consignmentId: string,
+    credentials: ICourierCredentials,
 ): Promise<CourierResult<ICourierStatusReading>> => {
-    const response = await SteadfastClient.getStatusByConsignmentId(consignmentId);
+    const response = await SteadfastClient.getStatusByConsignmentId(
+        toSteadfastCredentials(credentials),
+        consignmentId,
+    );
 
     if (response.outcome !== "ok") return response;
 
@@ -136,8 +181,10 @@ const getStatus = async (
     return { outcome: "ok", data: readStatus(reported) };
 };
 
-const getBalance = async (): Promise<CourierResult<{ currentBalance: number }>> => {
-    const response = await SteadfastClient.getBalance();
+const getBalance = async (
+    credentials: ICourierCredentials,
+): Promise<CourierResult<{ currentBalance: number }>> => {
+    const response = await SteadfastClient.getBalance(toSteadfastCredentials(credentials));
 
     if (response.outcome !== "ok") return response;
 
@@ -146,9 +193,14 @@ const getBalance = async (): Promise<CourierResult<{ currentBalance: number }>> 
 
 const createReturnRequest = async (
     consignmentId: string,
-    reason?: string,
+    reason: string | undefined,
+    credentials: ICourierCredentials,
 ): Promise<CourierResult<ICourierReturnResult>> => {
-    const response = await SteadfastClient.createReturnRequest(consignmentId, reason);
+    const response = await SteadfastClient.createReturnRequest(
+        toSteadfastCredentials(credentials),
+        consignmentId,
+        reason,
+    );
 
     if (response.outcome !== "ok") return response;
 
@@ -197,9 +249,12 @@ export const SteadfastProvider: ICourierProvider = {
     id: CourierProvider.STEADFAST,
     displayName: "Steadfast",
     capabilities: CAPABILITIES,
-    isConfigured: () => SteadfastClient.isCourierConfigured(),
-    isWebhookConfigured: () => Boolean(envVars.STEADFAST_WEBHOOK_TOKEN),
-    webhookToken: () => envVars.STEADFAST_WEBHOOK_TOKEN,
+    resolveCredentials,
+    isConfigured: async () =>
+        SteadfastClient.isCourierConfigured(toSteadfastCredentials(await resolveCredentials())),
+    isWebhookConfigured: async () =>
+        Boolean((await resolveCredentials())[CredentialKind.WEBHOOK_TOKEN]),
+    webhookToken: async () => (await resolveCredentials())[CredentialKind.WEBHOOK_TOKEN],
     mapOrder,
     createConsignments,
     getStatus,

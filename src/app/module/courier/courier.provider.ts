@@ -32,8 +32,40 @@
  * order's tracking number. A provider free to override them would be free to
  * reintroduce them.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CREDENTIALS ARE PASSED IN, NOT FETCHED PER ADAPTER.
+ *
+ * They used to be read from `envVars` inside each adapter, synchronously. They
+ * now live encrypted in the database, entered by the merchant at admin UI →
+ * Integrations, so reading one is an async database call. Rather than have every
+ * adapter fetch its own, the SERVICE resolves them once per operation and threads
+ * the result through. Two reasons, both of which the alternative gets wrong:
+ *
+ *  - **One dispatch run must use one account.** The service batches at 50 and
+ *    persists each batch before sending the next, so a 200-order dispatch makes
+ *    four calls over a span in which a merchant could save a new key. An adapter
+ *    fetching per call would send batches one and two to one account and three
+ *    and four to another, with no record of which parcels went where. Resolving
+ *    once makes that impossible rather than unlikely.
+ *  - **Adapters stay directly testable.** A verify script constructs a credential
+ *    object and calls the adapter, with no database and no configured
+ *    environment in the way — which is how `verify-courier-provider.ts` already
+ *    works and why it can assert the capability/method correspondence offline.
+ *
+ * The predicates (`isConfigured`, `isWebhookConfigured`, `webhookToken`) DO read
+ * storage themselves and are therefore async. They are deliberately not cached:
+ * "I changed the key and it still says unconfigured" is a support burden, and the
+ * requirement is that a credential change takes effect without a restart. They
+ * are called once per admin page load and once per dispatch run, so nothing about
+ * that is on a hot path.
+ *
+ * `mapOrder` and `readStatus` stay synchronous and credential-free. They are pure
+ * translation, and the service calls `mapOrder` twice — once for the preview and
+ * once at dispatch — precisely because it is cheap enough to.
+ *
  * See openspec/changes/add-courier-provider-selection, design.md Decisions 1
- * and 2.
+ * and 2, and openspec/changes/rename-courier-setting-to-integrations, design.md
+ * Decision 3.
  */
 import { CourierProvider, ShipmentStatus } from "../../../generated/prisma/client";
 import { CourierIneligibleReason, ICourierOrderForDispatch } from "./courier.interface";
@@ -90,6 +122,22 @@ export interface ICourierCapabilities {
     /** Pushes status notifications to an endpoint we host. */
     webhook: boolean;
 }
+
+/**
+ * One provider's resolved credentials, keyed by the credential `kind` its
+ * integration descriptor declares.
+ *
+ * An open map rather than a per-provider type because the shape genuinely
+ * differs — Steadfast needs two values, a courier using OAuth needs four — and
+ * the service that threads this through must not have to know which. Each
+ * adapter narrows it to what it needs on the way in, which is the same place it
+ * already decides what its API expects.
+ *
+ * A kind that is absent from this map is either unconfigured or unreadable; both
+ * mean "cannot call the courier", so adapters check presence and refuse rather
+ * than distinguishing them.
+ */
+export type ICourierCredentials = Record<string, string>;
 
 /** Every capability off — the base MANUAL declares and the shape a new adapter
  *  starts from, so adding a capability is an explicit act. */
@@ -188,12 +236,24 @@ export interface ICourierProvider {
 
     readonly capabilities: ICourierCapabilities;
 
-    /** Whether this provider's credentials are present. Never discloses them —
-     *  the admin is told only whether each is set. */
-    isConfigured(): boolean;
+    /**
+     * Resolves this provider's credentials for an operation about to use them.
+     *
+     * Returns `{}` rather than throwing when nothing is configured: the caller's
+     * job is to refuse with a message naming the missing configuration, which is
+     * more useful than a stack trace. A credential that exists but cannot be
+     * decrypted is omitted, so it reads as absent — both mean "cannot dispatch".
+     *
+     * The service calls this once and passes the result to every method below.
+     */
+    resolveCredentials(): Promise<ICourierCredentials>;
 
-    /** Whether the webhook token is set, for providers that push. */
-    isWebhookConfigured(): boolean;
+    /** Whether this provider's credentials are present and readable. Never
+     *  discloses them — the admin is told only whether each is set. */
+    isConfigured(): Promise<boolean>;
+
+    /** Whether the webhook secret is set, for providers that push. */
+    isWebhookConfigured(): Promise<boolean>;
 
     /**
      * Turns one order into this provider's consignment request, or explains the
@@ -216,11 +276,15 @@ export interface ICourierProvider {
      */
     createConsignments?(
         requests: ICourierConsignmentRequest[],
+        credentials: ICourierCredentials,
     ): Promise<CourierResult<ICourierConsignmentResult[]>>;
 
     /** Reads one consignment's current status. Required when `capabilities.status` —
      *  this is what reconciliation polls. */
-    getStatus?(consignmentId: string): Promise<CourierResult<ICourierStatusReading>>;
+    getStatus?(
+        consignmentId: string,
+        credentials: ICourierCredentials,
+    ): Promise<CourierResult<ICourierStatusReading>>;
 
     /**
      * Interprets one of this courier's status strings, with no network call.
@@ -238,12 +302,15 @@ export interface ICourierProvider {
     readStatus?(rawStatus: string): ICourierStatusReading;
 
     /** Required when `capabilities.balance`. */
-    getBalance?(): Promise<CourierResult<{ currentBalance: number }>>;
+    getBalance?(
+        credentials: ICourierCredentials,
+    ): Promise<CourierResult<{ currentBalance: number }>>;
 
     /** Required when `capabilities.returns`. */
     createReturnRequest?(
         consignmentId: string,
-        reason?: string,
+        reason: string | undefined,
+        credentials: ICourierCredentials,
     ): Promise<CourierResult<ICourierReturnResult>>;
 
     /**
@@ -259,7 +326,7 @@ export interface ICourierProvider {
     /** This provider's expected webhook bearer token, or undefined when unset.
      *  Read through the provider so each one's token is looked up by provider
      *  rather than a single shared secret opening every endpoint. */
-    webhookToken?(): string | undefined;
+    webhookToken?(): Promise<string | undefined>;
 }
 
 /** What one webhook notification says, in provider-independent terms. */

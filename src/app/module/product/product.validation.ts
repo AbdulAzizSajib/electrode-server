@@ -179,8 +179,6 @@ const productBaseZodSchema = z.object({
     video: z.url("Video must be a valid URL").nullable().optional(),
     videoThumbnail: z.url("Video thumbnail must be a valid URL").nullable().optional(),
 
-    /** Collection ids this product belongs to. The full intended set — omitted leaves them alone. */
-    collectionIds: z.array(z.string()).optional(),
     /** Keyword names, created on demand. The full intended set. */
     tags: z.array(z.string().max(60)).optional(),
 

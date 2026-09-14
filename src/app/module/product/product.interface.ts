@@ -123,8 +123,6 @@ export interface ICreateProductPayload {
     video?: string | null;
     videoThumbnail?: string | null;
 
-    /** The full intended set of collection memberships; omitted leaves them alone. */
-    collectionIds?: string[];
     /** The full intended set of keywords, created on demand. */
     tags?: string[];
 

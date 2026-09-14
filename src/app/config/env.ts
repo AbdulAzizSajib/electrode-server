@@ -62,20 +62,49 @@ interface EnvConfig {
      */
     STORE_TIMEZONE?: string;
     /**
-     * Steadfast Courier API credentials.
+     * The key every integration credential in the database is encrypted under.
      *
-     * In the environment and NOT in StoreSetting, deliberately. `GET /settings`
-     * is public — the storefront renders its payload into every page — so a
-     * credential stored on that row is one careless field selection away from
-     * being served to the internet. Cloudinary's keys sit here for the same
-     * reason. The cost is that rotating a key is a redeploy rather than a form,
-     * which is the right trade for a secret that lets a stranger create
-     * consignments billed to the merchant.
+     * 32 bytes, base64. Generate with:
+     *   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
      *
-     * Optional, and absent from requireEnvVariable below: an install without
-     * them boots normally and the courier endpoints report themselves
-     * unconfigured. Manual shipment entry is unaffected.
-     * See openspec/changes/add-steadfast-courier-integration, design.md Decision 1.
+     * REQUIRED, and deliberately so. The alternative — optional, with a
+     * plaintext fallback — means a deployment that forgot it stores merchant
+     * API keys in readable form and nobody finds out until a database dump
+     * leaks. A boot that fails loudly is the cheapest possible moment to
+     * discover the omission.
+     *
+     * LOSING IT IS NOT RECOVERABLE. Every stored credential becomes
+     * undecryptable and every integration must be re-entered through the admin
+     * panel. Keep it in a password manager, not only in the deployment's
+     * environment. There is deliberately no rotation tooling — re-encrypting
+     * under a new key is its own change.
+     *
+     * A value that fails to decrypt is treated as "not configured" rather than
+     * as a crash: a wrong key must degrade to a courier that refuses to
+     * dispatch with a clear message, not a 500 on every admin page load.
+     *
+     * See openspec/changes/rename-courier-setting-to-integrations, design.md
+     * Decision 2.
+     */
+    INTEGRATION_ENCRYPTION_KEY: string;
+    /**
+     * Steadfast Courier API credentials — NOW A FALLBACK, NOT THE SOURCE.
+     *
+     * These are read ONLY when no `IntegrationCredential` row exists for the
+     * corresponding kind. They exist so that a shop upgrading across this change
+     * keeps dispatching without the merchant re-entering anything: a one-time
+     * boot import copies whatever is here into the encrypted table, and from
+     * then on the table is what every call reads.
+     *
+     * Env can therefore never override a merchant-entered value — only fill an
+     * absent one. Reversing that would silently revert a key the merchant just
+     * rotated in the panel.
+     *
+     * They are kept for one release as a rollback path and removed in a
+     * follow-up change. New credentials belong in the admin panel, not here.
+     *
+     * See openspec/changes/rename-courier-setting-to-integrations, design.md
+     * Decision 1 and the Migration Plan.
      */
     STEADFAST_API_KEY?: string;
     STEADFAST_SECRET_KEY?: string;
@@ -91,16 +120,23 @@ interface EnvConfig {
      */
     COURIER_SYNC_SECRET?: string;
     /**
-     * Bearer token Steadfast presents when calling POST /courier/webhook.
+     * Bearer token Steadfast presents when calling the webhook endpoint —
+     * LIKE THE KEYS ABOVE, NOW A FALLBACK RATHER THAN THE SOURCE.
      *
      * WE generate this and paste it into their portal's Webhook Integration
      * form; it is not issued by them. It is the entire authentication boundary
      * on that endpoint, which necessarily sits outside `checkAuth` because
      * Steadfast has no session here.
      *
-     * Unset means the webhook endpoint refuses every call — deliberately, since
-     * accepting unauthenticated status updates is worse than accepting none.
-     * Dispatch and the reconciliation job are unaffected.
+     * The merchant now generates and regenerates it from the admin panel, and
+     * the stored value is what the guard compares against. This one is imported
+     * on first boot so a portal already pointing at the old callback URL keeps
+     * being accepted — a webhook that silently stops arriving is invisible until
+     * parcels appear stuck.
+     *
+     * Unset AND no stored row means the webhook endpoint refuses every call —
+     * deliberately, since accepting unauthenticated status updates is worse than
+     * accepting none. Dispatch and the reconciliation job are unaffected.
      */
     STEADFAST_WEBHOOK_TOKEN?: string;
     /**
@@ -149,7 +185,10 @@ const loadEnvVariables = (): EnvConfig => {
         'CLOUDINARY_API_SECRET',
         'SUPER_ADMIN_EMAIL',
         'SUPER_ADMIN_PASSWORD',
-        'SUBSCRIPTION_BKASH_NUMBER'
+        'SUBSCRIPTION_BKASH_NUMBER',
+        // Required so a deployment cannot quietly store merchant credentials in
+        // plaintext. See the field's comment above.
+        'INTEGRATION_ENCRYPTION_KEY'
     ]
 
     requireEnvVariable.forEach((variable) => {
@@ -191,6 +230,7 @@ const loadEnvVariables = (): EnvConfig => {
         STOREFRONT_REVALIDATE_SECRET: process.env.STOREFRONT_REVALIDATE_SECRET,
         STOREFRONT_URL: process.env.STOREFRONT_URL,
         STORE_TIMEZONE: process.env.STORE_TIMEZONE,
+        INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY as string,
         STEADFAST_API_KEY: process.env.STEADFAST_API_KEY,
         STEADFAST_SECRET_KEY: process.env.STEADFAST_SECRET_KEY,
         STEADFAST_BASE_URL: process.env.STEADFAST_BASE_URL,

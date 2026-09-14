@@ -201,6 +201,83 @@ export const DEFAULT_CATALOG_CONFIG = {
     showQuickView: true,
 };
 
+/**
+ * Every section the storefront homepage can be composed from, in the order it
+ * renders them when nobody has configured anything.
+ *
+ * THIS ONE ARRAY IS THREE FACTS AT ONCE, which is the entire reason it is one
+ * array: it is the CLOSED SET of keys a stored config may name, it is the
+ * DEFAULT ORDER, and — via "every key, enabled" — it is the DEFAULT CONFIG
+ * (see DEFAULT_HOME_CONFIG below). Declared separately they could drift; here
+ * they cannot.
+ *
+ * A KEY IS PERMANENT once released. Stored merchant configurations name
+ * sections by these strings, so renaming one orphans every config that refers
+ * to it — the section would be dropped as unrecognised on read and then
+ * re-appended at the end as if it were new, silently discarding the merchant's
+ * placement of it. The label shown in the admin is not this key and may be
+ * changed freely.
+ *
+ * Strings rather than a Prisma enum, matching `SiteMode` and `CourierProvider`
+ * in spirit but not in mechanism: this value lives INSIDE a Json column, where
+ * a Prisma enum buys no database enforcement at all, and adding a section would
+ * become a schema migration for what is a presentation list. `homeConfigSchema`
+ * in store-setting.validation.ts is the only gate, as it is for every other
+ * blob on this row.
+ *
+ * MIRRORED IN BOTH FRONTENDS and they must be kept in step by hand:
+ *  - `nextjs/src/services/store-settings.ts` (FALLBACK_SETTINGS.homeConfig) —
+ *    so a settings outage renders the full homepage rather than a stripped one;
+ *  - `admin/src/lib/api/store-settings.ts` (SECTION_REGISTRY) — because the
+ *    admin read returns the row as stored, so without a mirror it cannot tell
+ *    "never configured" from "configured to exactly the default".
+ *
+ * Adding a section here is deliberately NOT a data migration: reconciliation on
+ * read (see reconcileHomeConfig in store-setting.service.ts) splices a section
+ * missing from a stored config into its position here, enabled. Without that,
+ * a section shipped in a later release would never appear for any shop that had
+ * already saved a configuration.
+ *
+ * See openspec/changes/add-homepage-section-toggles, design.md Decisions 2 & 3.
+ */
+export const HOME_SECTION_KEYS = [
+    "HERO",
+    "BRAND_BAR",
+    "FEATURED_CATEGORIES",
+    "BEST_SELLING",
+    "MID_BANNERS",
+    "FEATURED_PRODUCTS",
+    "PERKS_BAR",
+    "DEAL_OF_WEEK",
+    "NEW_ARRIVALS",
+    "TESTIMONIALS",
+    "BLOG",
+] as const;
+
+export type HomeSectionKey = (typeof HOME_SECTION_KEYS)[number];
+
+export type HomeSectionConfig = { key: HomeSectionKey; enabled: boolean };
+
+/**
+ * The homepage as it renders with nothing configured: every section on, in
+ * registry order.
+ *
+ * Derived from HOME_SECTION_KEYS rather than written out, so a section added
+ * above cannot be forgotten here.
+ *
+ * ENABLED, not disabled, and that direction is deliberate — it reproduces the
+ * storefront exactly as it behaved before any of this was configurable, which
+ * is what lets the migration add the column with no backfill and change nothing
+ * for any existing store. It is also the only safe direction to fail in: a
+ * settings read that fell back to "everything off" would serve a blank homepage
+ * to a shop that has done nothing wrong, and a shopper cannot tell a stripped
+ * homepage from a merchant's deliberate choice.
+ */
+export const DEFAULT_HOME_CONFIG: HomeSectionConfig[] = HOME_SECTION_KEYS.map((key) => ({
+    key,
+    enabled: true,
+}));
+
 export const DEFAULT_THEME = {
     background: "#ffffff",
     foreground: "#1a1a1a",
@@ -463,8 +540,31 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     newsletter: DEFAULT_NEWSLETTER,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     catalogConfig: DEFAULT_CATALOG_CONFIG,
+    /*
+     * Every section, enabled, in registry order — the homepage exactly as it
+     * rendered before any of it was configurable.
+     *
+     * Note this default is reached by two different roads and must be right for
+     * both: a store that has never configured its homepage, AND a storefront
+     * whose settings read failed entirely. The second is why it is not the
+     * empty list — a shopper cannot tell a blank homepage caused by an outage
+     * from one the merchant chose, so the safe direction is to show everything.
+     */
+    homeConfig: DEFAULT_HOME_CONFIG,
     theme: DEFAULT_THEME,
     seoConfig: DEFAULT_SEO_CONFIG,
+    /*
+     * No pixel, disabled.
+     *
+     * Reached by two roads that must both be right: a shop that has never
+     * configured one, and a storefront whose settings read failed entirely.
+     * Failing to OFF is the only safe direction — a tracking script fired
+     * against a fallback id would attribute one shop's conversions to another,
+     * and a shop that never opted into tracking must never start because an API
+     * call failed. The worst case here is measurement missing for one render,
+     * which is invisible and harmless.
+     */
+    facebookPixel: { enabled: false, pixelId: "" },
     /*
      * WEBSITE and null, so a storefront that cannot reach this API — or reaches
      * an install where nobody has ever opened the landing page screen — renders

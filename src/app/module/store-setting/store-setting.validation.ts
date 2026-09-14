@@ -1,5 +1,6 @@
 import z from "zod";
 import { parseGoogleFontEmbed } from "./google-font";
+import { HOME_SECTION_KEYS } from "./store-setting.constant";
 
 /**
  * These schemas are the ONLY thing standing between a malformed nav tree and
@@ -250,6 +251,76 @@ const seoUrlOrEmptySchema = z.union([
 
 const seoRobotsGroupSchema = z.object({ index: z.boolean(), follow: z.boolean() }).strict();
 
+/**
+ * Digits only, and stored as an ID rather than as markup.
+ *
+ * Identical to `facebookPixelIdSchema` in landing-page.validation.ts, and
+ * deliberately so: the storefront renders both through the same
+ * `FacebookPixel` component, which writes the bootstrap itself and interpolates
+ * the id through `JSON.stringify`. Merchant input therefore never reaches the
+ * page as a tag, a URL or a script body — but only while this bound holds at
+ * both ends. If one is ever loosened, loosen neither.
+ *
+ * An empty string is accepted and means "clear it": a merchant who pastes an id
+ * and then thinks better of it must be able to take it back out.
+ */
+const shopPixelIdSchema = z
+    .string()
+    .max(20)
+    .refine((value) => value === "" || /^\d{5,20}$/.test(value), {
+        message: "Facebook Pixel ID must be digits only",
+    });
+
+/**
+ * The PUBLIC half of integration configuration.
+ *
+ * What is here is served to every visitor by `GET /settings/public`, so nothing
+ * secret may be added to it. The CAPI access token lives in
+ * `IntegrationCredential`, encrypted, and the two halves of that one feature are
+ * stored apart on purpose — see the column's comment in StoreSetting.prisma.
+ *
+ * Postgres constrains no Json column, so this schema is the ONLY gate. Every
+ * rule the storefront relies on has to be expressed here or it is not enforced
+ * anywhere.
+ */
+export const integrationConfigSchema = z
+    .object({
+        facebookPixel: z
+            .object({
+                enabled: z.boolean(),
+                pixelId: shopPixelIdSchema,
+            })
+            .strict()
+            .optional(),
+
+        facebookCapi: z
+            .object({
+                enabled: z.boolean(),
+                /*
+                 * Meta's debug-panel code, not a credential — it identifies a
+                 * test stream, grants nothing, and whoever is debugging has to
+                 * be able to read it back. The admin renders it masked anyway,
+                 * which is cosmetic rather than a security boundary.
+                 */
+                testMode: z.boolean(),
+                testEventCode: z.string().max(50),
+            })
+            .strict()
+            .refine((value) => !value.testMode || value.testEventCode.trim().length > 0, {
+                /*
+                 * Test mode without a code is the silent failure this rule
+                 * exists for: Meta accepts the events and routes them nowhere
+                 * the merchant is looking, so the integration appears to work
+                 * and reports nothing. Refusing the save is the only moment this
+                 * is cheap to notice.
+                 */
+                message: "A test event code is required while test mode is on",
+                path: ["testEventCode"],
+            })
+            .optional(),
+    })
+    .strict();
+
 export const seoConfigSchema = z
     .object({
         /*
@@ -353,6 +424,61 @@ export const catalogConfigSchema = z
         showQuickView: z.boolean(),
     })
     .strict();
+
+/**
+ * Which sections the storefront homepage is composed of, and in what order.
+ *
+ * An ORDERED array, not a map of booleans: position in the array IS the render
+ * order, which is why order cannot end up internally inconsistent here the way
+ * eleven independent sort integers could.
+ *
+ * `key` is constrained to HOME_SECTION_KEYS — the closed registry in
+ * store-setting.constant.ts. A typo'd key is a 400 rather than a section that
+ * silently never renders, which is the same reason every blob around this one
+ * is `.strict()`.
+ *
+ * NOT `.max()`-capped at the registry length and not required to be complete.
+ * A SHORT LIST IS LEGAL AND MEANINGFUL: reconciliation on read splices any
+ * missing registry section back in, enabled, so a config saved before a section
+ * existed keeps working. Rejecting incomplete lists here would make that
+ * forward-compatibility unreachable — the admin would have to be redeployed in
+ * lockstep with the backend to ever save again.
+ *
+ * The empty array is likewise legal: "every section off" is a real choice a
+ * merchant may make, and the admin warns about it rather than the API refusing
+ * it. See design.md Decision 8.
+ */
+export const homeConfigSchema = z
+    .array(
+        z
+            .object({
+                key: z.enum(HOME_SECTION_KEYS, "Unknown home page section"),
+                enabled: z.boolean(),
+            })
+            .strict(),
+    )
+    .superRefine((sections, ctx) => {
+        /*
+         * A key appearing twice has no single meaning — the two entries can
+         * disagree on `enabled`, and they sit at two different positions, so
+         * "where does this section render" has two answers. Reconciliation
+         * collapses duplicates to the first occurrence on READ so a hand-edited
+         * row still renders, but a duplicate arriving through the API is a bug
+         * in the caller and is rejected rather than silently halved.
+         */
+        const seen = new Set<string>();
+
+        sections.forEach((section, index) => {
+            if (seen.has(section.key)) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [index, "key"],
+                    message: `${section.key} is listed more than once.`,
+                });
+            }
+            seen.add(section.key);
+        });
+    });
 
 export const checkoutConfigSchema = z
     .object({
@@ -725,6 +851,22 @@ export const updateStoreSettingZodSchema = z.object({
     theme: themeSchema.optional(),
 
     /*
+     * The homepage's section list and order.
+     *
+     * `.optional()` alone, NOT `.nullable()`: there is no third state to
+     * express. Omitted means "leave the column untouched" under the partial
+     * upsert, which is what keeps the Home Sections editor from clobbering the
+     * other seven editors' keys. "The merchant wants no sections" is the empty
+     * array, not null — null is reserved for "never configured", which only the
+     * database writes and only by never having been set.
+     *
+     * Like `seoConfig` above, a present value REPLACES the whole column: the
+     * editor sends the complete ordered list, because a partial array would
+     * have no meaning — the array's own order is the data.
+     */
+    homeConfig: homeConfigSchema.optional(),
+
+    /*
      * Optional like every other blob — omitted leaves the column untouched, so
      * the SEO screens do not clobber Site Setting and vice versa. But note the
      * merge does NOT recurse: a present `seoConfig` REPLACES the whole blob, so
@@ -732,6 +874,17 @@ export const updateStoreSettingZodSchema = z.object({
      * its own slice. See seoConfigSchema above.
      */
     seoConfig: seoConfigSchema.optional(),
+
+    /*
+     * Optional like every other blob, with the same non-recursive merge: a
+     * present `integrationConfig` REPLACES the whole column, so the Integrations
+     * page must send both halves it owns rather than one at a time.
+     *
+     * Distinct from the credential endpoints on purpose. This column is public
+     * and is read by the storefront; secrets go to `PUT /integrations/:provider/
+     * credentials`, which no public endpoint can reach. Do not add a token here.
+     */
+    integrationConfig: integrationConfigSchema.optional(),
 
     /*
      * The website ↔ single-landing-page toggle and the page it points at.
