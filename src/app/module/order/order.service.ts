@@ -421,6 +421,26 @@ const deductStockForOrderLines = async (
         }
     }
 
+    /*
+     * NOTE: this writes stock onto Product/ProductVariant, which the storefront
+     * caches under the `products` tag — and it deliberately does NOT call
+     * `revalidateStorefront(PRODUCTS_TAG)`.
+     *
+     * That omission is the decision, not an oversight. Order placement is the
+     * highest-frequency product write there is, so firing here would drop the
+     * whole catalog tag on every single order and keep the cache permanently
+     * cold — paying a full catalog rebuild per sale to make a stock number a
+     * minute fresher. Stock is re-read and re-validated at checkout (the
+     * `Insufficient stock` guard directly above), which is where its freshness
+     * actually protects anything.
+     *
+     * Merchant-initiated inventory edits DO fire it — see `adjustStock` in
+     * `stock.service.ts`. The asymmetry between the two is intentional.
+     *
+     * See `server/openspec/changes/add-storefront-cache-tags/` — design.md
+     * Risks, tasks.md 4.9.
+     */
+
     // Every decrement in one statement. `CASE` keeps the per-row amounts
     // distinct, and summing lets one row take from two lines correctly.
     if (decrements.length > 0) {

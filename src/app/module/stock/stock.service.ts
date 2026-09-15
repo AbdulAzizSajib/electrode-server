@@ -4,6 +4,7 @@ import { AuditAction, NotificationType, Prisma, StockMovementType } from "../../
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { PRODUCTS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { NotificationService } from "../notification/notification.service";
 import { IAdjustStockPayload, ILowStockCheckResult, IReassignStockPayload } from "./stock.interface";
@@ -187,6 +188,16 @@ const adjustStock = async (userId: string, stockId: string, payload: IAdjustStoc
     });
 
     await notifyIfLowStock(stock.productId, stock.variantId, updated.product.name);
+
+    /*
+     * A MERCHANT-INITIATED inventory edit, so it fires — someone corrected a
+     * count in the admin and expects the storefront to agree.
+     *
+     * Deliberately NOT the same as an order's stock decrement, which does not
+     * fire. See the note in `order.service.ts` for why that asymmetry is the
+     * intended one rather than an oversight.
+     */
+    revalidateStorefront(PRODUCTS_TAG);
 
     return updated;
 };

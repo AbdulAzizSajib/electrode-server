@@ -10,6 +10,7 @@ import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { generateUniqueSlug } from "../../utils/slug";
+import { PRODUCTS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { CampaignService } from "../campaign/campaign.service";
 import { TagService } from "../tag/tag.service";
@@ -724,6 +725,13 @@ const createProduct = async (userId: string, payload: ICreateProductPayload) => 
     await AuditLogService.record(userId, AuditAction.CREATE, "Product", product.id, {
         newData: product,
     });
+
+    /*
+     * After the transaction above resolves, never inside it — a rollback must
+     * not invalidate, and re-fetching mid-transaction would re-cache the
+     * pre-commit state for a full window.
+     */
+    revalidateStorefront(PRODUCTS_TAG);
 
     return deriveProductOptions(product);
 };
@@ -1693,6 +1701,8 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
         newData: updated,
     });
 
+    revalidateStorefront(PRODUCTS_TAG);
+
     return updated ? deriveProductOptions(updated) : updated;
 };
 
@@ -1774,6 +1784,14 @@ const deleteProduct = async (userId: string, id: string) => {
             newData: archived,
         });
 
+        /*
+         * The ARCHIVE path fires too. It is not a delete, but it removes the
+         * product from every public listing just as thoroughly — and it is the
+         * branch taken whenever a product has order history, so it is the common
+         * case rather than the exception.
+         */
+        revalidateStorefront(PRODUCTS_TAG);
+
         return { product: archived, archived: true as const, orderItemCount, purchaseOrderItemCount };
     }
 
@@ -1781,6 +1799,8 @@ const deleteProduct = async (userId: string, id: string) => {
 
     const deleted = await prisma.product.delete({ where: { id } });
     await AuditLogService.record(userId, AuditAction.DELETE, "Product", id, { oldData: existing });
+
+    revalidateStorefront(PRODUCTS_TAG);
 
     return { product: deleted, archived: false as const, orderItemCount, purchaseOrderItemCount };
 };
@@ -1806,7 +1826,18 @@ const addProductCategory = async (productId: string, categoryId: string) => {
         throw new AppError(status.CONFLICT, "Product is already tagged with this category");
     }
 
-    return prisma.productCategory.create({ data: { productId, categoryId } });
+    const assignment = await prisma.productCategory.create({ data: { productId, categoryId } });
+
+    /*
+     * Neither the Product nor the Category row changed here — only the join
+     * between them. It still changes which listing a shopper finds the product
+     * under, which is exactly what the `products` tag caches, so this counts as
+     * a product write. Auditing by "does this service call product.update" would
+     * have missed it.
+     */
+    revalidateStorefront(PRODUCTS_TAG);
+
+    return assignment;
 };
 
 const removeProductCategory = async (productId: string, categoryId: string) => {
@@ -1818,9 +1849,13 @@ const removeProductCategory = async (productId: string, categoryId: string) => {
         throw new AppError(status.NOT_FOUND, "Product is not tagged with this category");
     }
 
-    return prisma.productCategory.delete({
+    const removed = await prisma.productCategory.delete({
         where: { productId_categoryId: { productId, categoryId } },
     });
+
+    revalidateStorefront(PRODUCTS_TAG);
+
+    return removed;
 };
 
 export const ProductService = {

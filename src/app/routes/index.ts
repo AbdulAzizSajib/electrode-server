@@ -36,6 +36,7 @@ import { ReviewNestedRoutes, ReviewRoutes } from "../module/review/review.route"
 import { ShipmentRoutes } from "../module/shipment/shipment.route";
 import { StockMovementRoutes, StockRoutes } from "../module/stock/stock.route";
 import { SeoRoutes } from "../module/seo/seo.route";
+import { StorageRoutes } from "../module/storage/storage.route";
 import { StoreSettingRoutes } from "../module/store-setting/store-setting.route";
 import { FontRoutes } from "../module/font/font.route";
 import { SupplierRoutes } from "../module/supplier/supplier.route";
@@ -116,6 +117,10 @@ router.use("/seo", SeoRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);
+// Read-only and derived — reports how much of the database and of Cloudinary
+// the shop is actually using. A single literal segment, so no ordering
+// constraint. See storage.route.ts for why it is admin-gated.
+router.use("/storage", StorageRoutes);
 // OWNER only, not ADMIN — a backup carries every customer and credential row,
 // and a restore rewrites the whole shop. See backup.route.ts.
 router.use("/backup", BackupRoutes);

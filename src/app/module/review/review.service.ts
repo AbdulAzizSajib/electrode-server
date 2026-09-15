@@ -10,6 +10,7 @@ import {
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { PRODUCTS_TAG, REVIEWS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
@@ -43,6 +44,27 @@ const RATING_VALUES = [1, 2, 3, 4, 5] as const;
  * Must be called inside the same transaction as the review mutation so the
  * aggregate can never disagree with the reviews a shopper can actually read.
  */
+/**
+ * Drops the storefront's cached review reads, and its product reads with them.
+ *
+ * TWO tags, because nearly every write here runs `recalculateProductRating`,
+ * which writes `averageRating`/`reviewCount` onto the Product row — and those
+ * render on product cards and listings, cached under `products`. Firing only
+ * `reviews` would update the review list while leaving the star rating above it
+ * stale, which is more confusing than either being uniformly old.
+ *
+ * Called AFTER the enclosing transaction resolves, never inside it: firing from
+ * within means a rollback still invalidates, and the storefront can re-cache the
+ * pre-commit state before the commit lands.
+ *
+ * An explicit cross-resource fire, not an inferred one — the revalidate route
+ * knows nothing about which resource embeds which (design.md Decision 6).
+ */
+const revalidateReviews = () => {
+    revalidateStorefront(REVIEWS_TAG);
+    revalidateStorefront(PRODUCTS_TAG);
+};
+
 const recalculateProductRating = async (tx: Prisma.TransactionClient, productId: string) => {
     const aggregate = await tx.review.aggregate({
         where: { productId, status: ReviewStatus.APPROVED },
@@ -92,7 +114,7 @@ const createReview = async (userId: string, productId: string, payload: ICreateR
         throw new AppError(status.CONFLICT, "You have already reviewed this product");
     }
 
-    return prisma.review.create({
+    const review = await prisma.review.create({
         data: {
             productId,
             customerId: customer.id,
@@ -102,6 +124,16 @@ const createReview = async (userId: string, productId: string, payload: ICreateR
         },
         include: REVIEW_INCLUDE,
     });
+
+    /*
+     * A new review lands PENDING, so it is not publicly visible yet and the
+     * aggregate has not moved. Fired anyway: the shopper who just submitted it
+     * should see their own submission reflected rather than a list that looks
+     * like the post failed.
+     */
+    revalidateReviews();
+
+    return review;
 };
 
 /**
@@ -203,6 +235,14 @@ const updateReviewStatus = async (id: string, payload: IUpdateReviewStatusPayloa
         return review;
     });
 
+    /*
+     * The moderation path, and the one this change most needed to cover: a
+     * review's status decides whether it is publicly visible AT ALL, so before
+     * this an approval simply did not appear for up to the cache window, and
+     * read to the merchant as an approval that had failed.
+     */
+    revalidateReviews();
+
     if (existing.customer.userId) {
         await NotificationService.createNotification(
             existing.customer.userId,
@@ -223,6 +263,9 @@ const replyToReview = async (id: string, payload: IAdminReplyPayload) => {
         data: { adminReply: payload.adminReply },
         include: REVIEW_INCLUDE,
     });
+
+    // The reply renders beneath the review on the product page.
+    revalidateReviews();
 
     if (existing.customer.userId) {
         await NotificationService.createNotification(
@@ -283,8 +326,8 @@ const updateMyReview = async (
     // to PENDING and the aggregate is recomputed without it.
     const shouldResetToPending = existing.status === ReviewStatus.APPROVED;
 
-    return prisma.$transaction(async (tx) => {
-        const updated = await tx.review.update({
+    const updated = await prisma.$transaction(async (tx) => {
+        const review = await tx.review.update({
             where: { id: reviewId },
             data: {
                 ...payload,
@@ -295,8 +338,12 @@ const updateMyReview = async (
 
         await recalculateProductRating(tx, existing.productId);
 
-        return updated;
+        return review;
     });
+
+    revalidateReviews();
+
+    return updated;
 };
 
 const deleteMyReview = async (userId: string, reviewId: string) => {
@@ -306,6 +353,8 @@ const deleteMyReview = async (userId: string, reviewId: string) => {
         await tx.review.delete({ where: { id: reviewId } });
         await recalculateProductRating(tx, existing.productId);
     });
+
+    revalidateReviews();
 };
 
 /**
@@ -328,6 +377,8 @@ const deleteReview = async (userId: string, reviewId: string) => {
     await AuditLogService.record(userId, AuditAction.DELETE, "Review", reviewId, {
         oldData: existing,
     });
+
+    revalidateReviews();
 };
 
 export const ReviewService = {

@@ -4,7 +4,26 @@ import { CampaignPlacement, CampaignStatus } from "../../../generated/prisma/cli
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { CAMPAIGNS_TAG, PRODUCTS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { IActiveCampaignDiscount, ICreateCampaignPayload, IUpdateCampaignPayload } from "./campaign.interface";
+
+/**
+ * Drops the storefront's cached campaign reads, and its product reads with them.
+ *
+ * TWO tags, deliberately. `campaigns` covers the Deal of the Week section; but a
+ * campaign write also changes `campaignPrice` on every product it discounts, and
+ * those are cached under `products`. Firing only the first removes the countdown
+ * while leaving the discounted price on the product cards — an inconsistency
+ * worse than the staleness it fixes.
+ *
+ * This is an explicit cross-resource fire, not an inferred one: the revalidate
+ * route knows nothing about which resource embeds which, so the dependency is
+ * stated here where it is true (design.md Decision 6).
+ */
+const revalidateCampaigns = () => {
+    revalidateStorefront(CAMPAIGNS_TAG);
+    revalidateStorefront(PRODUCTS_TAG);
+};
 
 const CAMPAIGN_INCLUDE = {
     products: { include: { product: { select: { id: true, name: true, slug: true } } } },
@@ -31,7 +50,7 @@ const activeCampaignWhere = (now: Date) => ({
 const createCampaign = async (payload: ICreateCampaignPayload) => {
     const { products, startsAt, endsAt, ...rest } = payload;
 
-    return prisma.campaign.create({
+    const campaign = await prisma.campaign.create({
         data: {
             ...rest,
             startsAt: startsAt ? new Date(startsAt) : undefined,
@@ -40,6 +59,10 @@ const createCampaign = async (payload: ICreateCampaignPayload) => {
         },
         include: CAMPAIGN_INCLUDE,
     });
+
+    revalidateCampaigns();
+
+    return campaign;
 };
 
 const getAdminCampaigns = async (queryParams: IQueryParams) => {
@@ -66,7 +89,7 @@ const updateCampaign = async (id: string, payload: IUpdateCampaignPayload) => {
 
     const { products, startsAt, endsAt, ...rest } = payload;
 
-    return prisma.$transaction(async (tx) => {
+    const campaign = await prisma.$transaction(async (tx) => {
         await tx.campaign.update({
             where: { id },
             data: {
@@ -87,12 +110,32 @@ const updateCampaign = async (id: string, payload: IUpdateCampaignPayload) => {
 
         return tx.campaign.findUniqueOrThrow({ where: { id }, include: CAMPAIGN_INCLUDE });
     });
+
+    /*
+     * AFTER the transaction resolves, never inside it. Firing from within means
+     * a rollback still invalidates — and worse, the storefront can re-fetch and
+     * re-cache the pre-transaction state before the commit lands, pinning the
+     * old campaign in cache for a full window.
+     */
+    revalidateCampaigns();
+
+    return campaign;
 };
 
 const deleteCampaign = async (id: string) => {
     await getCampaignOrThrow(id);
 
-    return prisma.campaign.delete({ where: { id } });
+    const campaign = await prisma.campaign.delete({ where: { id } });
+
+    /*
+     * The path that prompted this whole change. `DealOfWeek` hides itself when a
+     * campaign's deadline PASSES, which a deleted campaign's never does — so
+     * without this the section kept rendering its countdown until the cache
+     * expired on its own.
+     */
+    revalidateCampaigns();
+
+    return campaign;
 };
 
 /**

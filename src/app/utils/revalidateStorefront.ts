@@ -35,11 +35,77 @@ export const STORE_SETTINGS_TAG = "store-settings";
  */
 export const SEO_CONFIG_TAG = "seo-config";
 
+/*
+ * The catalog and merchandising tags.
+ *
+ * Each mirrors a `*_CACHE_TAG` constant in the storefront's `src/services/`, and
+ * the two are matched only by these strings — the packages never import each
+ * other. A drift between them is SILENT: the storefront answers 400 "Unknown
+ * tag", and this module only `console.warn`s it, so the merchant sees the
+ * pre-tag behaviour with no error anywhere they would look.
+ *
+ * `scripts/verify-revalidate-tags.ts` asserts the two sets are equal. Run it
+ * after touching any name here.
+ */
+
+/** Mirrors the storefront's CAMPAIGNS_CACHE_TAG. */
+export const CAMPAIGNS_TAG = "campaigns";
+
+/** Mirrors the storefront's BANNERS_CACHE_TAG. */
+export const BANNERS_TAG = "banners";
+
+/** Mirrors the storefront's BRANDS_CACHE_TAG. */
+export const BRANDS_TAG = "brands";
+
+/** Mirrors the storefront's CATEGORIES_CACHE_TAG. */
+export const CATEGORIES_TAG = "categories";
+
+/** Mirrors the storefront's PAGES_CACHE_TAG. */
+export const PAGES_TAG = "pages";
+
+/**
+ * Mirrors the storefront's PRODUCTS_CACHE_TAG.
+ *
+ * Fired by the product service, and deliberately ALSO by campaign and review —
+ * both write values the product payload carries (`campaignPrice`, the aggregate
+ * rating), so a product cached under this tag would otherwise keep showing a
+ * deleted campaign's discount.
+ *
+ * NOT fired by order placement's stock decrement. Dropping the whole catalog tag
+ * on every order would keep the cache permanently cold; stock is re-read at
+ * checkout, which is where its freshness actually matters. Merchant-initiated
+ * inventory edits DO fire it.
+ */
+export const PRODUCTS_TAG = "products";
+
+/** Mirrors the storefront's REVIEWS_CACHE_TAG. */
+export const REVIEWS_TAG = "reviews";
+
 /** Short: this is a background hint, not something worth holding a socket for. */
 const TIMEOUT_MS = 3000;
 
 /** So an unconfigured deployment says so once, not on every settings save. */
 let warnedUnconfigured = false;
+
+/**
+ * Whether revalidation can actually reach the storefront — both a secret and a
+ * base URL are present.
+ *
+ * Exists so "is revalidation configured?" is answerable without generating live
+ * traffic and reading logs for a warning that is emitted at most once. That
+ * mattered little when this backed one resource; with twelve, an unset env var
+ * presents as "the whole admin panel takes minutes to take effect", which reads
+ * as a performance problem and is a one-line configuration gap.
+ *
+ * Reports reachability only — a `true` here does not mean the storefront is up,
+ * that the secrets on the two sides match, or that any particular tag is
+ * allow-listed.
+ */
+export const isStorefrontRevalidationConfigured = (): boolean =>
+    Boolean(
+        envVars.STOREFRONT_REVALIDATE_SECRET &&
+            (envVars.STOREFRONT_URL || envVars.FRONTEND_URL),
+    );
 
 export const revalidateStorefront = (tag: string): void => {
     const secret = envVars.STOREFRONT_REVALIDATE_SECRET;

@@ -37,7 +37,7 @@ const record = async (
     }
 };
 
-/** Read-only — audit logs are an immutable trail written by other endpoints, never user-authored content; there is deliberately no create/update/delete here. */
+/** Written by other endpoints, never user-authored content — `record` above is the only create path. */
 const getAuditLogs = async (queryParams: IQueryParams) => {
     const queryBuilder = new QueryBuilder(prisma.auditLog, queryParams, {
         // `createdAt` is here so the admin's date-range filter actually applies: QueryBuilder
@@ -56,7 +56,55 @@ const getAuditLogs = async (queryParams: IQueryParams) => {
         .execute();
 };
 
+/**
+ * Removes audit entries by id, and records having done so.
+ *
+ * ## Read this before extending it
+ *
+ * The trail was append-only by spec, and that requirement was dropped
+ * deliberately (see `api/support-and-admin`, "Audit logs are admin-scoped and
+ * prunable") so a merchant could keep the table from growing without bound.
+ * The cost is real and worth stating plainly: an actor who can delete audit
+ * entries can delete the evidence of what they did. That is the whole reason
+ * the original requirement existed.
+ *
+ * Three things hold the remaining line, and none of them are decoration:
+ *
+ * 1. **OWNER only.** ADMIN can read the trail but not prune it. Enforced on the
+ *    route — a STAFF or ADMIN token gets 403 before reaching this function.
+ * 2. **The purge is itself audited.** A `DELETE` entry naming the purged ids is
+ *    written after the fact, so "rows vanished" is always distinguishable from
+ *    "rows were never written". Deleting that record needs a second purge,
+ *    which writes another one; there is no fixed point where the trail goes
+ *    quiet on its own.
+ * 3. **Explicit ids only.** No date-range or filter purge, so there is no
+ *    single call that empties the table.
+ *
+ * If you are adding a filtered or scheduled purge later, keep (2): a purge that
+ * does not record itself turns every future gap in the trail into an
+ * unanswerable question.
+ */
+const deleteAuditLogs = async (userId: string, ids: string[]) => {
+    const { count } = await prisma.auditLog.deleteMany({ where: { id: { in: ids } } });
+
+    /*
+     * After the delete, not inside a transaction with it — same posture as
+     * `record` above. If this write fails the purge still stands; the entry is
+     * a record of what happened, not a precondition for it.
+     *
+     * `newData` carries the ids rather than the deleted rows themselves:
+     * copying the rows would make the purge a no-op that doubles storage, which
+     * defeats the point of pruning.
+     */
+    await record(userId, AuditAction.DELETE, "AuditLog", undefined, {
+        newData: { purgedIds: ids, deleted: count },
+    });
+
+    return { deleted: count };
+};
+
 export const AuditLogService = {
     record,
     getAuditLogs,
+    deleteAuditLogs,
 };

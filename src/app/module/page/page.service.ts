@@ -4,6 +4,7 @@ import AppError from "../../errorHelpers/AppError";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { PAGES_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { isReservedSlug, slugifyTitle } from "./page.constant";
 import { ICreatePagePayload, IPageSummary, IUpdatePagePayload } from "./page.interface";
@@ -76,6 +77,8 @@ const createPage = async (userId: string | undefined, payload: ICreatePagePayloa
 
     await AuditLogService.record(userId, AuditAction.CREATE, "Page", page.id, { newData: page });
 
+    revalidateStorefront(PAGES_TAG);
+
     return page;
 };
 
@@ -105,6 +108,14 @@ const updatePage = async (
         newData: page,
     });
 
+    /*
+     * Covers the status flip as much as an edit: publishing a draft and
+     * unpublishing a live page both arrive here as a PATCH, and both change what
+     * `/[slug]` renders — an unpublished page must stop resolving, not linger
+     * until the window elapses.
+     */
+    revalidateStorefront(PAGES_TAG);
+
     return page;
 };
 
@@ -114,6 +125,8 @@ const deletePage = async (userId: string | undefined, id: string) => {
     const page = await prisma.page.delete({ where: { id } });
 
     await AuditLogService.record(userId, AuditAction.DELETE, "Page", id, { oldData: existing });
+
+    revalidateStorefront(PAGES_TAG);
 
     return page;
 };

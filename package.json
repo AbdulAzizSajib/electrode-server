@@ -43,6 +43,13 @@
   "license": "ISC",
   "packageManager": "pnpm@10.20.0",
   "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  },
   "dependencies": {
     "@prisma/adapter-pg": "7.3.0",
     "@prisma/client": "7.3.0",

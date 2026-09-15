@@ -4,6 +4,7 @@ import AppError from "../../errorHelpers/AppError";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { BANNERS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { IBannerProductSummary, ICreateBannerPayload, IPublicBanner, IUpdateBannerPayload } from "./banner.interface";
 import { checkBannerTypeContract } from "./banner.validation";
 
@@ -83,7 +84,7 @@ const createBanner = async (payload: ICreateBannerPayload) => {
         await assertProductExists(productId);
     }
 
-    return prisma.banner.create({
+    const banner = await prisma.banner.create({
         data: {
             ...rest,
             ...(productId ? { productId } : {}),
@@ -91,6 +92,10 @@ const createBanner = async (payload: ICreateBannerPayload) => {
             endsAt: endsAt ? new Date(endsAt) : undefined,
         },
     });
+
+    revalidateStorefront(BANNERS_TAG);
+
+    return banner;
 };
 
 /** Public: ACTIVE and currently within its startsAt/endsAt window only — per `api/marketing` spec. */
@@ -155,7 +160,7 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
         throw new AppError(status.BAD_REQUEST, violations.join("; "));
     }
 
-    return prisma.banner.update({
+    const banner = await prisma.banner.update({
         where: { id },
         data: {
             ...rest,
@@ -164,12 +169,20 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
             endsAt: endsAt ? new Date(endsAt) : undefined,
         },
     });
+
+    revalidateStorefront(BANNERS_TAG);
+
+    return banner;
 };
 
 const deleteBanner = async (id: string) => {
     await getBannerOrThrow(id);
 
-    return prisma.banner.delete({ where: { id } });
+    const banner = await prisma.banner.delete({ where: { id } });
+
+    revalidateStorefront(BANNERS_TAG);
+
+    return banner;
 };
 
 export const BannerService = {

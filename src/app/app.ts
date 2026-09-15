@@ -3,12 +3,12 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { Application, Request, Response } from "express";
 // import cron from "node-cron";
-import path from "path";
 import qs from "qs";
 import { envVars } from "./config/env";
 import { auth } from "./lib/auth";
 import { globalErrorHandler } from "./middleware/globalErrorHandler";
 import { notFound } from "./middleware/notFound";
+import { TEMPLATES_DIR } from "./utils/templatePath";
 
 import { IndexRoutes } from "./routes";
 
@@ -26,7 +26,10 @@ app.set("query parser", (str : string) => qs.parse(str));
 app.set("trust proxy", 1);
 
 app.set("view engine", "ejs");
-app.set("views",path.resolve(process.cwd(), `src/app/templates`) )
+// The .ejs views are never compiled, so they live under `src/` in every
+// environment and reach the Vercel function via `includeFiles` in vercel.json.
+// See utils/templatePath.ts — that path and vercel.json must stay in step.
+app.set("views", TEMPLATES_DIR)
 
 /*
  * The three deployed origins, plus the local dev ports.
@@ -95,7 +98,7 @@ app.use("/api/v1", IndexRoutes);
 app.get('/', async (req: Request, res: Response) => {
     res.status(201).json({
         success: true,
-        message: 'pmsp api is working',
+        message: 'Ecom Server api is working',
     })
 });
 

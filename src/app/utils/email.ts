@@ -2,8 +2,8 @@
 import ejs from "ejs";
 // import status from "http-status";
 import nodemailer from "nodemailer";
-import path from "path";
 import { envVars } from "../config/env";
+import { templateFile } from "./templatePath";
 // import AppError from "../errorHelpers/AppError";
 
 const transporter = nodemailer.createTransport({
@@ -32,7 +32,7 @@ export const sendEmail = async ({subject, templateData, templateName, to, attach
    
     
     try {
-        const templatePath = path.resolve(process.cwd(), `src/app/templates/${templateName}.ejs`);
+        const templatePath = templateFile(templateName);
 
         const html = await ejs.renderFile(templatePath, templateData);
 

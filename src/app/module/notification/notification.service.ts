@@ -112,10 +112,50 @@ const markAllAsRead = async (userId: string) => {
     return { success: true };
 };
 
+/**
+ * Removes a caller's own notifications by id.
+ *
+ * `userId` is part of the WHERE clause rather than checked beforehand: a
+ * `findMany`-then-`deleteMany` would be a TOCTOU gap, and more importantly a
+ * separate check invites a future edit that drops it. Scoping the delete itself
+ * means an id belonging to another user matches nothing — there is no code path
+ * here that can reach another user's rows, which is what
+ * `api/support-and-admin`'s per-user notification rule requires.
+ *
+ * The count is returned so the caller can tell a partial hit from a complete
+ * one. Deleting an id that is already gone is deliberately NOT an error: two
+ * admins clearing the same list, or a double-submitted request, should both
+ * settle rather than surface a failure for work that is already done.
+ */
+const deleteNotifications = async (userId: string, ids: string[]) => {
+    const { count } = await prisma.notification.deleteMany({
+        where: { id: { in: ids }, userId },
+    });
+
+    return { deleted: count };
+};
+
+/**
+ * Clears every notification the caller has already read.
+ *
+ * Unread ones are deliberately left behind: they are the ones the user has not
+ * seen yet, so a "clear" that silently discarded them would lose the only
+ * signal the feature exists to deliver.
+ */
+const deleteAllRead = async (userId: string) => {
+    const { count } = await prisma.notification.deleteMany({
+        where: { userId, isRead: true },
+    });
+
+    return { deleted: count };
+};
+
 export const NotificationService = {
     createNotification,
     notifyOwnersAndAdmins,
     getMyNotifications,
     markAsRead,
     markAllAsRead,
+    deleteNotifications,
+    deleteAllRead,
 };

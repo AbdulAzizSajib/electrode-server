@@ -6,7 +6,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "includeFiles": "dist/app/templates/**"
+      "includeFiles": "src/app/templates/**"
     }
   },
   "rewrites": [

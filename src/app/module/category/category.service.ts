@@ -6,6 +6,7 @@ import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { generateUniqueSlug } from "../../utils/slug";
+import { CATEGORIES_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { ICreateCategoryPayload, IUpdateCategoryPayload } from "./category.interface";
 
@@ -73,6 +74,13 @@ const createCategory = async (userId: string, payload: ICreateCategoryPayload) =
     await AuditLogService.record(userId, AuditAction.CREATE, "Category", category.id, {
         newData: category,
     });
+
+    /*
+     * The category tree renders in the header on EVERY page, and the storefront
+     * caches it under one tag shared by the menu and the homepage grid — so this
+     * single fire refreshes both.
+     */
+    revalidateStorefront(CATEGORIES_TAG);
 
     return category;
 };
@@ -208,6 +216,8 @@ const updateCategory = async (userId: string, id: string, payload: IUpdateCatego
         newData: updated,
     });
 
+    revalidateStorefront(CATEGORIES_TAG);
+
     return updated;
 };
 
@@ -224,6 +234,8 @@ const deleteCategory = async (userId: string, id: string) => {
     const deleted = await prisma.category.delete({ where: { id } });
 
     await AuditLogService.record(userId, AuditAction.DELETE, "Category", id, { oldData: existing });
+
+    revalidateStorefront(CATEGORIES_TAG);
 
     return deleted;
 };

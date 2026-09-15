@@ -6,6 +6,7 @@ import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { generateUniqueSlug } from "../../utils/slug";
+import { BRANDS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import {
     IBulkCreateBrandsResult,
@@ -23,6 +24,8 @@ const createBrand = async (userId: string, payload: ICreateBrandPayload) => {
     const brand = await prisma.brand.create({ data: { ...payload, slug } });
 
     await AuditLogService.record(userId, AuditAction.CREATE, "Brand", brand.id, { newData: brand });
+
+    revalidateStorefront(BRANDS_TAG);
 
     return brand;
 };
@@ -78,6 +81,15 @@ const bulkCreateBrands = async (userId: string, names: string[]): Promise<IBulkC
         await AuditLogService.record(userId, AuditAction.CREATE, "Brand", undefined, {
             newData: { bulkCreated: created.map((b) => b.id) },
         });
+
+        /*
+         * ONCE for the whole batch, not once per brand inside the loop above.
+         * The tag is idempotent, so firing per row would send N requests for one
+         * merchant action and buy nothing. Guarded by the same `created.length`
+         * as the audit entry: a batch where every name was skipped changed
+         * nothing, so there is nothing to invalidate.
+         */
+        revalidateStorefront(BRANDS_TAG);
     }
 
     return { created, skipped };
@@ -151,6 +163,8 @@ const updateBrand = async (userId: string, id: string, payload: IUpdateBrandPayl
         newData: updated,
     });
 
+    revalidateStorefront(BRANDS_TAG);
+
     return updated;
 };
 
@@ -165,6 +179,8 @@ const deleteBrand = async (userId: string, id: string) => {
     const deleted = await prisma.brand.delete({ where: { id } });
 
     await AuditLogService.record(userId, AuditAction.DELETE, "Brand", id, { oldData: existing });
+
+    revalidateStorefront(BRANDS_TAG);
 
     return deleted;
 };
