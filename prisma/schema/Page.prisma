@@ -5,7 +5,7 @@
 /// nothing more. Sections, blocks and per-locale variants are out of scope (see
 /// add-admin-ui-cms-section design.md, Non-Goals).
 model Page {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   title String
 

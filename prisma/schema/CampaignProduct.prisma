@@ -1,5 +1,5 @@
 model CampaignProduct {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)

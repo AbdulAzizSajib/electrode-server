@@ -11,7 +11,7 @@
 ///
 /// See openspec/changes/add-steadfast-courier-integration, design.md Decision 11.
 model CourierTrackingEvent {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   shipmentId String
   shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)

@@ -1,5 +1,5 @@
 model ReturnRequest {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   returnNumber String @unique
 

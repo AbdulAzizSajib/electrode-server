@@ -41,7 +41,7 @@ const reachable = await fetch(`${BASE}/settings/public`)
 
 if (!reachable) {
     console.error(
-        `\nThe server is not answering on ${BASE}. Start it with \`pnpm --filter ./server dev\` and run this again.\n`,
+        `\nThe server is not answering on ${BASE}. Start it with \`npm run dev --workspace server\` and run this again.\n`,
     );
     process.exit(1);
 }

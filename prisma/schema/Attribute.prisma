@@ -11,7 +11,7 @@
 /// ProductVariantOptionValue.
 /// See align-admin-catalog-with-reference design.md.
 model Attribute {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   /// The merchant's own label. Deliberately unconstrained beyond length: the
   /// storefront renders whatever is here, so a new kind of attribute needs no
@@ -50,7 +50,7 @@ enum AttributePresentation {
 /// the product service enforces it on write and the storefront resolver treats
 /// a violation as unavailable rather than crashing.
 model AttributeValue {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   attributeId String
   attribute   Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)

@@ -96,7 +96,7 @@ export const auth = betterAuth({
             overrideDefaultEmailVerification: true,
             // The parameter type is deliberately left to be inferred from
             // better-auth's own signature rather than spelled out here, so it
-            // cannot go stale against the library and break `tsc` (so `pnpm
+            // cannot go stale against the library and break `tsc` (so `npm run
             // build`). As of better-auth 1.4.18 the plugin emits exactly
             // "sign-in" | "email-verification" | "forget-password"; changing
             // an existing address is NOT one of them - that flow is the

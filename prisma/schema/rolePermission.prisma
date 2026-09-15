@@ -1,5 +1,5 @@
 model RolePermission {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   roleId       String
   permissionId String

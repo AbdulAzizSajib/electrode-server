@@ -7,7 +7,7 @@
 /// deletes that hit the wrong tag.
 /// See align-admin-catalog-with-reference design.md.
 model Tag {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   /// Stored as the merchant typed it; uniqueness is enforced case-insensitively
   /// by the service, so "Wireless" cannot be created beside "wireless".

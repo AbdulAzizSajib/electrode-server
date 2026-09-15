@@ -9,7 +9,7 @@
 /// against this purchase order on this date". That is enough to make the
 /// Payment history report honest and to compute an outstanding balance.
 model SupplierPayment {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   purchaseOrderId String
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)

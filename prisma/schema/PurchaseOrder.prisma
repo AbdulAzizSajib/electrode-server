@@ -1,5 +1,5 @@
 model PurchaseOrder {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   purchaseNumber String @unique
 

@@ -3,7 +3,7 @@
 /// invariant is enforced by the application layer, not the database
 /// (Prisma has no cross-column CHECK constraint), per design.md.
 model Cart {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   customerId String?   @unique
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)

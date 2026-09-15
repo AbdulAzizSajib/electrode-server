@@ -1,5 +1,5 @@
 model WishlistItem {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   wishlistId String
   wishlist   Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)

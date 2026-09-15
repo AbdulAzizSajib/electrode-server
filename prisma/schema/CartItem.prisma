@@ -1,5 +1,5 @@
 model CartItem {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   cartId String
   cart   Cart   @relation(fields: [cartId], references: [id], onDelete: Cascade)

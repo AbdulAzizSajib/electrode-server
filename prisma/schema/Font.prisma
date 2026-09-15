@@ -30,7 +30,7 @@
 /// See openspec/changes/add-font-library-and-admin-font, design.md Decisions
 /// 1, 2, 4 and 5.
 model Font {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   /// Human-readable and with spaces — "Open Sans", never "Open+Sans". The
   /// parser decodes the `+` Google uses in the query string, and this is the

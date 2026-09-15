@@ -10,7 +10,7 @@
 /// the two new admin sections are the same shape, and a developer who has read
 /// one can maintain the other.
 model Testimonial {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   quote String @db.Text
 

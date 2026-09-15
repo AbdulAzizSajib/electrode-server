@@ -1,7 +1,7 @@
 /**
  * Checks that the backend and the storefront agree on every cache tag name.
  *
- * The two live in separate pnpm workspaces that never import each other, so a
+ * The two live in separate npm workspaces that never import each other, so a
  * tag is a bare string duplicated across a package boundary: the backend fires
  * `"campaigns"` and the storefront allow-lists `"campaigns"`, and nothing
  * enforces the match.

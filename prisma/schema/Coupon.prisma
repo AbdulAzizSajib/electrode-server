@@ -1,5 +1,5 @@
 model Coupon {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   code        String  @unique
   description String?

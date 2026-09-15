@@ -21,7 +21,7 @@
 /// persist an unvalidated value. This is the same contract StoreSetting's Json
 /// columns carry, for the same reason.
 model LandingPage {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   /// The merchant's own name for the campaign, shown in the admin list only.
   /// Never rendered on the storefront — `headline` is what a shopper reads.

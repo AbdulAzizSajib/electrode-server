@@ -1,5 +1,5 @@
 model ReturnItem {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   returnRequestId String
   returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)

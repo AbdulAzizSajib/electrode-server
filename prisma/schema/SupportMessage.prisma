@@ -1,5 +1,5 @@
 model SupportMessage {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   ticketId String
   ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)

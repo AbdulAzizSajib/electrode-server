@@ -10,7 +10,7 @@
 /// comments or scheduled publishing. A post is content, one media slot and a
 /// status — the same shape Page is content and a status.
 model BlogPost {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   title String
 

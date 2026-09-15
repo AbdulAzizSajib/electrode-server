@@ -8,7 +8,7 @@
 /// product is taxed on the discounted amount rather than the list price.
 /// See align-admin-catalog-with-reference design.md.
 model TaxRule {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   name String @unique
 

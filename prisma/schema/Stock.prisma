@@ -1,5 +1,5 @@
 model Stock {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)

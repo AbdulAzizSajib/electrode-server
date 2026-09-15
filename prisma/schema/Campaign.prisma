@@ -1,5 +1,5 @@
 model Campaign {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   name        String
   description String?

@@ -1,5 +1,5 @@
 model AuditLog {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)

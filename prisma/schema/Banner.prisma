@@ -1,5 +1,5 @@
 model Banner {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   type      BannerType      @default(IMAGE)
   placement BannerPlacement

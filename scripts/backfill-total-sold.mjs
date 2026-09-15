@@ -12,8 +12,8 @@
  * for instance after a direct database write to Payment.status, which the
  * live path in payment.service.ts cannot observe.
  *
- *   pnpm backfill:total-sold             apply
- *   pnpm backfill:total-sold --dry-run   report only, change nothing
+ *   npm run backfill:total-sold             apply
+ *   npm run backfill:total-sold -- --dry-run   report only, change nothing
  *
  * Run under tsx, not plain node: this project's Prisma client generates
  * TypeScript (src/generated/prisma/*.ts) with no compiled .js alongside it, so

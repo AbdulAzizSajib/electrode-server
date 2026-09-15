@@ -1,5 +1,5 @@
 model OrderItem {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   orderId String
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)

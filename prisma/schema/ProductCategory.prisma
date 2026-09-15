@@ -4,7 +4,7 @@
 /// A product with no rows here is still fully discoverable via its
 /// primary category exactly as before this model existed.
 model ProductCategory {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)

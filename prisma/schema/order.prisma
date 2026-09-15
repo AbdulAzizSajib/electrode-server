@@ -1,5 +1,5 @@
 model Order {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   orderNumber String @unique
 

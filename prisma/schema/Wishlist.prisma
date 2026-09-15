@@ -1,7 +1,7 @@
 /// One wishlist per Customer. No guest wishlist - login is required
 /// (unlike Cart, which supports guests via `guestToken`).
 model Wishlist {
-  id String @id @default(cuid())
+  id String @id @default(uuid(7))
 
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
