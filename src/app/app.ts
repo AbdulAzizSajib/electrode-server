@@ -58,7 +58,6 @@ const allowedOrigins = [
     "http://localhost:5174",
     "https://ecomsite-admin.vercel.app",
     "https://ecomsite-ui.vercel.app",
-    "https://ecomsite-ui.vercel.app",
     "https://ecomsite-server.vercel.app"
 
 ].filter(Boolean) as string[];

@@ -2,7 +2,7 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": ".",
-  "installCommand": "npm install",
+  "installCommand": "npm install --production=false --include=dev",
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
