@@ -3,6 +3,7 @@ import AppError from "../../errorHelpers/AppError";
 import { ChargeType } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 import { StoreSettingService } from "../store-setting/store-setting.service";
+import type { ICheckoutConfig } from "../store-setting/store-setting.interface";
 
 /**
  * Checkout pricing: what tax and delivery cost, given a set of lines and the
@@ -182,8 +183,12 @@ export const quoteTax = async (
  *     here and not only in the storefront, so switching it off actually closes
  *     the door.
  */
-export const quoteDelivery = async (optionKey: string): Promise<IDeliveryQuote> => {
-    const { delivery } = await StoreSettingService.getCheckoutConfig();
+export const quoteDelivery = async (
+    optionKey: string,
+    /** The config the caller already holds; read from the settings row when omitted. */
+    checkoutConfig?: ICheckoutConfig,
+): Promise<IDeliveryQuote> => {
+    const { delivery } = checkoutConfig ?? (await StoreSettingService.getCheckoutConfig());
 
     if (delivery.options.length === 0) {
         throw new AppError(
@@ -255,6 +260,13 @@ export interface IChargeQuoteInput {
      * to it.
      */
     shippingOverride?: IShippingOverride;
+    /**
+     * The checkout config, when the caller has already read the settings row —
+     * order placement does, once, for everything. Omitted, `quoteDelivery`
+     * reads it itself. It is the same parsed config either way; passing it only
+     * saves the round trip.
+     */
+    checkoutConfig?: ICheckoutConfig;
 }
 
 export interface IChargeQuote {
@@ -324,7 +336,7 @@ export const quoteCharges = async (input: IChargeQuoteInput): Promise<IChargeQuo
 
     const [tax, delivery] = await Promise.all([
         quoteTax(input.lines, input.discountAmount),
-        quoteDelivery(input.deliveryOptionKey),
+        quoteDelivery(input.deliveryOptionKey, input.checkoutConfig),
     ]);
 
     /*

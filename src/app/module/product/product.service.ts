@@ -1063,15 +1063,38 @@ const searchProducts = async (term: string, limit?: number): Promise<ISearchedPr
         FROM "Product" p
         LEFT JOIN "Brand" b ON b.id = p."brandId"
         WHERE p.status = ${ProductStatus.ACTIVE}::"ProductStatus"
-          AND (
-                lower(p.name) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
-             -- Trigram fallback, in the same clause rather than a second query:
-             -- one round trip covers both exact and approximate matching.
-             OR p.name % ${trimmed}
-             OR COALESCE(b.name, '') % ${trimmed}
+          -- WHICH products match is decided by two index-servable arms, one
+          -- per table; HOW WELL they match is still scored above, on the
+          -- matches alone.
+          --
+          -- This used to be one OR of lower(col) LIKE ... across Product and
+          -- the joined Brand. lower() hides the column from any index, and an
+          -- OR spanning two tables cannot be answered by indexes on either, so
+          -- every keystroke scanned the whole catalog. Each arm below matches
+          -- a raw column with ILIKE or the trigram % operator, which the
+          -- gin_trgm_ops indexes serve (see Product.prisma, Brand.prisma).
+          --
+          -- Equivalent, not approximately so: ILIKE is lower() LIKE lower(),
+          -- a NULL column matches nothing just as COALESCE(col, '') matched
+          -- nothing for a non-empty term, and a product with no brand is left
+          -- out of the brand arm just as '' failed both brand predicates.
+          -- scripts/verify-product-search.ts compares every result against
+          -- the old query.
+          AND p.id IN (
+                SELECT m.id
+                FROM "Product" m
+                WHERE m.name ILIKE '%' || ${trimmed} || '%'
+                   OR m.sku ILIKE '%' || ${trimmed} || '%'
+                   OR m.description ILIKE '%' || ${trimmed} || '%'
+                   -- Trigram fallback, in the same round trip as the exact
+                   -- match rather than a second query.
+                   OR m.name % ${trimmed}
+                UNION
+                SELECT m.id
+                FROM "Product" m
+                JOIN "Brand" mb ON mb.id = m."brandId"
+                WHERE mb.name ILIKE '%' || ${trimmed} || '%'
+                   OR mb.name % ${trimmed}
           )
         -- The name tiebreak is what makes repeated identical requests return
         -- the same order; score alone would not guarantee it.

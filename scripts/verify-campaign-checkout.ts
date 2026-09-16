@@ -20,6 +20,7 @@
 import { CampaignStatus, DiscountType, ProductStatus } from "../src/generated/prisma/client";
 import { prisma } from "../src/app/lib/prisma";
 import { CampaignService } from "../src/app/module/campaign/campaign.service";
+import { LandingPageService } from "../src/app/module/landing-page/landing-page.service";
 import { ProductService } from "../src/app/module/product/product.service";
 
 let failures = 0;
@@ -173,6 +174,46 @@ const main = async () => {
         );
 
         /* ------------------------------------------------------------------ *
+         * 3b. A landing page's QUOTE agrees too.
+         *
+         * The landing form submits the quote's total as `expectedTotal`, and
+         * placement 409s when that differs from what it charges. The quote once
+         * priced bare `offerPrice` while the page and the order applied the
+         * campaign — so every campaign page's orders failed for exactly as long
+         * as the campaign ran. Zero-priced zone and no tax rule, so the subtotal
+         * IS the unit price times the quantity.
+         * ------------------------------------------------------------------ */
+        await prisma.landingPage.create({
+            data: {
+                title: `${PREFIX}page`,
+                slug: `${PREFIX}page`,
+                status: "PUBLISHED",
+                productId: plain.id,
+                headline: `${PREFIX}page`,
+                bodyHtml: "<p>verify</p>",
+                deliveryZones: [{ key: "zone", label: "Zone", price: 0 }],
+                orderForm: {},
+            },
+        });
+
+        const snapshot = await LandingPageService.buildProductSnapshot(plain.id);
+        const landingQuote = await LandingPageService.quoteLandingPageOrder(`${PREFIX}page`, {
+            quantity: 2,
+            zoneKey: "zone",
+        });
+
+        check(
+            "landing page shows the discounted price",
+            near(snapshot.unitPrice, 800),
+            `page unit price ${snapshot.unitPrice}, expected 800`,
+        );
+        check(
+            "landing quote EQUALS what the order charges",
+            chargedPrice !== undefined && near(landingQuote.subtotal, chargedPrice * 2),
+            `quoted ${landingQuote.subtotal} for 2 vs charged ${chargedPrice !== undefined ? chargedPrice * 2 : "(none)"}`,
+        );
+
+        /* ------------------------------------------------------------------ *
          * 4. Variants are discounted off their OWN price.
          *
          * The decision on record: a 20% campaign takes 20% off the 256GB
@@ -251,7 +292,9 @@ const main = async () => {
             `resolver returned ${draftPrices.size} priced lines, expected 0`,
         );
     } finally {
-        // Order matters: campaign products and variants hang off these rows.
+        // Order matters: campaign products and variants hang off these rows, and
+        // a landing page restricts deleting its product.
+        await prisma.landingPage.deleteMany({ where: { slug: { startsWith: PREFIX } } });
         await prisma.campaign.deleteMany({ where: { name: { startsWith: PREFIX } } });
         await prisma.productVariant.deleteMany({ where: { name: { startsWith: PREFIX } } });
         await prisma.product.deleteMany({ where: { name: { startsWith: PREFIX } } });

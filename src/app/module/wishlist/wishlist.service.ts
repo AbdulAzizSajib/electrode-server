@@ -5,20 +5,27 @@ import { prisma } from "../../lib/prisma";
 import { CartService } from "../cart/cart.service";
 import { CustomerService } from "../customer/customer.service";
 
+/*
+ * `satisfies` is load-bearing. Declared as a bare object and passed by
+ * reference, this escaped excess-property checking entirely: it selected a
+ * `price` column that no longer exists (the product's price is `offerPrice`),
+ * compiled cleanly, and failed every wishlist read at runtime — including the
+ * re-read that add and remove end with.
+ */
 const WISHLIST_ITEM_INCLUDE = {
     product: {
         select: {
             id: true,
             name: true,
             slug: true,
-            price: true,
+            offerPrice: true,
             status: true,
             averageRating: true,
             reviewCount: true,
             images: { where: { isPrimary: true }, take: 1 },
         },
     },
-};
+} satisfies Prisma.WishlistItemInclude;
 
 /**
  * A wishlist must never advertise something a shopper cannot buy, so every read
@@ -31,16 +38,39 @@ const ACTIVE_ITEM_WHERE = { product: { status: ProductStatus.ACTIVE } };
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 
+/**
+ * Get-or-create without `prisma.wishlist.upsert`, for the reason spelled out on
+ * `findOrCreateCart` in cart.service.ts: an upsert with an empty `update` is
+ * emulated as BEGIN + three SELECTs + COMMIT. `Wishlist.customerId` is unique,
+ * so a racing create fails with P2002 and reads back the winner instead.
+ */
 const getOrCreateWishlist = async (customerId: string) => {
-    return prisma.wishlist.upsert({
-        where: { customerId },
-        create: { customerId },
-        update: {},
-    });
+    const existing = await prisma.wishlist.findUnique({ where: { customerId } });
+    if (existing) return existing;
+
+    try {
+        return await prisma.wishlist.create({ data: { customerId } });
+    } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            const winner = await prisma.wishlist.findUnique({ where: { customerId } });
+            if (winner) return winner;
+        }
+        throw error;
+    }
 };
 
-/** Resolves the caller's wishlist in one step — used by every operation below. */
+/**
+ * Resolves the caller's wishlist — used by every operation below.
+ *
+ * Looked up THROUGH `customer.userId` in one query first. The header count and
+ * every product card's heart resolve a wishlist on each page, so this is the
+ * hot path; the customer row is only read (or lazily created) when there is no
+ * wishlist yet.
+ */
 const resolveWishlist = async (userId: string) => {
+    const owned = await prisma.wishlist.findFirst({ where: { customer: { is: { userId } } } });
+    if (owned) return owned;
+
     const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
     return getOrCreateWishlist(customer.id);
 };

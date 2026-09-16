@@ -54,8 +54,15 @@ const setBetterAuthSessionCookie = (res: Response, token: string) => {
         secure: true,
         sameSite: "none",
         path: '/',
-        //1 day
-        maxAge: 60 * 60 * 24 * 1000,
+        /*
+         * 7 days — the refresh token's lifetime and the session's own
+         * (better-auth `expiresIn`, which every refresh extends by seven more).
+         * It was 1 day, the access token's. `/auth/refresh-token` requires this
+         * cookie, so once the browser dropped it alongside the expired access
+         * token there was nothing left to refresh with, and every sign-in ended
+         * after a day however long the refresh token had to run.
+         */
+        maxAge: 60 * 60 * 24 * 1000 * 7,
     });
 }
 

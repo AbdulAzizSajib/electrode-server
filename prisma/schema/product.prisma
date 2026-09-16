@@ -172,4 +172,22 @@ model Product {
   @@index([averageRating])
   @@index([totalSold])
   @@index([viewCount])
+
+  /// Trigram indexes for text search — the storefront's search dropdown
+  /// (`ILIKE '%term%'` and the `%` similarity operator) and the listing's
+  /// `?searchTerm=` (Prisma `contains` + `insensitive`, which is `ILIKE`). A
+  /// B-tree cannot serve a leading-wildcard match, so without these every
+  /// search is a full scan of the catalog. `pg_trgm` itself is created by
+  /// 20260831000000_add_product_search_indexes.
+  ///
+  /// MODELLED HERE ON PURPOSE. `name` and `sku` were first created by raw SQL
+  /// and left out of the schema, so Prisma saw them as drift and wrote DROP
+  /// INDEX statements into every generated migration. Those were hand-deleted
+  /// migration after migration until 20260915093244_change_cuid_to_uuid_7 let
+  /// them through and the catalog lost its search indexes. Declared here, a
+  /// generated migration has nothing to drop.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_name_trgm_idx")
+  @@index([sku(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_sku_trgm_idx")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_description_trgm_idx")
+  @@index([shortDescription(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_shortDescription_trgm_idx")
 }

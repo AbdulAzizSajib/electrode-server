@@ -111,6 +111,13 @@ const getNewToken = catchAsync(async (req: Request, res: Response) => {
         throw new AppError(status.UNAUTHORIZED, "Refresh token is missing");
     }
 
+    // Checked here rather than left to the service, which calls `.includes` on
+    // it: without the cookie that threw a TypeError, and a client asking to be
+    // re-authenticated got a 500 instead of the 401 that tells it to sign in.
+    if (!betterAuthSessionToken) {
+        throw new AppError(status.UNAUTHORIZED, "Session token is missing");
+    }
+
     const result = await AuthService.getNewToken(
         refreshToken,
         betterAuthSessionToken,

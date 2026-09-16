@@ -66,6 +66,54 @@ const reconcileDenormalizedStock = async (
 };
 
 /**
+ * `reconcileDenormalizedStock` for many lines at once: the same rule — each
+ * mirror becomes its ledger aggregate — in ONE statement however many lines
+ * there are.
+ *
+ * Checkout used to reconcile line by line, two to four statements per distinct
+ * line. Inside a transaction every one of those queues on the transaction's
+ * single connection and is its own round trip to the database, while the Stock
+ * rows checkout just decremented stay locked — a two-line cart spent six
+ * statements here alone. The variant update rides in a data-modifying CTE,
+ * which Postgres runs to completion whether or not the outer query reads it, so
+ * a basket with no variants simply updates no variant rows.
+ *
+ * Mirrors the per-line version exactly: a variant's total is filtered by its
+ * product as well as its id, and the product total spans every row the product
+ * holds, variants included. `updatedAt` is written explicitly because raw SQL
+ * bypasses Prisma's `@updatedAt`, which the per-line `update` set implicitly.
+ */
+const reconcileDenormalizedStockForLines = async (
+    tx: Prisma.TransactionClient,
+    lines: { productId: string; variantId: string | null }[],
+) => {
+    const productIds = [...new Set(lines.map((line) => line.productId))];
+    const variantIds = [
+        ...new Set(lines.map((line) => line.variantId).filter((id): id is string => id !== null)),
+    ];
+
+    if (productIds.length === 0) return;
+
+    await tx.$executeRaw`
+        WITH variant_mirrors AS (
+            UPDATE "ProductVariant" AS v
+            SET "stockQuantity" = COALESCE((
+                    SELECT SUM(s.quantity) FROM "Stock" AS s
+                    WHERE s."productId" = v."productId" AND s."variantId" = v.id
+                ), 0),
+                "updatedAt" = NOW()
+            WHERE v.id = ANY(${variantIds}::text[])
+        )
+        UPDATE "Product" AS p
+        SET "stockQuantity" = COALESCE((
+                SELECT SUM(s.quantity) FROM "Stock" AS s WHERE s."productId" = p.id
+            ), 0),
+            "updatedAt" = NOW()
+        WHERE p.id = ANY(${productIds}::text[])
+    `;
+};
+
+/**
  * Compatibility name for existing stock mutation callers. The `delta` is
  * intentionally ignored: callers have already changed Stock in the same
  * transaction, so the correct mirror is the ledger aggregate, not the old
@@ -369,6 +417,7 @@ export const StockService = {
     getStockMovements,
     applyDenormalizedStockDelta,
     reconcileDenormalizedStock,
+    reconcileDenormalizedStockForLines,
     checkLowStock,
     notifyIfLowStock,
 };

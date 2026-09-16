@@ -466,15 +466,9 @@ const deductStockForOrderLines = async (
 
     // Rebuild mirrors from the ledger rather than decrementing their previous
     // values. This also repairs a stale mirror if an operator removed stock
-    // rows outside the application before this checkout ran.
-    const reconciled = new Set<string>();
-    for (const line of lines) {
-        const key = `${line.productId}:${line.variantId ?? ""}`;
-        if (reconciled.has(key)) continue;
-
-        reconciled.add(key);
-        await StockService.reconcileDenormalizedStock(tx, line.productId, line.variantId);
-    }
+    // rows outside the application before this checkout ran. One statement for
+    // every line, not a reconcile per line — see the function for why.
+    await StockService.reconcileDenormalizedStockForLines(tx, lines);
 };
 
 /**
@@ -483,6 +477,9 @@ const deductStockForOrderLines = async (
  * an empty name, so the alternative is not "no name" but "no order".
  */
 const GUEST_FALLBACK_NAME = "Guest";
+
+/** The settings row, as read once per checkout and handed to every step that needs it. */
+type IStoreSettingRow = Awaited<ReturnType<typeof StoreSettingService.getStoreSetting>>;
 
 /** Order states that still tie up stock and courier capacity, for the guest COD cap. */
 const UNFULFILLED_COD_STATUSES: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
@@ -503,11 +500,14 @@ const UNFULFILLED_COD_STATUSES: OrderStatus[] = [OrderStatus.PENDING, OrderStatu
  * rather than a flood of failing attempts — that is a reverse-proxy concern.
  *
  * Called before the checkout transaction opens so a rejection never touches
- * stock.
+ * stock. Takes the settings row checkout already read rather than reading it
+ * again.
  */
-const enforceGuestOrderLimits = async (customerId: string, ip: string) => {
-    const setting = await StoreSettingService.getStoreSetting();
-
+const enforceGuestOrderLimits = async (
+    customerId: string,
+    ip: string,
+    setting: IStoreSettingRow,
+) => {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
     const [pendingForPhone, recentForIp] = await Promise.all([
@@ -664,6 +664,7 @@ const createInlineShippingAddress = async (
 const resolveCheckoutContext = async (
     actor: ICheckoutActor,
     payload: ICreateOrderPayload,
+    setting: IStoreSettingRow,
     overrides?: ICheckoutOverrides,
 ) => {
     if (actor.kind === "user") {
@@ -790,9 +791,9 @@ const resolveCheckoutContext = async (
          * What checkout is currently configured to ask for. The storefront
          * renders its form from this same config, but the storefront is not the
          * only way to reach this endpoint — so it is re-applied here rather than
-         * trusted.
+         * trusted. Parsed from the row checkout read once up front.
          */
-        const checkoutConfig = await StoreSettingService.getCheckoutConfig();
+        const checkoutConfig = StoreSettingService.checkoutConfigOf(setting.checkoutConfig);
 
         // Before the address is created and before the guest limits are counted:
         // when guest checkout is off, this request should cost nothing.
@@ -851,7 +852,7 @@ const resolveCheckoutContext = async (
     );
 
     // Before anything is created, and well before the transaction opens.
-    await enforceGuestOrderLimits(customer.id, actor.ip);
+    await enforceGuestOrderLimits(customer.id, actor.ip, setting);
 
     const address = await createInlineShippingAddress(customer, payload);
 
@@ -871,7 +872,25 @@ const placeOrder = async (
 ) => {
     const isGuest = actor.kind === "guest";
 
-    const { customer, shippingAddressId } = await resolveCheckoutContext(actor, payload, overrides);
+    /*
+     * The settings row, read ONCE for the whole checkout.
+     *
+     * It used to be read four times on a guest order: the checkout config for
+     * the form rules, the whole row for the COD caps, the whole row again for
+     * the free-shipping threshold, and the checkout config again to price the
+     * delivery option. Every read is a round trip, and the row does not change
+     * between them — so one read now feeds the context, the caps, the threshold,
+     * the delivery quote and the error-message currency alike.
+     */
+    const storeSetting = await StoreSettingService.getStoreSetting();
+    const checkoutConfig = StoreSettingService.checkoutConfigOf(storeSetting.checkoutConfig);
+
+    const { customer, shippingAddressId } = await resolveCheckoutContext(
+        actor,
+        payload,
+        storeSetting,
+        overrides,
+    );
 
     // Lines come either from the payload (a landing page ordering a product
     // directly) or from the buyer's cart. The cart is only loaded when it is
@@ -960,16 +979,51 @@ const placeOrder = async (
     const pricingLines: IPricingLine[] = [];
     let subtotal = 0;
 
-    // Availability for every checkout line in one grouped query rather than one
-    // aggregate per line. Still summed across every warehouse's
-    // Stock.quantity - Stock.reservedQuantity, not the denormalized total —
-    // see deductStockForOrderItem above for the actual deduction, which stays
-    // per-item because each deduction depends on reading its own warehouse rows.
-    const stockRows = await prisma.stock.groupBy({
-        by: ["productId", "variantId"],
-        where: { productId: { in: lines.map((line) => line.productId) } },
-        _sum: { quantity: true, reservedQuantity: true },
-    });
+    /*
+     * Availability, campaign prices and the coupon, read together.
+     *
+     * All three depend only on the lines (or on nothing), not on each other,
+     * and were awaited one after another — four round trips in series where two
+     * suffice.
+     *
+     * Availability is one grouped query rather than one aggregate per line,
+     * still summed across every warehouse's Stock.quantity -
+     * Stock.reservedQuantity rather than the denormalized total; see
+     * deductStockForOrderLines above for the deduction itself.
+     *
+     * Campaign pricing is resolved ONCE for the basket — the same resolver and
+     * window the storefront's displayed price came from. Without it the order
+     * charged `offerPrice` while the product card, the Deal of the Week row and
+     * the PDP all advertised the discounted figure: the shopper saw 800, paid
+     * 1000, and the order recorded 1000 as if that were the agreed price. One
+     * resolution also prices every line against the same instant, so a campaign
+     * expiring mid-loop cannot charge two lines under different rules.
+     *
+     * The coupon lookup is SETTLED rather than awaited: an unknown code must
+     * still be reported after the availability and stock errors below, exactly
+     * as when it was fetched after them, so its rejection is held and rethrown
+     * at the point it used to occur.
+     */
+    const [stockRows, campaignPriceByKey, couponLookup] = await Promise.all([
+        prisma.stock.groupBy({
+            by: ["productId", "variantId"],
+            where: { productId: { in: lines.map((line) => line.productId) } },
+            _sum: { quantity: true, reservedQuantity: true },
+        }),
+        CampaignService.getActiveDiscountsForLines(
+            lines.map((line) => ({
+                productId: line.productId,
+                variantId: line.variantId,
+                unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
+            })),
+        ),
+        payload.couponCode
+            ? CouponService.getActiveCouponByCode(payload.couponCode).then(
+                  (coupon) => ({ ok: true as const, coupon }),
+                  (error: unknown) => ({ ok: false as const, error }),
+              )
+            : Promise.resolve(null),
+    ]);
 
     const stockKey = (productId: string, variantId: string | null) =>
         `${productId}:${variantId ?? ""}`;
@@ -979,28 +1033,6 @@ const placeOrder = async (
             stockKey(row.productId, row.variantId),
             (row._sum.quantity ?? 0) - (row._sum.reservedQuantity ?? 0),
         ]),
-    );
-
-    /*
-     * Campaign pricing for this basket, resolved ONCE before the loop — the
-     * same resolver and window the storefront's displayed price came from.
-     *
-     * Without this the order charged `offerPrice` while the product card, the
-     * Deal of the Week row and the PDP all advertised the discounted figure:
-     * the shopper saw 800, paid 1000, and the order recorded 1000 as if that
-     * were the agreed price. A campaign that is not honoured at checkout is
-     * worse than no campaign, so this must stay ahead of the pricing below.
-     *
-     * Resolved here rather than per line so one basket means one query, and so
-     * every line is priced against the same instant — a campaign expiring
-     * mid-loop must not charge two lines under different rules.
-     */
-    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
-        lines.map((line) => ({
-            productId: line.productId,
-            variantId: line.variantId,
-            unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
-        })),
     );
 
     for (const item of lines) {
@@ -1076,10 +1108,12 @@ const placeOrder = async (
 
     // Coupon (Phase 6): re-validates whatever coupon is applied to the cart
     // (see coupon.constant.ts) against these same checkout lines, one last
-    // time, right before the order is committed.
-    const appliedCoupon = payload.couponCode
-        ? await CouponService.getActiveCouponByCode(payload.couponCode)
-        : null;
+    // time, right before the order is committed. The lookup already ran above;
+    // a failed one surfaces here, where it always did.
+    if (couponLookup && !couponLookup.ok) {
+        throw couponLookup.error;
+    }
+    const appliedCoupon = couponLookup?.coupon ?? null;
     const couponResult = appliedCoupon
         ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
         : null;
@@ -1098,7 +1132,7 @@ const placeOrder = async (
      */
     const staffDiscount = overrides?.manual?.discount;
     if (staffDiscount && staffDiscount.amount > subtotal) {
-        const money = currencyFormatOf(await StoreSettingService.getStoreSetting());
+        const money = currencyFormatOf(storeSetting);
         throw new AppError(
             status.BAD_REQUEST,
             `Discount ${formatMoney(staffDiscount.amount, money)} is more than the order's ${formatMoney(subtotal, money)} — it cannot exceed the subtotal`,
@@ -1110,12 +1144,12 @@ const placeOrder = async (
     // `freeShippingThreshold` still comes from the shop settings — it is a
     // property of the order's value, not of any one product. The tax rate there
     // is now only a fallback: tax comes from each product's own rule (see
-    // order.pricing.ts and the `admin/catalog-rules` spec).
-    const storeSetting = await StoreSettingService.getStoreSetting();
-
+    // order.pricing.ts and the `admin/catalog-rules` spec). Both it and the
+    // delivery options come from the row read at the top of checkout.
     const charges = await quoteCharges({
         lines: pricingLines,
         discountAmount,
+        checkoutConfig,
         /*
          * The shopper's own choice, not anything derived from their address.
          * Absent on the landing-page path below, which prices its own zones.
@@ -1293,20 +1327,17 @@ const placeOrder = async (
                 await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
             }
 
-            return tx.order.findUniqueOrThrow({
-                where: { id: order.id },
-                include: ORDER_DETAIL_INCLUDE,
-            });
+            return order.id;
         });
 
     // `orderNumber` carries a random suffix, so instead of probing for a free
     // one before inserting (5 sequential reads on every checkout), just insert
     // and let the unique constraint arbitrate — collisions are rare enough that
     // the retry costs nothing in the common case.
-    let created;
+    let createdId: string;
     for (let attempt = 0; ; attempt += 1) {
         try {
-            created = await runCheckout(generateOrderNumber());
+            createdId = await runCheckout(generateOrderNumber());
             break;
         } catch (error) {
             // Concurrent request with the same key won the race: it created the
@@ -1325,6 +1356,26 @@ const placeOrder = async (
             throw error;
         }
     }
+
+    /*
+     * The full order for the response, read AFTER the transaction commits.
+     *
+     * It used to be read as the transaction's last step. That include is a
+     * dozen queries, and inside a transaction they all queue on its one
+     * connection, each a round trip — with the Stock rows this checkout had just
+     * decremented still locked the whole time, so a concurrent checkout for the
+     * same product waited on them. Out here the relations load in parallel on
+     * the pool and no lock is held.
+     *
+     * Nothing is lost by reading committed data: this is the row the
+     * transaction wrote. If the read itself fails, the order still exists and
+     * the error reaches the client, whose retry with the same idempotency key
+     * replays this order rather than placing a second one.
+     */
+    const created = await prisma.order.findUniqueOrThrow({
+        where: { id: createdId },
+        include: ORDER_DETAIL_INCLUDE,
+    });
 
     // Deliberately not awaited: this runs after the order has already committed
     // and cannot change its outcome, but each call costs a product lookup, a
@@ -1529,13 +1580,30 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
      * total the order then undercuts — the mirror of the bug this fixes, and
      * just as damaging to trust in the number.
      */
-    const quotedCampaignPriceByKey = await CampaignService.getActiveDiscountsForLines(
-        lines.map((line) => ({
-            productId: line.productId,
-            variantId: line.variantId,
-            unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
-        })),
-    );
+    /*
+     * The campaign prices, the coupon row and the settings row depend only on
+     * the lines (or on nothing), not on each other, so they are read together.
+     * Awaited one after another they were three separate waits on every quote —
+     * and the checkout page re-quotes whenever the delivery option or a
+     * quantity changes.
+     *
+     * No coupon on the staff path — a manual order takes a stated discount
+     * instead, and the two must never both write the order's one discount
+     * figure (design.md, Decision 5).
+     */
+    const [quotedCampaignPriceByKey, appliedCoupon, storeSetting] = await Promise.all([
+        CampaignService.getActiveDiscountsForLines(
+            lines.map((line) => ({
+                productId: line.productId,
+                variantId: line.variantId,
+                unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
+            })),
+        ),
+        payload.couponCode && !isStaffQuote
+            ? CouponService.getActiveCouponByCode(payload.couponCode)
+            : Promise.resolve(null),
+        StoreSettingService.getStoreSetting(),
+    ]);
 
     const pricingLines: IPricingLine[] = lines.map((line) => {
         const listPrice = Number(line.variant?.offerPrice ?? line.product.offerPrice);
@@ -1552,13 +1620,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         };
     });
 
-    // No coupon on the staff path — a manual order takes a stated discount
-    // instead, and the two must never both write the order's one discount
-    // figure (design.md, Decision 5).
-    const appliedCoupon =
-        payload.couponCode && !isStaffQuote
-            ? await CouponService.getActiveCouponByCode(payload.couponCode)
-            : null;
     const couponResult =
         appliedCoupon && customer
             ? await CouponService.validateCouponForCart(appliedCoupon, lines, customer.id)
@@ -1580,8 +1641,6 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
     const discountAmount = isStaffQuote
         ? Math.min(roundMoney(payload.discountAmount ?? 0), quotedSubtotal)
         : (couponResult?.discountAmount ?? 0);
-
-    const storeSetting = await StoreSettingService.getStoreSetting();
 
     /*
      * Priced for the option the shopper has selected. The storefront always has

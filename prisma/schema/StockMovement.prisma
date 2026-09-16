@@ -27,4 +27,8 @@ model StockMovement {
   @@index([warehouseId])
   @@index([type])
   @@index([createdAt])
+  /// Order cancellation and delivery read an order's movements back by
+  /// `referenceId`. The table gains rows with every sale, receipt and return,
+  /// so without this those reads scan a table that only ever grows.
+  @@index([referenceId])
 }

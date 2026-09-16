@@ -617,9 +617,23 @@ const quoteLandingPageOrder = async (
         throw new AppError(status.NOT_FOUND, "This landing page's product is no longer available");
     }
 
-    // Charged from `offerPrice`: the shopper pays the offer, not the
-    // struck-through regular price.
-    const lineTotal = roundMoney(Number(product.offerPrice) * input.quantity);
+    /*
+     * Priced exactly as `OrderService.placeOrder` prices the line: the offer
+     * price less any running campaign, rounded per unit and then per line.
+     *
+     * This quote used to charge bare `offerPrice`. The page itself
+     * (`buildProductSnapshot`) and the order both apply the campaign, so while a
+     * campaign ran the quote alone was higher — and the form submits this
+     * quote's total as `expectedTotal`, which placement compares against its own
+     * figure and refuses with a 409 "Price mismatch". Every order from the page
+     * failed for exactly as long as the campaign it was advertising.
+     */
+    const offerPrice = Number(product.offerPrice);
+    const campaignPriceByKey = await CampaignService.getActiveDiscountsForLines([
+        { productId: product.id, variantId: null, unitPrice: offerPrice },
+    ]);
+    const unitPrice = roundMoney(campaignPriceByKey.get(`${product.id}:`) ?? offerPrice);
+    const lineTotal = roundMoney(unitPrice * input.quantity);
 
     const charges = await quoteCharges({
         lines: [

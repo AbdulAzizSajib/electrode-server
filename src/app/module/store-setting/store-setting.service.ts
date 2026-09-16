@@ -39,13 +39,29 @@ import {
 import { checkoutConfigSchema } from "./store-setting.validation";
 import { currencyFormatOf, DEFAULT_CURRENCY_FORMAT } from "../../utils/formatMoney";
 
-/** Upserts on the fixed singleton id — there is no way, through this service, to end up with a second row. */
+/**
+ * Get-or-create on the fixed singleton id — there is no way, through this
+ * service, to end up with a second row.
+ *
+ * Read first, create only when missing, rather than `upsert({ update: {} })`.
+ * An upsert with an empty update cannot become a native `INSERT … ON CONFLICT`,
+ * so Prisma emulates it as BEGIN + three SELECTs + COMMIT: five database round
+ * trips on every checkout quote and order placement to read a row that exists
+ * from the first boot onward. The id is the primary key, so two first-boot
+ * creates cannot both succeed; the loser (P2002) reads back the winner.
+ */
 const getStoreSetting = async () => {
-    return prisma.storeSetting.upsert({
-        where: { id: SINGLETON_ID },
-        update: {},
-        create: { id: SINGLETON_ID },
-    });
+    const existing = await prisma.storeSetting.findUnique({ where: { id: SINGLETON_ID } });
+    if (existing) return existing;
+
+    try {
+        return await prisma.storeSetting.create({ data: { id: SINGLETON_ID } });
+    } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            return prisma.storeSetting.findUniqueOrThrow({ where: { id: SINGLETON_ID } });
+        }
+        throw error;
+    }
 };
 
 /**
@@ -500,9 +516,19 @@ const getCheckoutConfig = async (): Promise<ICheckoutConfig> => {
         select: { checkoutConfig: true },
     });
 
-    if (!stored?.checkoutConfig) return DEFAULT_CHECKOUT_CONFIG;
+    return checkoutConfigOf(stored?.checkoutConfig);
+};
 
-    const parsed = checkoutConfigSchema.safeParse(withDeliveryDefault(stored.checkoutConfig));
+/**
+ * The same parse as `getCheckoutConfig`, over a column the caller already
+ * holds — for order placement, which reads the settings row once and derives
+ * everything it needs from it rather than going back to the database for each
+ * piece. Same guarantees: never throws, never partial.
+ */
+const checkoutConfigOf = (stored: Prisma.JsonValue | null | undefined): ICheckoutConfig => {
+    if (!stored) return DEFAULT_CHECKOUT_CONFIG;
+
+    const parsed = checkoutConfigSchema.safeParse(withDeliveryDefault(stored));
     return parsed.success ? parsed.data : DEFAULT_CHECKOUT_CONFIG;
 };
 
@@ -511,8 +537,8 @@ const getCheckoutConfig = async (): Promise<ICheckoutConfig> => {
  * do not otherwise need the settings row.
  *
  * `findUnique` with a `select`, like `getCheckoutConfig` above and NOT like
- * `getStoreSetting`, which upserts — a message-formatting helper has no business
- * writing to the database. A missing row falls back to the documented defaults
+ * `getStoreSetting`, which creates the row when it is missing — a
+ * message-formatting helper has no business writing to the database. A missing row falls back to the documented defaults
  * rather than throwing: failing to format an error message must not replace the
  * error the caller was actually trying to report.
  */
@@ -756,6 +782,7 @@ export const StoreSettingService = {
     getStoreSetting,
     getPublicStoreSetting,
     getCheckoutConfig,
+    checkoutConfigOf,
     getCurrencyFormat,
     updateStoreSetting,
 };

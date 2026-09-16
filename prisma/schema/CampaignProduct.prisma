@@ -11,4 +11,9 @@ model CampaignProduct {
   discountValue Decimal      @db.Decimal(12, 2)
 
   @@unique([campaignId, productId])
+  /// The hot lookup is by product, not by campaign: every listing, product
+  /// page, cart, quote and checkout asks "which campaigns cover these
+  /// products?" (`productId IN (...)`). The unique index above leads with
+  /// `campaignId`, so it cannot serve that and the lookup scanned the table.
+  @@index([productId])
 }

@@ -14,4 +14,7 @@ model Brand {
   updatedAt DateTime @updatedAt
 
   @@index([status])
+  /// Trigram index for the search dropdown's brand match. Modelled rather than
+  /// raw SQL for the reason on Product's trigram indexes.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Brand_name_trgm_idx")
 }

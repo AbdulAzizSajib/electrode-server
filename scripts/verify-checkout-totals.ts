@@ -35,7 +35,7 @@ const main = async () => {
     const [storeSetting, orders, products] = await Promise.all([
         prisma.storeSetting.findFirst(),
         prisma.order.findMany({ include: { items: true } }),
-        prisma.product.findMany({ select: { id: true, name: true, price: true, taxRuleId: true } }),
+        prisma.product.findMany({ select: { id: true, name: true, offerPrice: true, taxRuleId: true } }),
     ]);
 
     const freeShippingThreshold =
