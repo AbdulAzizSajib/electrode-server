@@ -18,6 +18,7 @@ import {
     catalogConfigSchema,
     checkoutConfigSchema,
     checkoutConfigUpdateSchema,
+    homeConfigSchema,
     themeSchema,
     updateStoreSettingZodSchema,
     MAX_LOGO_HEIGHT,
@@ -27,9 +28,19 @@ import {
 import {
     DEFAULT_CATALOG_CONFIG,
     DEFAULT_CHECKOUT_CONFIG,
+    DEFAULT_HOME_CONFIG,
     DEFAULT_PUBLIC_SETTINGS,
     DEFAULT_THEME,
+    HOME_SECTION_KEYS,
 } from "../src/app/module/store-setting/store-setting.constant";
+/*
+ * `reconcileHomeConfig` lives in the service, which imports `prisma`. That is
+ * still within this script's "no database, no network" contract: the Prisma
+ * client is lazy and opens no connection until a query runs, and nothing here
+ * runs one. The alternative — reimplementing the reconciliation rule in this
+ * file — would be a second, divergent copy of the exact function under test.
+ */
+import { reconcileHomeConfig } from "../src/app/module/store-setting/store-setting.service";
 import {
     collectMissingCheckoutFields,
     missingCheckoutFieldsMessage,
@@ -769,6 +780,186 @@ check(
             );
         })(),
         "a merchant reading the toast should not have to guess what is allowed",
+    );
+}
+
+/* ------------------------------------------------------------------ *
+ * Favicon (add-favicon-and-newsletter-section)
+ * ------------------------------------------------------------------ */
+
+console.log("\n--- Favicon ---\n");
+
+{
+    const parse = (patch: Record<string, unknown>) => updateStoreSettingZodSchema.safeParse(patch);
+
+    check(
+        "a valid favicon URL is accepted",
+        parse({ faviconUrl: "https://cdn.example.com/favicon.png" }).success,
+        "an uploaded icon's address is what the admin sends",
+    );
+
+    check(
+        "a malformed favicon URL is refused",
+        !parse({ faviconUrl: "not-a-url" }).success,
+        "shape is gated here or nowhere — nothing downstream re-checks it",
+    );
+
+    check(
+        "an over-long favicon URL is refused",
+        !parse({ faviconUrl: `https://cdn.example.com/${"a".repeat(500)}.png` }).success,
+        "bounded at 500 like both logo columns",
+    );
+
+    /*
+     * The one place this field deliberately differs from the two logo URLs it
+     * otherwise copies. Under a partial upsert an omitted key means "leave
+     * unchanged", so without null a merchant could replace a favicon forever
+     * and never take one down — the empty string is refused by `z.url()`, and
+     * omitting the key preserves what is stored.
+     */
+    check(
+        "null is accepted, so an icon can be taken down and not merely replaced",
+        parse({ faviconUrl: null }).success,
+        "omitting the key means 'leave unchanged'; null is the only way to say 'remove it'",
+    );
+
+    check(
+        "the empty string is still refused",
+        !parse({ faviconUrl: "" }).success,
+        "null is the clearing signal — an empty string would store one",
+    );
+
+    /*
+     * The one default on DEFAULT_PUBLIC_SETTINGS that is deliberately NOT a
+     * copy of what the storefront renders today. Null means "the merchant chose
+     * nothing"; pinning the shipped icon's path here would make that
+     * indistinguishable from "chose the stock icon" and would hardcode a
+     * storefront asset path into the API.
+     */
+    check(
+        "an unconfigured store reports no favicon rather than a guessed one",
+        DEFAULT_PUBLIC_SETTINGS.faviconUrl === null,
+        `DEFAULT_PUBLIC_SETTINGS.faviconUrl is ${JSON.stringify(DEFAULT_PUBLIC_SETTINGS.faviconUrl)}`,
+    );
+
+    /*
+     * Disjointness, which is what lets the admin's several settings editors
+     * share one endpoint. A favicon-only patch must parse to a favicon-only
+     * object — anything else here would mean the branding editor could clobber
+     * a screen it does not present.
+     */
+    const only = parse({ faviconUrl: "https://cdn.example.com/favicon.png" });
+    check(
+        "a favicon-only patch carries nothing else",
+        only.success && Object.keys(only.data).length === 1,
+        only.success ? `keys: ${Object.keys(only.data).join(", ")}` : "did not parse",
+    );
+}
+
+/* ------------------------------------------------------------------ *
+ * Newsletter as a home section (add-favicon-and-newsletter-section)
+ * ------------------------------------------------------------------ */
+
+console.log("\n--- Home sections: NEWSLETTER ---\n");
+
+{
+    const keysOf = (sections: { key: string; enabled: boolean }[]) =>
+        sections.map((section) => section.key);
+
+    check(
+        "NEWSLETTER is the last registry key",
+        HOME_SECTION_KEYS[HOME_SECTION_KEYS.length - 1] === "NEWSLETTER",
+        `registry ends: ${HOME_SECTION_KEYS.slice(-3).join(", ")}`,
+    );
+
+    check(
+        "the default config carries NEWSLETTER, enabled, last",
+        DEFAULT_HOME_CONFIG[DEFAULT_HOME_CONFIG.length - 1]?.key === "NEWSLETTER" &&
+            DEFAULT_HOME_CONFIG[DEFAULT_HOME_CONFIG.length - 1]?.enabled === true,
+        "a store that never configured its home page gets it on, at the bottom",
+    );
+
+    check(
+        "the schema accepts NEWSLETTER",
+        homeConfigSchema.safeParse([{ key: "NEWSLETTER", enabled: true }]).success,
+        "the closed key set and the registry are the same array",
+    );
+
+    check(
+        "the schema still refuses an unknown key",
+        !homeConfigSchema.safeParse([{ key: "SUBSCRIBE", enabled: true }]).success,
+        "adding a key must not open the set to anything else",
+    );
+
+    check(
+        "the schema still refuses a duplicated key",
+        !homeConfigSchema.safeParse([
+            { key: "NEWSLETTER", enabled: true },
+            { key: "NEWSLETTER", enabled: false },
+        ]).success,
+        "two entries for one section have two answers for where it renders",
+    );
+
+    /*
+     * THE CLAIM THE WHOLE "no backfill" ARGUMENT RESTS ON.
+     *
+     * Every store that saved a home page before this release has a stored list
+     * with no NEWSLETTER in it. If reconciliation did not splice it in, those
+     * stores would never see the section and could not switch it on — the
+     * section would be indistinguishable from broken.
+     */
+    const preRelease = HOME_SECTION_KEYS.filter((key) => key !== "NEWSLETTER").map((key) => ({
+        key,
+        enabled: true,
+    }));
+    const reconciled = reconcileHomeConfig(preRelease);
+
+    check(
+        "a configuration saved before NEWSLETTER existed reads back with it",
+        reconciled.length === HOME_SECTION_KEYS.length &&
+            reconciled[reconciled.length - 1]?.key === "NEWSLETTER" &&
+            reconciled[reconciled.length - 1]?.enabled === true,
+        `ends: ${keysOf(reconciled).slice(-3).join(", ")}`,
+    );
+
+    check(
+        "splicing it in does not disturb the sections already there",
+        keysOf(reconciled).slice(0, -1).join(",") === preRelease.map((s) => s.key).join(","),
+        "the merchant's own order is what they saved, with one row added at the end",
+    );
+
+    /*
+     * The same rule against a REORDERED, PARTIAL list — the realistic case, and
+     * the one where an "append to the end" shortcut and a registry-relative
+     * splice could have disagreed.
+     */
+    const merchant = [
+        { key: "HERO", enabled: true },
+        { key: "BLOG", enabled: false },
+        { key: "BEST_SELLING", enabled: true },
+    ];
+    const fromMerchant = reconcileHomeConfig(merchant);
+
+    check(
+        "a reordered, partial configuration keeps its order and gains NEWSLETTER last",
+        fromMerchant[fromMerchant.length - 1]?.key === "NEWSLETTER" &&
+            keysOf(fromMerchant).indexOf("HERO") < keysOf(fromMerchant).indexOf("BLOG") &&
+            keysOf(fromMerchant).indexOf("BLOG") < keysOf(fromMerchant).indexOf("BEST_SELLING"),
+        keysOf(fromMerchant).join(" > "),
+    );
+
+    check(
+        "a switched-off section stays switched off through reconciliation",
+        fromMerchant.find((section) => section.key === "BLOG")?.enabled === false,
+        "adding a section must not silently re-enable anything",
+    );
+
+    check(
+        "a stored NEWSLETTER switched off survives a read",
+        reconcileHomeConfig([...preRelease, { key: "NEWSLETTER", enabled: false }]).find(
+            (section) => section.key === "NEWSLETTER",
+        )?.enabled === false,
+        "the splice must only fill a GAP, never overwrite a merchant's choice",
     );
 }
 

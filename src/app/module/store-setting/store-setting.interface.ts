@@ -235,6 +235,12 @@ export interface IUpdateStoreSettingPayload {
 
     logoUrl?: string;
     footerLogoUrl?: string;
+    /**
+     * The browser-tab icon's address. Omitted means "leave unchanged"; `null`
+     * means "remove it", which is why this one is nullable where the two logo
+     * URLs above are not — see the note in store-setting.validation.ts.
+     */
+    faviconUrl?: string | null;
     siteNameAccent?: string;
     aboutText?: string;
     copyrightText?: string;

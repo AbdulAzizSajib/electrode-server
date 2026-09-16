@@ -225,12 +225,20 @@ export const DEFAULT_CATALOG_CONFIG = {
  * in store-setting.validation.ts is the only gate, as it is for every other
  * blob on this row.
  *
- * MIRRORED IN BOTH FRONTENDS and they must be kept in step by hand:
- *  - `nextjs/src/services/store-settings.ts` (FALLBACK_SETTINGS.homeConfig) —
+ * MIRRORED IN BOTH FRONTENDS and they must be kept in step by hand. Neither can
+ * be edited from this repository — each is its own git repo, so a key added
+ * here lands in its mirrors through that repo's own change:
+ *  - `frontend/src/services/store-settings.ts` (FALLBACK_SETTINGS.homeConfig) —
  *    so a settings outage renders the full homepage rather than a stripped one;
- *  - `admin/src/lib/api/store-settings.ts` (SECTION_REGISTRY) — because the
+ *  - `admin/src/lib/api/store-settings.ts` (HOME_SECTION_REGISTRY) — because the
  *    admin read returns the row as stored, so without a mirror it cannot tell
  *    "never configured" from "configured to exactly the default".
+ *
+ * THE ADMIN MIRROR IS THE DANGEROUS ONE. Its Home Sections page filters the
+ * stored configuration against that registry and writes the filtered list back
+ * on save, so a key present here but missing there is not merely an unrendered
+ * row — it is silently deleted from the merchant's saved configuration by the
+ * next unrelated save, with no error anywhere.
  *
  * Adding a section here is deliberately NOT a data migration: reconciliation on
  * read (see reconcileHomeConfig in store-setting.service.ts) splices a section
@@ -252,6 +260,21 @@ export const HOME_SECTION_KEYS = [
     "NEW_ARRIVALS",
     "TESTIMONIALS",
     "BLOG",
+    /*
+     * LAST, and that position is a merchant-visible decision rather than an
+     * append for convenience.
+     *
+     * The newsletter signup used to be welded into the storefront's FOOTER,
+     * where the only way to remove it was to clear its heading — an off switch
+     * by accident. Moving it here makes it switchable and orderable like
+     * everything else; putting it last keeps it immediately above the footer,
+     * which is where it already rendered relative to the rest of the page. A
+     * store that never opens the screen sees the block move, not jump.
+     *
+     * See openspec/changes/add-favicon-and-newsletter-section, design.md
+     * Decision 3.
+     */
+    "NEWSLETTER",
 ] as const;
 
 export type HomeSectionKey = (typeof HOME_SECTION_KEYS)[number];
@@ -486,6 +509,19 @@ export const DEFAULT_PUBLIC_SETTINGS = {
      * same image as the header".
      */
     footerLogoUrl: null as string | null,
+    /*
+     * Null, and deliberately NOT the path of the icon the storefront ships
+     * with, for the same two reasons `footerLogoUrl` above is not a copy of
+     * `logoUrl`: pinning that path would make "never configured" and "chose the
+     * stock icon" indistinguishable, and it would hardcode a storefront asset
+     * path into the API — moving that file in the storefront repository would
+     * then break every store at once.
+     *
+     * So this one default is NOT the usual "reproduce the shipped rendering"
+     * value the rest of this object carries. The storefront owns the fallback
+     * because it owns the asset; this answers only what the merchant chose.
+     */
+    faviconUrl: null as string | null,
     /*
      * TEXT for both, which is what makes this change invisible on deploy: the
      * storefront rendered the wordmark unconditionally in both slots before

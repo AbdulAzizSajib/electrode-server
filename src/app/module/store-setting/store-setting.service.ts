@@ -236,6 +236,17 @@ const getPublicStoreSetting = async () => {
         logoUrl: merge(stored?.logoUrl, DEFAULT_PUBLIC_SETTINGS.logoUrl),
         footerLogoUrl: merge(stored?.footerLogoUrl, DEFAULT_PUBLIC_SETTINGS.footerLogoUrl),
         /*
+         * Public because the storefront emits it in the document head of every
+         * page it serves, before any shopper session exists. A scalar, so a
+         * plain `merge` is right here — there is no nested key to repair, and
+         * nothing for a `catalogConfig`-style per-key spread to do.
+         *
+         * Null reaches the storefront as null, which is the answer: it means
+         * "the merchant chose nothing", and the storefront resolves that to its
+         * own shipped icon.
+         */
+        faviconUrl: merge(stored?.faviconUrl, DEFAULT_PUBLIC_SETTINGS.faviconUrl),
+        /*
          * Public for the same reason the logos above are: the storefront cannot
          * draw its header or footer without knowing which of the two things
          * each slot shows. Opted in one line at a time — this stays an

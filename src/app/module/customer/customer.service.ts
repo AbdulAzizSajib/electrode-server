@@ -42,15 +42,30 @@ const getOrCreateCustomerByUserId = async (userId: string) => {
         ? (await prisma.customer.count({ where: { phone: normalizedPhone } })) > 0
         : false;
 
-    return prisma.customer.create({
-        data: {
-            userId: user.id,
-            firstName: firstName || user.name,
-            lastName: rest.length > 0 ? rest.join(" ") : undefined,
-            email: user.email,
-            phone: !phoneIsTaken && normalizedPhone ? normalizedPhone : undefined,
-        },
-    });
+    try {
+        return await prisma.customer.create({
+            data: {
+                userId: user.id,
+                firstName: firstName || user.name,
+                lastName: rest.length > 0 ? rest.join(" ") : undefined,
+                email: user.email,
+                phone: !phoneIsTaken && normalizedPhone ? normalizedPhone : undefined,
+            },
+        });
+    } catch (error) {
+        // A signed-in shopper's first page load fires several storefront calls
+        // at once (cart, wishlist, …), and each can reach the create above. The
+        // unique `userId` lets one win; the rest read that row back instead of
+        // failing with a 500.
+        if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === "P2002"
+        ) {
+            const winner = await prisma.customer.findUnique({ where: { userId } });
+            if (winner) return winner;
+        }
+        throw error;
+    }
 };
 
 /**

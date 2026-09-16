@@ -81,6 +81,30 @@ model StoreSetting {
   aboutText      String?
   copyrightText  String?
 
+  /// The browser-tab icon — the mark shown in a tab, a bookmark and a search
+  /// result. An ADDRESS, like the two logos above and unlike anything this
+  /// server stores as a file; the admin uploads through `POST /upload/image`
+  /// and what lands here is the resulting URL.
+  ///
+  /// Null means NO ICON HAS BEEN CHOSEN, and is deliberately not the path of
+  /// the icon the storefront ships with. Two reasons, the same two that keep
+  /// `footerLogoUrl` from defaulting to a copy of `logoUrl`: pinning that path
+  /// would make "never configured" indistinguishable from "chose the stock
+  /// icon", and it would hardcode a storefront asset path into the API, so
+  /// moving that file in the storefront repository would break every store at
+  /// once.
+  ///
+  /// THE STOREFRONT OWNS THE FALLBACK, because it owns the asset. This column
+  /// answers only what the merchant chose.
+  ///
+  /// Writable back to null through the API, unlike `logoUrl`/`footerLogoUrl`:
+  /// `faviconUrl` is `.nullable()` in store-setting.validation.ts so a merchant
+  /// can take an icon down, not merely replace it. See the note there.
+  ///
+  /// See openspec/changes/add-favicon-and-newsletter-section, design.md
+  /// Decisions 1 and 2.
+  faviconUrl String?
+
   /// Whether each brand slot shows the wordmark or its logo image.
   ///
   /// Set INDEPENDENTLY — header logo above a wordmark footer, or the reverse,

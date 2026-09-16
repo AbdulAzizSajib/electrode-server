@@ -101,6 +101,36 @@ export const checkBannerTypeContract = (
 };
 
 /**
+ * The DYNAMIC-only content an IMAGE banner still carries from an earlier life,
+ * as a `{ field: null }` patch — for an update to clear on its way past.
+ *
+ * Without this, `updateBanner`'s merged contract check judged stored values the
+ * request never mentioned, so a row carrying any of them could never be saved
+ * again: the admin hides those inputs on an IMAGE banner, leaving no way to
+ * clear what it was refusing. It also made switching a banner from DYNAMIC to
+ * IMAGE impossible for the same reason. Clearing is the only reading that can
+ * be right — the fields belong to a type this banner no longer is, and nothing
+ * renders them. A value the request *sends* is still rejected, which is the
+ * contract the spec states.
+ */
+export const staleDynamicFields = (banner: {
+    type?: "IMAGE" | "DYNAMIC";
+    [key: string]: unknown;
+}, payload: Record<string, unknown>) => {
+    if (banner.type !== "IMAGE") return {};
+
+    const clears: Record<string, null> = {};
+
+    for (const field of DYNAMIC_ONLY_FIELDS) {
+        if (!(field in payload) && banner[field] !== undefined && banner[field] !== null) {
+            clears[field] = null;
+        }
+    }
+
+    return clears;
+};
+
+/**
  * A flat object plus `.superRefine`, not a discriminated union: `validateRequest`
  * is typed `(zodSchema: z.ZodObject)` and a union is not a ZodObject. superRefine
  * preserves ZodObject assignability, so the shared middleware stays untouched.

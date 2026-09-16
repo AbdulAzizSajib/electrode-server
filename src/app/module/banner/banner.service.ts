@@ -6,7 +6,7 @@ import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { BANNERS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { IBannerProductSummary, ICreateBannerPayload, IPublicBanner, IUpdateBannerPayload } from "./banner.interface";
-import { checkBannerTypeContract } from "./banner.validation";
+import { checkBannerTypeContract, staleDynamicFields } from "./banner.validation";
 
 /**
  * The slim product summary a banner needs to render — deliberately not the full
@@ -153,6 +153,11 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
      */
     const merged = { ...existing, ...rest, ...(productId !== undefined ? { productId } : {}) };
 
+    // Stored DYNAMIC-only content the request never mentioned is cleared, not
+    // reported — see `staleDynamicFields` for why judging it locked rows out.
+    const clears = staleDynamicFields(merged, rest);
+    Object.assign(merged, clears);
+
     const violations: string[] = [];
     checkBannerTypeContract(merged, (_path, message) => violations.push(message));
 
@@ -164,6 +169,7 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
         where: { id },
         data: {
             ...rest,
+            ...clears,
             ...(productId !== undefined ? { productId } : {}),
             startsAt: startsAt ? new Date(startsAt) : undefined,
             endsAt: endsAt ? new Date(endsAt) : undefined,

@@ -787,6 +787,33 @@ export const updateStoreSettingZodSchema = z.object({
     // Branding
     logoUrl: z.url("Logo URL must be valid").max(500).optional(),
     footerLogoUrl: z.url("Footer logo URL must be valid").max(500).optional(),
+    /*
+     * The browser-tab icon.
+     *
+     * `.nullable()`, UNLIKE the two logo URLs directly above — and that
+     * difference is the point, not an inconsistency. Under a partial upsert an
+     * omitted key means "leave unchanged", so without null there is no way to
+     * say "remove the icon I set": the empty string is refused by `z.url()`,
+     * and omitting the key preserves what is stored. A merchant could replace a
+     * favicon forever and never take one down.
+     *
+     * This follows `freeShippingThreshold` above, which is nullable for exactly
+     * this reason and says so. NULL here means the same thing it means in the
+     * column: no icon chosen, so the storefront falls back to the one it ships
+     * with.
+     *
+     * `logoUrl` and `footerLogoUrl` have this bug TODAY and are deliberately
+     * left alone here — their Clear buttons in the admin empty the field and
+     * then omit the key, so the artwork is never actually removed. Fixing them
+     * is a change of its own; see openspec/changes/add-favicon-and-newsletter-section,
+     * tasks.md section 7.
+     *
+     * Shape only. Nothing here fetches the URL to check it is an image, is
+     * square, or resolves at all — this server does not fetch merchant-supplied
+     * URLs anywhere and does not start with this one. A wrong address costs a
+     * default tab icon, which is visible and local to whoever set it.
+     */
+    faviconUrl: z.url("Favicon URL must be valid").max(500).nullable().optional(),
     siteNameAccent: z.string().max(100).optional(),
     aboutText: z.string().max(1000).optional(),
     copyrightText: z.string().max(300).optional(),

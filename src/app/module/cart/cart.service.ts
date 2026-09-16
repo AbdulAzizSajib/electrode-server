@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { ProductStatus } from "../../../generated/prisma/client";
+import { Prisma, ProductStatus } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 import { CampaignService } from "../campaign/campaign.service";
 import { CouponService } from "../coupon/coupon.service";
@@ -30,6 +30,37 @@ const CART_INCLUDE = {
 const generateGuestToken = () => crypto.randomBytes(24).toString("hex");
 
 /**
+ * Get-or-create for a customer's cart, deliberately NOT `prisma.cart.upsert`.
+ *
+ * An upsert with an empty `update` cannot become a native
+ * `INSERT … ON CONFLICT`, so Prisma emulates it: BEGIN, three SELECTs, COMMIT —
+ * five round trips to find a cart that almost always already exists. Every
+ * database call here crosses to Neon in ap-southeast-1, so on a logged-in cart
+ * request that emulation alone cost more than the rest of the operation.
+ *
+ * `find` runs first and is the whole cost in the common case. When two first
+ * requests race to create, `Cart.customerId` is unique, so the loser's insert
+ * fails with P2002 and it reads back the winner's row rather than erroring.
+ */
+const findOrCreateCart = async <T>(
+    find: () => Promise<T | null>,
+    create: () => Promise<T>,
+): Promise<T> => {
+    const existing = await find();
+    if (existing) return existing;
+
+    try {
+        return await create();
+    } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            const winner = await find();
+            if (winner) return winner;
+        }
+        throw error;
+    }
+};
+
+/**
  * Resolves the cart for this request: the customer's cart when logged in
  * (get-or-create, lazily creating the Customer row too if this is their
  * first storefront action), otherwise the guest cart identified by
@@ -37,16 +68,26 @@ const generateGuestToken = () => crypto.randomBytes(24).toString("hex");
  * session nor a valid guest cookie is present. Per `api/cart-wishlist`
  * spec, a cart operation without a session falls back to guest behavior
  * instead of failing.
+ *
+ * The logged-in branch looks the cart up THROUGH `customer.userId` — one query
+ * — and only resolves (or lazily creates) the Customer row when there is no
+ * cart yet, instead of always reading the customer first and the cart second.
  */
 const resolveCart = async (userId: string | undefined, guestTokenCookie: string | undefined) => {
     if (userId) {
-        const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
-        const cart = await prisma.cart.upsert({
-            where: { customerId: customer.id },
-            create: { customerId: customer.id },
-            update: {},
+        const owned = await prisma.cart.findFirst({
+            where: { customer: { is: { userId } } },
             include: CART_INCLUDE,
         });
+        if (owned) {
+            return { cart: owned, customerId: owned.customerId ?? undefined };
+        }
+
+        const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
+        const cart = await findOrCreateCart(
+            () => prisma.cart.findUnique({ where: { customerId: customer.id }, include: CART_INCLUDE }),
+            () => prisma.cart.create({ data: { customerId: customer.id }, include: CART_INCLUDE }),
+        );
         return { cart, customerId: customer.id };
     }
 
@@ -76,13 +117,19 @@ const resolveCart = async (userId: string | undefined, guestTokenCookie: string 
  */
 const resolveCartId = async (userId: string | undefined, guestTokenCookie: string | undefined) => {
     if (userId) {
-        const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
-        const cart = await prisma.cart.upsert({
-            where: { customerId: customer.id },
-            create: { customerId: customer.id },
-            update: {},
-            select: { id: true },
+        const owned = await prisma.cart.findFirst({
+            where: { customer: { is: { userId } } },
+            select: { id: true, customerId: true },
         });
+        if (owned) {
+            return { cartId: owned.id, customerId: owned.customerId ?? undefined };
+        }
+
+        const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
+        const cart = await findOrCreateCart(
+            () => prisma.cart.findUnique({ where: { customerId: customer.id }, select: { id: true } }),
+            () => prisma.cart.create({ data: { customerId: customer.id }, select: { id: true } }),
+        );
         return { cartId: cart.id, customerId: customer.id };
     }
 
@@ -192,10 +239,14 @@ const reloadCart = async (
     customerId: string | undefined,
     appliedCouponCode?: string,
 ) => {
-    const cart = await prisma.cart.findUniqueOrThrow({
-        where: { id: cartId },
-        include: CART_INCLUDE,
-    });
+    // The cart row and its items in parallel rather than `include`, which reads
+    // the cart first and only then starts on the items — one extra round trip
+    // for a row whose only unknown is its timestamps.
+    const [cartRow, cartItems] = await Promise.all([
+        prisma.cart.findUniqueOrThrow({ where: { id: cartId } }),
+        prisma.cartItem.findMany({ where: { cartId }, ...CART_INCLUDE.items }),
+    ]);
+    const cart = { ...cartRow, items: cartItems };
 
     const [items, discount] = await Promise.all([
         withEffectivePrices(cart.items),
@@ -211,15 +262,44 @@ const addItem = async (
     payload: IAddCartItemPayload,
     appliedCouponCode?: string,
 ) => {
+    /*
+     * The line this add would merge into is looked up alongside everything
+     * else, through the same identity `resolveCartId` resolves by — the
+     * session's customer first, else the guest token. It cannot be keyed by
+     * `cartId` here because that is not known yet.
+     *
+     * The `cartId` comparison below is what makes that safe: a line from any
+     * cart other than the one resolved is ignored rather than trusted. With no
+     * identity at all the lookup is skipped — `guestToken: undefined` would
+     * be no filter, matching a line in SOMEONE ELSE'S cart — and a freshly
+     * minted cart has no lines anyway.
+     */
+    const cartOwner: Prisma.CartWhereInput | null = userId
+        ? { customer: { is: { userId } } }
+        : guestTokenCookie
+          ? { guestToken: guestTokenCookie }
+          : null;
+
     // Independent of each other: which cart this is has no bearing on whether
     // the product exists, so they resolve concurrently rather than in series.
-    const [{ cartId, customerId, newGuestToken }, product, variant] = await Promise.all([
-        resolveCartId(userId, guestTokenCookie),
-        prisma.product.findUnique({ where: { id: payload.productId } }),
-        payload.variantId
-            ? prisma.productVariant.findUnique({ where: { id: payload.variantId } })
-            : Promise.resolve(null),
-    ]);
+    const [{ cartId, customerId, newGuestToken }, product, variant, matchingItem] =
+        await Promise.all([
+            resolveCartId(userId, guestTokenCookie),
+            prisma.product.findUnique({ where: { id: payload.productId } }),
+            payload.variantId
+                ? prisma.productVariant.findUnique({ where: { id: payload.variantId } })
+                : Promise.resolve(null),
+            cartOwner
+                ? prisma.cartItem.findFirst({
+                      where: {
+                          cart: { is: cartOwner },
+                          productId: payload.productId,
+                          variantId: payload.variantId ?? null,
+                      },
+                      select: { id: true, cartId: true },
+                  })
+                : Promise.resolve(null),
+        ]);
 
     if (!product || product.status !== ProductStatus.ACTIVE) {
         throw new AppError(status.NOT_FOUND, "Product not found");
@@ -235,18 +315,14 @@ const addItem = async (
     // the DB unique constraint — Postgres treats NULL as distinct in unique
     // indexes, so two rows with the same cartId+productId and variantId
     // NULL would NOT collide there (see CartItem.prisma).
-    const existingItem = await prisma.cartItem.findFirst({
-        where: {
-            cartId,
-            productId: payload.productId,
-            variantId: payload.variantId ?? null,
-        },
-    });
+    const existingItem = matchingItem?.cartId === cartId ? matchingItem : null;
 
     if (existingItem) {
+        // `increment`, not a quantity read earlier plus one: the database adds
+        // to whatever the row holds NOW, so two quick clicks both count.
         await prisma.cartItem.update({
             where: { id: existingItem.id },
-            data: { quantity: existingItem.quantity + quantityToAdd },
+            data: { quantity: { increment: quantityToAdd } },
         });
     } else {
         await prisma.cartItem.create({
@@ -324,11 +400,10 @@ const mergeGuestCartIntoCustomerCart = async (customerId: string, guestToken: st
         return;
     }
 
-    const customerCart = await prisma.cart.upsert({
-        where: { customerId },
-        create: { customerId },
-        update: {},
-    });
+    const customerCart = await findOrCreateCart(
+        () => prisma.cart.findUnique({ where: { customerId }, select: { id: true } }),
+        () => prisma.cart.create({ data: { customerId }, select: { id: true } }),
+    );
 
     await prisma.$transaction(async (tx) => {
         for (const guestItem of guestCart.items) {
