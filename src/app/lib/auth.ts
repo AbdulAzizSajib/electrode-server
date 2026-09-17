@@ -201,10 +201,7 @@ export const auth = betterAuth({
              * then had nothing to compare the returned `state` against and
              * failed the request before any of our controller code ran.
              *
-             * Do not "align" this with sessionToken. That one is `none`
-             * because it really is read cross-site — the storefront is a
-             * separate origin. This one never is, and `none` only exposes it
-             * to the browser's third-party cookie rules for no benefit.
+             * The same reasoning applies to sessionToken below.
              */
             state: {
                 attributes: {
@@ -214,9 +211,30 @@ export const auth = betterAuth({
                     path: "/",
                 },
             },
+            /*
+             * `lax` as well, for the same reason — and it is worth spelling out
+             * why, because "the storefront is on another origin, so this must
+             * be `none`" is the intuitive answer and it is wrong.
+             *
+             * No browser ever sends this cookie cross-site. The storefront does
+             * not read it: it keeps its OWN copy, on its own domain, and
+             * forwards it to this server as a `Cookie` *header* built in
+             * `lib/session.ts` `buildAuthCookieHeader`. That is a server-to-
+             * server fetch, where SameSite does not apply at all.
+             *
+             * The one browser-driven hop that must carry it is the tail of the
+             * OAuth handshake, and it is same-origin:
+             *   BETTER_AUTH_URL/api/auth/callback/google   (better-auth sets it)
+             *     -> BETTER_AUTH_URL/api/v1/auth/google/success   (we read it)
+             * With `none` the browser treats it as third-party and drops it, so
+             * `googleLoginSuccess` found no session token and bounced the
+             * customer to the storefront with `?error=oauth_failed` — a Google
+             * sign-in that failed at the very last step, after Google had
+             * already approved it.
+             */
             sessionToken: {
                 attributes: {
-                    sameSite: envVars.NODE_ENV === "production" ? "none" : "lax",
+                    sameSite: "lax",
                     secure: envVars.NODE_ENV === "production",
                     httpOnly: true,
                     path: "/",
