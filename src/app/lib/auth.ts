@@ -180,9 +180,35 @@ export const auth = betterAuth({
     advanced: {
         useSecureCookies: envVars.NODE_ENV === "production",
         cookies: {
+            /*
+             * `lax`, NOT `none` — and deliberately not the same as sessionToken
+             * below.
+             *
+             * The OAuth state cookie is set by this server and comes back to
+             * this server: the whole handshake is
+             *   BETTER_AUTH_URL/auth/login/google
+             *     -> accounts.google.com
+             *     -> BETTER_AUTH_URL/api/auth/callback/google
+             * so the cookie is same-site with its own callback, and every hop
+             * is a top-level navigation — exactly what `lax` permits.
+             *
+             * It was `none` in production, which is what caused
+             * `state_mismatch` on Vercel while localhost (where NODE_ENV is not
+             * "production", so this resolved to `lax`) worked fine. `none`
+             * marks the cookie as third-party, and Chrome/Brave block or
+             * partition third-party cookies by default, so the state cookie set
+             * on the way out to Google was gone on the way back. better-auth
+             * then had nothing to compare the returned `state` against and
+             * failed the request before any of our controller code ran.
+             *
+             * Do not "align" this with sessionToken. That one is `none`
+             * because it really is read cross-site — the storefront is a
+             * separate origin. This one never is, and `none` only exposes it
+             * to the browser's third-party cookie rules for no benefit.
+             */
             state: {
                 attributes: {
-                    sameSite: envVars.NODE_ENV === "production" ? "none" : "lax",
+                    sameSite: "lax",
                     secure: envVars.NODE_ENV === "production",
                     httpOnly: true,
                     path: "/",

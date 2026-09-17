@@ -266,10 +266,19 @@ const googleLogin = catchAsync(async (req: Request, res: Response) => {
         returnHeaders: true,
     });
 
-    // Forward the Set-Cookie header(s) better-auth produced (the state cookie).
-    const setCookie = headers.get("set-cookie");
-    if (setCookie) {
-        res.setHeader("set-cookie", setCookie);
+    /*
+     * Forward the Set-Cookie header(s) better-auth produced (the state cookie).
+     *
+     * `getSetCookie()` rather than `get("set-cookie")`: the latter joins
+     * multiple cookies into one comma-separated string, which browsers do not
+     * parse back into separate cookies — so if better-auth ever sets more than
+     * one here, all but the first are silently lost and the callback fails with
+     * `state_mismatch`. `getSetCookie()` is the Fetch API's accessor for
+     * exactly this case and always returns an array.
+     */
+    const setCookies = headers.getSetCookie();
+    if (setCookies.length > 0) {
+        res.setHeader("set-cookie", setCookies);
     }
 
     if (!response?.url) {
