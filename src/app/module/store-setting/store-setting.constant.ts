@@ -77,6 +77,13 @@ export const DEFAULT_SOCIAL_LINKS = [
  *
  * The literals are still filled in as the fallback for a store that has not set
  * its contact columns yet.
+ *
+ * TRACK ORDER USED TO BE A THIRD ROW HERE and is now in DEFAULT_MIDDLE_BAR_LINKS
+ * below. It is not a contact detail — it is an action a returning shopper comes
+ * back to perform, so it belongs beside the cart rather than in a strip that is
+ * hidden below `md` and disappears when the merchant switches the bar off. Do
+ * not add it back: it would then render twice, once from each list.
+ * See openspec/changes/add-header-middle-bar-links.
  */
 export const DEFAULT_ANNOUNCEMENT_BAR = {
     enabled: true,
@@ -94,9 +101,27 @@ export const DEFAULT_ANNOUNCEMENT_BAR = {
             href: "mailto:contact@sheisite.com",
             source: "contactEmail",
         },
-        { icon: "fa-solid:truck", label: "Track Order", href: "/track-order" },
     ],
 };
+
+/**
+ * The header's main row, as a shop that has configured nothing renders it.
+ *
+ * One entry, and it is the one that moved out of the announcement bar above.
+ * Reproducing the storefront's pre-change behaviour is the whole job of a
+ * default here: a shop that never opens the Header Links screen should see
+ * Track Order move, not vanish.
+ *
+ * MIRRORED IN BOTH FRONTENDS and kept in step by hand:
+ *  - `nextjs/src/services/store-settings.ts` (FALLBACK_SETTINGS.middleBarLinks),
+ *    so a settings outage degrades to the new layout rather than the old one;
+ *  - `admin/src/lib/api/store-settings.ts` (DEFAULT_MIDDLE_BAR_LINKS), because
+ *    the admin read returns the row as stored and otherwise cannot tell "never
+ *    configured" from "configured to exactly this".
+ */
+export const DEFAULT_MIDDLE_BAR_LINKS = [
+    { icon: "fa-solid:truck", label: "Track Order", href: "/track-order" },
+];
 
 export const DEFAULT_NEWSLETTER = {
     // ৳, not $ — the store's currencySymbol is BDT's. The storefront rendered
@@ -245,6 +270,11 @@ export const DEFAULT_CATALOG_CONFIG = {
  * missing from a stored config into its position here, enabled. Without that,
  * a section shipped in a later release would never appear for any shop that had
  * already saved a configuration.
+ *
+ * A KEY IS ALSO NAMED OUTSIDE THIS REPOSITORY'S SETTINGS CODE. Four of them — BLOG,
+ * DEAL_OF_WEEK, NEW_ARRIVALS and BEST_SELLING — govern whether the storefront renders the
+ * header link pointing at the page each one fills, so renaming one of those also breaks that
+ * mapping in both frontends. See openspec/changes/align-nav-links-with-home-sections.
  *
  * See openspec/changes/add-homepage-section-toggles, design.md Decisions 2 & 3.
  */
@@ -483,6 +513,7 @@ export const STOREFRONT_SEED_DEFAULTS = {
     footerColumns: DEFAULT_FOOTER_COLUMNS,
     socialLinks: DEFAULT_SOCIAL_LINKS,
     announcementBar: DEFAULT_ANNOUNCEMENT_BAR,
+    middleBarLinks: DEFAULT_MIDDLE_BAR_LINKS,
     newsletter: DEFAULT_NEWSLETTER,
 };
 
@@ -573,6 +604,7 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     footerColumns: DEFAULT_FOOTER_COLUMNS,
     socialLinks: DEFAULT_SOCIAL_LINKS,
     announcementBar: DEFAULT_ANNOUNCEMENT_BAR,
+    middleBarLinks: DEFAULT_MIDDLE_BAR_LINKS,
     newsletter: DEFAULT_NEWSLETTER,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     catalogConfig: DEFAULT_CATALOG_CONFIG,

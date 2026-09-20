@@ -309,6 +309,14 @@ const getPublicStoreSetting = async () => {
         footerColumns: merge(stored?.footerColumns, DEFAULT_PUBLIC_SETTINGS.footerColumns),
         socialLinks: merge(stored?.socialLinks, DEFAULT_PUBLIC_SETTINGS.socialLinks),
         announcementBar: merge(stored?.announcementBar, DEFAULT_PUBLIC_SETTINGS.announcementBar),
+        /*
+         * `merge` substitutes only on null/undefined, which is what this field
+         * needs: an EMPTY ARRAY is a merchant who cleared the row and must be
+         * served as empty, while null is a column never written and takes the
+         * default. Swapping in the default for a falsy value would make "no
+         * links" impossible to express.
+         */
+        middleBarLinks: merge(stored?.middleBarLinks, DEFAULT_PUBLIC_SETTINGS.middleBarLinks),
         newsletter: merge(stored?.newsletter, DEFAULT_PUBLIC_SETTINGS.newsletter),
 
         /*

@@ -57,6 +57,20 @@ export interface IAnnouncementBar {
     }[];
 }
 
+/**
+ * One link action in the header's main row, beside the cart.
+ *
+ * No `source`, unlike an announcement link: binding one to the store's phone or
+ * email would make it a contact detail, and those belong in the strip above.
+ * See store-setting.validation.ts.
+ */
+export interface IMiddleBarLink {
+    /** An Iconify name, e.g. `fa-solid:truck`. */
+    icon?: string;
+    label: string;
+    href: string;
+}
+
 export interface INewsletter {
     heading: string;
     subtext: string;
@@ -266,6 +280,7 @@ export interface IUpdateStoreSettingPayload {
     footerColumns?: IFooterColumn[];
     socialLinks?: ISocialLink[];
     announcementBar?: IAnnouncementBar;
+    middleBarLinks?: IMiddleBarLink[];
     newsletter?: INewsletter;
 
     checkoutConfig?: ICheckoutConfig;

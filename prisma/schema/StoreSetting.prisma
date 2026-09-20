@@ -194,11 +194,31 @@ model StoreSetting {
   /// footerColumns:   [{ title, links: [{ label, href }] }]
   /// socialLinks:     [{ platform, url }]
   /// announcementBar: { enabled, text, links: [{ icon, label, href }] }
+  /// middleBarLinks:  [{ icon?, label, href }]
   /// newsletter:      { heading, subtext, placeholder, buttonLabel }
+  ///
+  /// `middleBarLinks` is the header's MAIN row - the one carrying the brand, the
+  /// search box and the cart - and is the only merchant-configurable slot in it;
+  /// Wishlist, Compare, Cart and Account there are components with live state,
+  /// not links. Deliberately NOT part of `announcementBar`: that strip is for
+  /// contact details and a promotional message, it is hidden below `md`, and it
+  /// disappears entirely when the merchant switches it off - so an action a
+  /// returning shopper comes back to use cannot live in it. Track Order was in
+  /// it until add-header-middle-bar-links moved it here.
+  ///
+  /// Capped at 4 (announcementBar's links allow 6): this row already holds the
+  /// brand, a max-w-2xl search box and up to four built-in actions, and it is
+  /// the row that runs out of horizontal width first - below `lg` it already
+  /// hides Wishlist and Compare for that reason.
+  ///
+  /// No `source` binding, unlike an announcement link. These are ordinary
+  /// links; binding one to the store's phone or email would be a contact
+  /// detail, which is what the strip above is for.
   mainNav         Json?
   footerColumns   Json?
   socialLinks     Json?
   announcementBar Json?
+  middleBarLinks  Json?
   newsletter      Json?
 
   /// Zod-validated on write exactly like the presentation columns above - the

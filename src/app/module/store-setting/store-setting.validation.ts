@@ -76,6 +76,40 @@ export const announcementBarSchema = z.object({
         .optional(),
 });
 
+/**
+ * Link actions in the header's MAIN row — the one with the brand, the search
+ * box and the cart — beside Wishlist, Compare, Cart and Account.
+ *
+ * Shaped like an announcement-bar link MINUS `source`, and that omission is the
+ * point rather than an oversight: `source` binds a link to the store's phone or
+ * email, which makes it a contact detail, and contact details belong in the
+ * strip above. These are ordinary links.
+ *
+ * CAPPED AT 4, not the announcement bar's 6. That bar is one wide row holding a
+ * truncating message and its links; this row already carries the brand, a
+ * `max-w-2xl` search box and up to four built-in actions, and it is the row
+ * that runs out of horizontal space first — below `lg` the storefront already
+ * hides Wishlist and Compare for exactly that reason. Four is the number that
+ * cannot overflow the row with every built-in visible. It bounds how far a
+ * merchant can crowd a row whose constraints they cannot see; it is not a
+ * technical limit.
+ *
+ * As with every Json column on this row, THIS SCHEMA IS THE ONLY GATE —
+ * Postgres constrains nothing inside `middleBarLinks`.
+ *
+ * See openspec/changes/add-header-middle-bar-links, design.md Decision 5.
+ */
+export const middleBarLinksSchema = z
+    .array(
+        z.object({
+            /** An Iconify name, e.g. `fa-solid:truck`. Optional — a label alone is a valid link. */
+            icon: z.string().max(100).optional(),
+            label: z.string().min(1).max(100),
+            href: z.string().min(1).max(500),
+        }),
+    )
+    .max(4);
+
 export const newsletterSchema = z.object({
     heading: z.string().max(200),
     subtext: z.string().max(500),
@@ -868,6 +902,14 @@ export const updateStoreSettingZodSchema = z.object({
     footerColumns: footerColumnsSchema.optional(),
     socialLinks: socialLinksSchema.optional(),
     announcementBar: announcementBarSchema.optional(),
+    /*
+     * `.optional()` alone, NOT `.nullable()`: there is no third state here. An
+     * omitted key means "leave the column untouched" under the partial upsert,
+     * which is what lets the Header Links editor send its three keys without
+     * clobbering the other editors'. "The merchant wants no links in this row"
+     * is the empty array — the same distinction `homeConfig` below documents.
+     */
+    middleBarLinks: middleBarLinksSchema.optional(),
     newsletter: newsletterSchema.optional(),
 
     // Checkout and theme (Json columns). Optional like everything else here, so
