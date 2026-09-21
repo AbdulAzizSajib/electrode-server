@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node dist/app/server.js",
     "build": "prisma generate && tsc && node scripts/fix-imports.js",
+    "build:cpanel": "npm run build && node scripts/package-cpanel.mjs",
     "dev": "tsx watch src/app/server.ts",
     "lint": "eslint ./src/**/*",
     "migrate": "prisma migrate dev",
