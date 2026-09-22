@@ -22,6 +22,8 @@ import {
     HOME_SECTION_KEYS,
     HomeSectionConfig,
     HomeSectionKey,
+    HomeSectionVariant,
+    resolveSectionVariant,
     SINGLETON_ID,
 } from "./store-setting.constant";
 import {
@@ -150,18 +152,51 @@ const mergeSeoConfig = (stored: unknown): ISeoConfig => {
  * than one that ignores a corrupt value, which is the same direction
  * `resolveSiteMode` fails in below.
  *
+ * A SECTION'S LAYOUT IS RESOLVED HERE TOO, on exactly the same principle as the
+ * key list: the response always carries a complete, current answer, so no client
+ * ever has to default one. A stored layout that is still offered is reported as
+ * stored; one that is absent, unrecognised, or belongs to a layout since
+ * withdrawn resolves to that section's default. Nothing is rewritten — this is a
+ * read rule, and a store whose row predates layouts keeps reading as the default
+ * without a migration.
+ *
+ * THAT RESOLUTION IS ALSO THE EASIEST THING TO BREAK HERE, and it breaks
+ * silently. This function REBUILDS each entry rather than passing it through, so
+ * a `variant` that is not carried explicitly through both the map below and the
+ * two rebuild paths is dropped on the way out — the merchant's choice saves,
+ * persists correctly, and is gone on the very next read. It passes every manual
+ * test that does not reload the page. See
+ * openspec/changes/add-hero-section-variants, design.md Decision 4.
+ *
  * See openspec/changes/add-homepage-section-toggles, design.md Decision 2.
  */
+
+/**
+ * One section entry with its layout resolved, for the paths where nothing was
+ * stored — the non-array fallback and the splice. Returns a NEW object rather
+ * than mutating, so DEFAULT_HOME_CONFIG is never written through.
+ */
+const withVariant = (section: HomeSectionConfig): HomeSectionConfig => {
+    const variant = resolveSectionVariant(section.key, section.variant);
+    return variant === undefined
+        ? { key: section.key, enabled: section.enabled }
+        : { key: section.key, enabled: section.enabled, variant };
+};
+
 export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
-    if (!Array.isArray(stored)) return DEFAULT_HOME_CONFIG;
+    if (!Array.isArray(stored)) return DEFAULT_HOME_CONFIG.map(withVariant);
 
     const registry = new Set<string>(HOME_SECTION_KEYS);
-    const seen = new Map<HomeSectionKey, boolean>();
+    const seen = new Map<HomeSectionKey, { enabled: boolean; variant?: HomeSectionVariant }>();
 
     for (const entry of stored) {
         if (typeof entry !== "object" || entry === null) continue;
 
-        const { key, enabled } = entry as { key?: unknown; enabled?: unknown };
+        const { key, enabled, variant } = entry as {
+            key?: unknown;
+            enabled?: unknown;
+            variant?: unknown;
+        };
 
         // An unregistered key is dropped rather than carried: a section removed
         // from the registry has no component left to render, and passing it
@@ -172,7 +207,13 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
 
         // A non-boolean `enabled` is treated as ON, matching the splice
         // direction: the safe failure is showing a section, not hiding one.
-        seen.set(key as HomeSectionKey, enabled !== false);
+        // `variant` is resolved rather than trusted, so an unrecognised string
+        // becomes the default instead of reaching a client that cannot render
+        // it.
+        seen.set(key as HomeSectionKey, {
+            enabled: enabled !== false,
+            variant: resolveSectionVariant(key as HomeSectionKey, variant),
+        });
     }
 
     /*
@@ -185,7 +226,12 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
      */
     const ordered: HomeSectionConfig[] = [];
 
-    for (const [key, enabled] of seen) ordered.push({ key, enabled });
+    for (const [key, { enabled, variant }] of seen) {
+        // `variant` omitted entirely, not set to undefined, for a section that
+        // offers no choice — otherwise eleven of the twelve entries would carry
+        // a dead key into every settings response.
+        ordered.push(variant === undefined ? { key, enabled } : { key, enabled, variant });
+    }
 
     HOME_SECTION_KEYS.forEach((key, registryIndex) => {
         if (seen.has(key)) return;
@@ -205,7 +251,11 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
             if (precedingKeys.has(section.key)) insertAt = index + 1;
         });
 
-        ordered.splice(insertAt, 0, { key, enabled: true });
+        // The SECOND rebuild path, and it needs the layout as much as the first:
+        // a section spliced in here has never been saved, so its layout can only
+        // be the default — but it still has to be PRESENT, or the hero arrives
+        // without one for every store that predates the section.
+        ordered.splice(insertAt, 0, withVariant({ key, enabled: true }));
     });
 
     return ordered;

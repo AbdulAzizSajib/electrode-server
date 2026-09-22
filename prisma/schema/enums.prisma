@@ -277,9 +277,25 @@ enum AuditAction {
 /// Which region of the storefront a banner renders in. The three HERO_* values
 /// address the homepage hero's visually distinct slots, which have different
 /// aspect ratios and so cannot share one bucket:
-///   HERO_SLIDER - the large left carousel (multiple banners rotate as slides)
-///   HERO_SIDE   - the square tiles at the top right
-///   HERO_PROMO  - the wide tile beneath them
+///   HERO_SLIDER - the rotating panel (multiple banners cycle as slides)
+///   HERO_SIDE   - the secondary tiles beside or beneath it
+///   HERO_PROMO  - the remaining wide/third tile
+///
+/// THESE ARE SLOTS, NOT A LAYOUT. The hero's arrangement is a merchant setting
+/// (`StoreSetting.homeConfig`, the HERO entry's `variant`), and each layout uses
+/// a different subset of these three at different shapes:
+///   SPLIT_THREE   SLIDER + 2x SIDE + 1x PROMO   (the default)
+///   SPLIT_ONE     SLIDER + 1x SIDE
+///   FULL_SLIDER   SLIDER only
+///   SLIDER_STACK  SLIDER + 2x SIDE + 1x PROMO, stacked in a row beneath it
+///
+/// NO PLACEMENT IS EVER ADDED PER LAYOUT. Artwork belongs to the store, not to
+/// an arrangement: a slot the current layout does not render is simply not read,
+/// its rows stay exactly as they are, and it renders again unchanged if the
+/// merchant switches back. Per-layout placements would instead make switching
+/// layout look like it destroyed a merchant's uploads. See
+/// openspec/changes/add-hero-section-variants, design.md Decision 6.
+///
 /// Kept in sync by hand with `bannerPlacementEnum` in banner.validation.ts.
 /// Addressable storefront slot a Campaign can occupy, so the storefront can ask
 /// "which campaign is in this slot?" without hardcoding a campaign id. Mirrors

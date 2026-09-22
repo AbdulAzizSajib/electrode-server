@@ -10,3 +10,6 @@ dist.zip
 /src/generated
 
 .vercel
+
+# Generated DB bootstrap for cPanel (schema + migration history, no data).
+/cpanel-init.sql

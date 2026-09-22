@@ -60,7 +60,7 @@ const allowedOrigins = [
     "https://ecomsite-ui.vercel.app",
     "https://ecomsite-server.vercel.app",
     "https://testdomain.aciag.info",
-    "https://testdomainserver.aciag.info"
+    "https://testapi.aciag.info"
 
 ].filter(Boolean) as string[];
 

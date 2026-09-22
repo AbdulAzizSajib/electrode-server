@@ -1,6 +1,6 @@
 import z from "zod";
 import { parseGoogleFontEmbed } from "./google-font";
-import { HOME_SECTION_KEYS } from "./store-setting.constant";
+import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS } from "./store-setting.constant";
 
 /**
  * These schemas are the ONLY thing standing between a malformed nav tree and
@@ -488,6 +488,20 @@ export const homeConfigSchema = z
             .object({
                 key: z.enum(HOME_SECTION_KEYS, "Unknown home page section"),
                 enabled: z.boolean(),
+                /*
+                 * A BARE STRING, narrowed per key by the refinement below.
+                 *
+                 * A `z.enum` of every layout across every section would accept
+                 * a hero layout set on the brand strip — "is this a known
+                 * layout" is the weak question, and "does THIS section offer
+                 * THIS layout" is the one that matters. Only the per-key map
+                 * can answer it.
+                 *
+                 * The object is `.strict()`, so this declaration is also what
+                 * stops the whole save being rejected the moment the admin
+                 * starts sending the field.
+                 */
+                variant: z.string().optional(),
             })
             .strict(),
     )
@@ -511,6 +525,46 @@ export const homeConfigSchema = z
                 });
             }
             seen.add(section.key);
+
+            /*
+             * A layout is checked against what ITS OWN section offers.
+             *
+             * Both failures below are rejected rather than accepted-and-dropped.
+             * Dropping would store nothing while reporting success, leaving the
+             * merchant looking at a choice that saved cleanly and governs
+             * nothing — the same failure the duplicate check above exists to
+             * prevent. No UI can produce either, so a request carrying one is a
+             * bug in a client and the loud failure is the useful one.
+             *
+             * Note the asymmetry with reconcileHomeConfig, which is deliberate:
+             * WRITES ARE STRICT, READS ARE FORGIVING. A bad write is a caller
+             * that can be fixed; a bad read is a merchant's live storefront, and
+             * refusing to serve it would take a shop down over a stale string.
+             * See openspec/changes/add-hero-section-variants, design.md
+             * Decision 3.
+             */
+            if (section.variant === undefined) return;
+
+            const offered: readonly string[] | undefined = (
+                HOME_SECTION_VARIANTS as Partial<Record<string, readonly string[]>>
+            )[section.key];
+
+            if (!offered) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [index, "variant"],
+                    message: `${section.key} has only one layout, so it cannot be given one.`,
+                });
+                return;
+            }
+
+            if (!offered.includes(section.variant)) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [index, "variant"],
+                    message: `${section.variant} is not a layout ${section.key} offers. Choose one of: ${offered.join(", ")}.`,
+                });
+            }
         });
     });
 

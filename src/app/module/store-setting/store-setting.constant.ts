@@ -309,7 +309,108 @@ export const HOME_SECTION_KEYS = [
 
 export type HomeSectionKey = (typeof HOME_SECTION_KEYS)[number];
 
-export type HomeSectionConfig = { key: HomeSectionKey; enabled: boolean };
+/**
+ * The homepage hero's LAYOUT — the arrangement of its artwork, as distinct from
+ * the artwork itself, which is banners keyed by `BannerPlacement`.
+ *
+ * ORDER IS LOAD-BEARING, NOT COSMETIC. Position 0 is the default, and
+ * `SPLIT_THREE` holds it because that is the arrangement the storefront
+ * rendered before layouts were selectable at all: a slider on the left, two
+ * square tiles at the top right, one wide tile beneath them. Reorder this
+ * tuple and every store that has never opened the screen silently restyles.
+ *
+ *   SPLIT_THREE   slider left | 2 square tiles + 1 wide tile right
+ *   SPLIT_ONE     slider left | 1 large square tile right
+ *   FULL_SLIDER   one wide slider, no tiles
+ *   SLIDER_STACK  full-width slider above a row of 3 tiles
+ *
+ * All four draw on the SAME three hero placements. A layout that does not
+ * render a slot simply does not read it — the banners stay on file and render
+ * again unchanged if the merchant switches back. No placement is ever added
+ * per layout; see openspec/changes/add-hero-section-variants, design.md
+ * Decision 6.
+ *
+ * See that change's design.md Decision 2 for why this is a per-key registry
+ * rather than a flat union.
+ */
+export const HERO_VARIANTS = ["SPLIT_THREE", "SPLIT_ONE", "FULL_SLIDER", "SLIDER_STACK"] as const;
+
+export type HeroVariant = (typeof HERO_VARIANTS)[number];
+
+/**
+ * Which sections offer a choice of layout, and which layouts each offers.
+ *
+ * A key ABSENT from this map offers no choice: it has exactly one arrangement,
+ * and a request setting a layout on it is rejected rather than stored and
+ * ignored (store-setting.validation.ts). That is deliberate — a saved value
+ * that governs nothing is the same failure the duplicate-key check above
+ * exists to prevent.
+ *
+ * THE FIRST ENTRY OF EACH TUPLE IS THAT SECTION'S DEFAULT. One source rather
+ * than a separate `defaultVariant` field, so the two cannot disagree, and the
+ * admin's picker renders the tuple in order with the first pre-selected.
+ *
+ * THIS IS A SIXTH PLACE A SECTION KEY IS NAMED. The HOME_SECTION_KEYS comment
+ * above lists the other five; a section that offers layouts must also be
+ * mirrored in `frontend/src/lib/hero-variants.ts` and
+ * `admin/src/lib/api/store-settings.ts`, in the same order, by each repo's own
+ * change. A storefront missing a component for a layout this map offers falls
+ * back to the default rather than rendering nothing — but it is still drift.
+ *
+ * `PRODUCT_CARD` and `CATEGORY_GRID` join this map in later slices of the
+ * preset work; the registry shape exists so that costs a data edit rather than
+ * a second schema change.
+ */
+export const HOME_SECTION_VARIANTS = {
+    HERO: HERO_VARIANTS,
+} as const satisfies Partial<Record<HomeSectionKey, readonly [string, ...string[]]>>;
+
+/** Every layout any section offers, across the whole registry. */
+export type HomeSectionVariant =
+    (typeof HOME_SECTION_VARIANTS)[keyof typeof HOME_SECTION_VARIANTS][number];
+
+/**
+ * A section's layout as it should be REPORTED, given whatever is stored.
+ *
+ * The one implementation of "absent, unrecognised, or withdrawn → the
+ * section's default", shared by the reconciler and the verification script so
+ * the rule cannot be stated twice and drift.
+ *
+ * Returns `undefined` for a key that offers no choice, which is what lets the
+ * reconciler omit the field entirely rather than emit an explicit `undefined`
+ * onto every one of the other eleven sections.
+ *
+ * READ-TIME ONLY. This never rewrites what is stored — see
+ * openspec/changes/add-hero-section-variants, design.md Decision 4.
+ */
+export const resolveSectionVariant = (
+    key: HomeSectionKey,
+    stored: unknown,
+): HomeSectionVariant | undefined => {
+    const offered: readonly string[] | undefined = (
+        HOME_SECTION_VARIANTS as Partial<Record<HomeSectionKey, readonly string[]>>
+    )[key];
+
+    if (!offered) return undefined;
+    if (typeof stored === "string" && offered.includes(stored)) {
+        return stored as HomeSectionVariant;
+    }
+
+    // Position 0 is the default — see the HERO_VARIANTS comment.
+    return offered[0] as HomeSectionVariant;
+};
+
+export type HomeSectionConfig = {
+    key: HomeSectionKey;
+    enabled: boolean;
+    /**
+     * OPTIONAL, and that is the whole compatibility story: every stored
+     * `homeConfig` predates this field, so absent has to keep meaning "the
+     * layout you already had". Absent on a section that offers a choice is
+     * resolved to the default on read, never backfilled.
+     */
+    variant?: HomeSectionVariant;
+};
 
 /**
  * The homepage as it renders with nothing configured: every section on, in
@@ -325,6 +426,12 @@ export type HomeSectionConfig = { key: HomeSectionKey; enabled: boolean };
  * settings read that fell back to "everything off" would serve a blank homepage
  * to a shop that has done nothing wrong, and a shopper cannot tell a stripped
  * homepage from a merchant's deliberate choice.
+ *
+ * NO `variant` IS SPELLED OUT HERE, deliberately. Absent already resolves to the
+ * section's default on read, so writing one in would create two representations of
+ * one state — absent and explicitly-default — that reconciliation would then have
+ * to keep equivalent forever. Avoiding exactly that is what reconciliation is for.
+ * See openspec/changes/add-hero-section-variants, design.md Decision 5.
  */
 export const DEFAULT_HOME_CONFIG: HomeSectionConfig[] = HOME_SECTION_KEYS.map((key) => ({
     key,
