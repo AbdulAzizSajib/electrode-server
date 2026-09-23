@@ -20,6 +20,36 @@ model PurchaseOrderItem {
   unitCost  Decimal @db.Decimal(12, 2)
   totalCost Decimal @db.Decimal(12, 2)
 
+  /// Selling prices this line PROPOSES for the item it names, applied by a
+  /// goods receipt rather than when the line is saved.
+  ///
+  /// NULL MEANS "THIS LINE HAS NO OPINION ABOUT THE SELLING PRICE". That is
+  /// what every row written before these columns existed means, and what an
+  /// untouched line keeps meaning — so there is one representation of that
+  /// state rather than two. It is also why the admin's staged inputs start
+  /// EMPTY and are never pre-filled with the item's current prices: filling
+  /// them would make every line carry a staged value equal to the current one,
+  /// and "no opinion" would become unrepresentable.
+  ///
+  /// APPLIED ONCE, ON THE FIRST RECEIPT against this line, and NOT cleared
+  /// afterwards — the line stays the record of what was applied, which is what
+  /// makes the receipt auditable. Applying on every partial receipt would
+  /// overwrite a correction a merchant made between two deliveries of one
+  /// order, with nothing to explain why their fix vanished.
+  ///
+  /// The flow is one-way, exactly as it is for the cost basis: a receipt writes
+  /// the catalog, and nothing in the catalog is ever written back onto these
+  /// columns. A line may REPORT an item's current prices, but that is a read at
+  /// request time and stores no copy.
+  ///
+  /// A null `stagedSellingPrice` cannot express "clear the regular price" — it
+  /// already means "leave it alone". Clearing a regular price is a product-form
+  /// action; overloading null here would cost the no-opinion state above.
+  ///
+  /// See openspec/changes/add-purchase-order-pricing, design.md Decisions 1 and 3.
+  stagedOfferPrice   Decimal? @db.Decimal(12, 2)
+  stagedSellingPrice Decimal? @db.Decimal(12, 2)
+
   receivedQuantity Int @default(0)
 
   createdAt DateTime @default(now())

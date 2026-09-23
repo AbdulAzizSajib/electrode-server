@@ -26,7 +26,9 @@
 import { ProductStatus } from "../src/generated/prisma/client";
 import { prisma } from "../src/app/lib/prisma";
 import {
+    adjustByAmount,
     allocateLandedUnitCosts,
+    markupOnCost,
     weightedAverageCost,
 } from "../src/app/module/purchase-order/purchase-order.cost";
 import { PurchaseOrderService } from "../src/app/module/purchase-order/purchase-order.service";
@@ -113,6 +115,68 @@ const verifyArithmetic = () => {
         "no stock on hand takes the landed cost alone",
         weightedAverageCost(0, 100, 5, 250) === 250,
         `result = ${weightedAverageCost(0, 100, 5, 250)} (expected 250)`,
+    );
+
+    /*
+     * The two price computations a purchase order line offers a merchant.
+     * Pure, like the two above, and checked the same way — these are the
+     * figures the admin mirrors in the browser, so this is the authority for
+     * their rounding and for the two refusals.
+     *
+     * See openspec/changes/add-purchase-order-pricing, design.md Decision 4.
+     */
+    console.log("\n--- staged price helpers (pure) ---");
+
+    check(
+        "a 25% markup on a cost of 120 proposes 150",
+        markupOnCost(120, 25) === 150,
+        `result = ${markupOnCost(120, 25)} (expected 150)`,
+    );
+    check(
+        "a 0% markup proposes the cost itself",
+        markupOnCost(120, 0) === 120,
+        `result = ${markupOnCost(120, 0)} (expected 120)`,
+    );
+    check(
+        "a 100% markup doubles the cost",
+        markupOnCost(120, 100) === 240,
+        `result = ${markupOnCost(120, 100)} (expected 240)`,
+    );
+    check(
+        "a markup rounds to two decimals",
+        markupOnCost(33.33, 33) === 44.33,
+        `result = ${markupOnCost(33.33, 33)} (expected 44.33 — 44.32890 rounded)`,
+    );
+    check(
+        "a markup on a zero cost declines rather than proposing zero",
+        markupOnCost(0, 25) === null,
+        `result = ${markupOnCost(0, 25)} (expected null — a percentage of nothing is nothing)`,
+    );
+    check(
+        "a markup on a negative cost declines too",
+        markupOnCost(-10, 25) === null,
+        `result = ${markupOnCost(-10, 25)} (expected null)`,
+    );
+
+    check(
+        "a fixed increase adds to the price",
+        adjustByAmount(150, 20) === 170,
+        `result = ${adjustByAmount(150, 20)} (expected 170)`,
+    );
+    check(
+        "a fixed decrease is the same call with a negative delta",
+        adjustByAmount(150, -30) === 120,
+        `result = ${adjustByAmount(150, -30)} (expected 120)`,
+    );
+    check(
+        "a decrease past zero clamps rather than going negative",
+        adjustByAmount(20, -50) === 0,
+        `result = ${adjustByAmount(20, -50)} (expected 0 — never a negative price)`,
+    );
+    check(
+        "an adjustment rounds to two decimals",
+        adjustByAmount(10.005, 0) === 10.01,
+        `result = ${adjustByAmount(10.005, 0)} (expected 10.01)`,
     );
 };
 

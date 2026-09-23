@@ -11,6 +11,25 @@ const purchaseOrderItemZodSchema = z.object({
     variantId: z.string().optional(),
     quantity: z.number().int().positive(),
     unitCost: z.number().nonnegative(),
+    /**
+     * Selling prices this line proposes for the item, applied by a goods
+     * receipt rather than on save. Both optional and independently so: absent
+     * means "this line has no opinion about that price", which is what every
+     * line written before these fields existed means.
+     *
+     * THE ABOVE-COST RULE IS DELIBERATELY NOT ENFORCED HERE. Whether a staged
+     * price clears the item's cost depends on the LANDED cost the receipt will
+     * compute — which depends on the order's header shipping and tax spread
+     * across every other line — so it is not knowable from this payload. That
+     * makes it a transactional service invariant, and the service's specified
+     * answer is to warn rather than refuse (a receipt records goods that have
+     * physically arrived and must not be rejected to protect a price). It also
+     * would refuse the legitimate case: a merchant staging a loss-leader.
+     *
+     * See openspec/changes/add-purchase-order-pricing, design.md Decision 6.
+     */
+    stagedOfferPrice: z.number().nonnegative().optional(),
+    stagedSellingPrice: z.number().nonnegative().optional(),
 });
 
 export const createPurchaseOrderZodSchema = z.object({

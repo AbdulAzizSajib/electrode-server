@@ -25,12 +25,51 @@ import {
     IUpdatePurchaseOrderPayload,
 } from "./purchase-order.interface";
 
+/**
+ * What every purchase order read carries.
+ *
+ * THE THREE PRICES ARE READ, NEVER SNAPSHOTTED. A line reports the item's
+ * current cost basis, offer price and regular price so a merchant costing an
+ * order can see what the shipment does to the margin without leaving the page.
+ * They are resolved at request time and no copy is stored on the line — the
+ * flow is one-way (a receipt writes the catalog; the catalog is never written
+ * back onto a line), so a later product edit changes what this reports and
+ * changes nothing about the order.
+ *
+ * They also never affect money: `unitCost`, `totalCost`, `subtotal` and
+ * `totalAmount` are what the supplier charged and are untouched by any of this.
+ *
+ * Variant-then-parent precedence is applied by the caller, not here — Prisma
+ * cannot express a COALESCE across two relations. `resolveItemPrices` below is
+ * the one place that does it, so the figures reported match the ones
+ * `receivePurchaseOrder` values the line by.
+ *
+ * See openspec/changes/add-purchase-order-pricing, design.md Decision 5.
+ */
 const PURCHASE_ORDER_INCLUDE = {
     supplier: true,
     items: {
         include: {
-            product: { select: { id: true, name: true, sku: true } },
-            variant: { select: { id: true, name: true, sku: true } },
+            product: {
+                select: {
+                    id: true,
+                    name: true,
+                    sku: true,
+                    purchasePrice: true,
+                    offerPrice: true,
+                    sellingPrice: true,
+                },
+            },
+            variant: {
+                select: {
+                    id: true,
+                    name: true,
+                    sku: true,
+                    purchasePrice: true,
+                    offerPrice: true,
+                    sellingPrice: true,
+                },
+            },
         },
     },
 };
@@ -51,6 +90,64 @@ const withSettlement = async <T extends { id: string; totalAmount: unknown }>(ro
         ...row,
         ...deriveSettlement(Number(row.totalAmount), paidByPurchaseOrder.get(row.id) ?? 0),
     }));
+};
+
+/** One item's three prices as the catalog currently holds them, or null where unset. */
+export interface IItemPrices {
+    purchasePrice: number | null;
+    offerPrice: number | null;
+    sellingPrice: number | null;
+}
+
+interface IPriceSource {
+    purchasePrice?: unknown;
+    offerPrice?: unknown;
+    sellingPrice?: unknown;
+}
+
+/**
+ * The item's current prices for a line, variant-then-parent, field by field.
+ *
+ * FIELD BY FIELD RATHER THAN WHOLE-ROW, and that is the part worth stating: a
+ * variant may set its own offer price and inherit its parent's regular price,
+ * so choosing "the variant if there is one, else the product" for all three at
+ * once would report nulls for the ones it does not override. Per field is what
+ * `productVariant.prisma` describes and what `receivePurchaseOrder` already
+ * does when it decides which cost basis to average against — reporting one
+ * precedence while acting on another is the failure this avoids.
+ */
+const resolveItemPrices = (product: IPriceSource | null, variant: IPriceSource | null): IItemPrices => {
+    const pick = (field: keyof IItemPrices) => {
+        const fromVariant = variant?.[field];
+        const value = fromVariant ?? product?.[field];
+        return value == null ? null : Number(value);
+    };
+
+    return {
+        purchasePrice: pick("purchasePrice"),
+        offerPrice: pick("offerPrice"),
+        sellingPrice: pick("sellingPrice"),
+    };
+};
+
+/**
+ * Attaches each line's `itemPrices` — the catalog's current figures for the
+ * item, for the merchant's information while costing the order.
+ *
+ * Derived on every read and stored nowhere; see `PURCHASE_ORDER_INCLUDE`.
+ */
+const withItemPrices = <T extends { items?: { product?: IPriceSource | null; variant?: IPriceSource | null }[] }>(
+    row: T,
+): T => {
+    if (!row.items) return row;
+
+    return {
+        ...row,
+        items: row.items.map((item) => ({
+            ...item,
+            itemPrices: resolveItemPrices(item.product ?? null, item.variant ?? null),
+        })),
+    };
 };
 
 const generatePurchaseNumber = () => {
@@ -132,6 +229,10 @@ const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrder
                     quantity: item.quantity,
                     unitCost: item.unitCost,
                     totalCost: item.quantity * item.unitCost,
+                    // Proposals only. A receipt applies these; creating a line
+                    // never touches the product's own prices.
+                    stagedOfferPrice: item.stagedOfferPrice ?? null,
+                    stagedSellingPrice: item.stagedSellingPrice ?? null,
                 })),
             },
         },
@@ -142,7 +243,7 @@ const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrder
         newData: purchaseOrder,
     });
 
-    return purchaseOrder;
+    return withItemPrices(purchaseOrder);
 };
 
 /**
@@ -191,6 +292,13 @@ const getPurchaseOrders = async (queryParams: IQueryParams) => {
 
     const result = await queryBuilder.execute();
 
+    /*
+     * NO `withItemPrices` HERE. The list view shows one row per order and
+     * never renders a line's prices, so resolving them for every line of every
+     * order on the page would be work nothing reads. The detail read and the
+     * create response — the two places a merchant actually costs a line — do
+     * resolve them.
+     */
     return { ...result, data: await withSettlement(result.data as { id: string; totalAmount: unknown }[]) };
 };
 
@@ -211,7 +319,7 @@ const getPurchaseOrderOrThrow = async (id: string) => {
 const getPurchaseOrderById = async (id: string) => {
     const purchaseOrder = await getPurchaseOrderOrThrow(id);
     const [withFigures] = await withSettlement([purchaseOrder]);
-    return withFigures;
+    return withItemPrices(withFigures);
 };
 
 /**
@@ -343,6 +451,8 @@ const amendPurchaseOrderItems = async (
                         quantity: item.quantity,
                         unitCost: item.unitCost,
                         totalCost: item.quantity * item.unitCost,
+                        stagedOfferPrice: item.stagedOfferPrice ?? null,
+                        stagedSellingPrice: item.stagedSellingPrice ?? null,
                     },
                 });
                 continue;
@@ -371,6 +481,16 @@ const amendPurchaseOrderItems = async (
                     quantity: item.quantity,
                     unitCost: item.unitCost,
                     totalCost: item.quantity * item.unitCost,
+                    /*
+                     * `?? null` rather than leaving the field out: an amendment
+                     * sends the line's whole state, so a staged price the
+                     * merchant CLEARED arrives absent and has to be written
+                     * back to null. Omitting the key would keep the old
+                     * proposal and the receipt would apply a price the merchant
+                     * had removed from the form.
+                     */
+                    stagedOfferPrice: item.stagedOfferPrice ?? null,
+                    stagedSellingPrice: item.stagedSellingPrice ?? null,
                 },
             });
         }
@@ -642,6 +762,65 @@ const receivePurchaseOrder = async (
              */
             const landedUnitCost = landedUnitCostByLine.get(item.id);
 
+            /*
+             * The selling prices this line STAGED, applied here and nowhere
+             * else.
+             *
+             * SAME TRIGGER AS THE COST BASIS, and that is the whole argument
+             * for the placement: the cost basis moves on receipt because
+             * receipt is the moment the stock it describes exists, and a
+             * selling price staged against that stock has exactly the same
+             * trigger. Writing on save instead would let a DRAFT order reprice
+             * a live storefront before any goods existed, and a cancelled one
+             * would leave the reprice behind.
+             *
+             * SAME TRANSACTION, for the same reason the cost write is: a
+             * receipt must never leave units on hand recorded at a new cost
+             * while the price the merchant staged against them is unwritten.
+             *
+             * ONCE PER LINE, on the FIRST receipt only. `receivedQuantity` is
+             * read here before this receipt's increment is applied, so it is
+             * still 0 on a first receipt. Re-applying on a later partial
+             * receipt would overwrite a correction the merchant made between
+             * two deliveries of one order — they fix the price on the product
+             * form, receive the rest, and their fix silently reverts to the
+             * stale proposal. Applying once makes a staged price a proposal
+             * that is consumed.
+             *
+             * The staged values are deliberately NOT cleared: the line stays
+             * the record of what was applied, which is what makes the receipt
+             * auditable afterwards.
+             *
+             * See openspec/changes/add-purchase-order-pricing, design.md
+             * Decisions 2 and 3.
+             */
+            const isFirstReceipt = item.receivedQuantity === 0;
+            const stagedOfferPrice = item.stagedOfferPrice == null ? null : Number(item.stagedOfferPrice);
+            const stagedSellingPrice =
+                item.stagedSellingPrice == null ? null : Number(item.stagedSellingPrice);
+
+            // Only what is present: an absent staged price leaves that price
+            // exactly as the item holds it.
+            const stagedPriceData = {
+                ...(stagedOfferPrice !== null ? { offerPrice: stagedOfferPrice } : {}),
+                ...(stagedSellingPrice !== null ? { sellingPrice: stagedSellingPrice } : {}),
+            };
+            const appliesStagedPrices = isFirstReceipt && Object.keys(stagedPriceData).length > 0;
+
+            if (appliesStagedPrices) {
+                if (variant) {
+                    await tx.productVariant.update({
+                        where: { id: item.variantId as string },
+                        data: stagedPriceData,
+                    });
+                } else {
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: stagedPriceData,
+                    });
+                }
+            }
+
             if (landedUnitCost !== undefined) {
                 const newCost = weightedAverageCost(
                     onHandBefore,
@@ -662,7 +841,24 @@ const receivePurchaseOrder = async (
                     });
                 }
 
-                const effectiveOfferPrice = Number(variant?.offerPrice ?? product?.offerPrice ?? 0);
+                /*
+                 * The price the receipt LEAVES IN PLACE, not the one it found.
+                 *
+                 * A merchant who staged a price precisely to fix the margin
+                 * must not then be warned that the item sells below cost — the
+                 * warning would be about a price that no longer exists. And one
+                 * whose staged price is still under the new landed cost must be
+                 * warned, at the same moment, for the same reason. So the
+                 * comparison uses the staged offer price where this receipt
+                 * applied one, and the item's existing offer price otherwise.
+                 *
+                 * See design.md and the `api/inventory` delta's
+                 * "below-cost warning accounts for staged prices".
+                 */
+                const effectiveOfferPrice =
+                    appliesStagedPrices && stagedOfferPrice !== null
+                        ? stagedOfferPrice
+                        : Number(variant?.offerPrice ?? product?.offerPrice ?? 0);
 
                 costOutcomes.push({
                     productName: item.variant

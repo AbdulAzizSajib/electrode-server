@@ -9,6 +9,14 @@ export interface IPurchaseOrderItemInput {
     variantId?: string;
     quantity: number;
     unitCost: number;
+    /**
+     * Selling prices this line PROPOSES for the item, applied by a goods
+     * receipt and not on save. Independently optional; absent means "no opinion
+     * about that price". See PurchaseOrderItem.prisma and
+     * openspec/changes/add-purchase-order-pricing, design.md Decisions 1 and 2.
+     */
+    stagedOfferPrice?: number;
+    stagedSellingPrice?: number;
 }
 
 export interface ICreatePurchaseOrderPayload {
@@ -42,6 +50,9 @@ export interface IAmendPurchaseOrderItemInput {
     variantId?: string;
     quantity: number;
     unitCost: number;
+    /** As on `IPurchaseOrderItemInput` — a proposal applied by a receipt, not on save. */
+    stagedOfferPrice?: number;
+    stagedSellingPrice?: number;
 }
 
 export interface IAmendPurchaseOrderPayload {

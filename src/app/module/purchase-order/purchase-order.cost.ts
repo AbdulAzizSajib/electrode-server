@@ -1,12 +1,14 @@
 /**
- * The cost arithmetic behind `Product.purchasePrice` / `ProductVariant.purchasePrice`.
+ * The cost arithmetic behind `Product.purchasePrice` / `ProductVariant.purchasePrice`,
+ * and the two price computations a purchase order line offers a merchant.
  *
- * Deliberately free of Prisma and of any I/O: these are the two calculations
+ * Deliberately free of Prisma and of any I/O: these are the calculations
  * that can actually be wrong, and keeping them pure is what lets
  * `scripts/verify-cost-basis.ts` exercise them with plain function calls
  * instead of a database fixture per case.
  *
- * See openspec/changes/add-weighted-average-cost-basis/design.md.
+ * See openspec/changes/add-weighted-average-cost-basis/design.md and
+ * openspec/changes/add-purchase-order-pricing/design.md Decision 4.
  */
 
 /** Money is `Decimal(12, 2)` everywhere in this schema; every figure leaving this module matches. */
@@ -111,4 +113,54 @@ export const weightedAverageCost = (
     }
 
     return round2((onHandBefore * existingCost + receivedQuantity * landedUnitCost) / totalUnits);
+};
+
+/**
+ * A selling price computed as a markup on what the line says the goods cost.
+ *
+ * ── Why the basis is `unitCost` and not landed cost ──────────────────────
+ *
+ * Landed cost is the accounting-correct basis for the COST BASIS, and
+ * `allocateLandedUnitCosts` above is what computes it. It is the wrong basis
+ * for this: landed cost depends on the order's header-level shipping and tax
+ * apportioned across EVERY line, so it changes when an unrelated line is
+ * edited. A merchant who marked up a line at 25% would find the figure no
+ * longer matched the cost shown on the row, with nothing on screen to explain
+ * why. `unitCost` is the number in front of them.
+ *
+ * ── Why zero declines rather than returning zero ─────────────────────────
+ *
+ * A percentage of nothing is nothing. Returning 0.00 for a line nobody has
+ * costed yet would propose a free product and look like a computed answer;
+ * null lets the caller say "this line needs a cost first", which is the truth.
+ * A negative cost is nonsense in the same way and takes the same path.
+ *
+ * NOT A STORED RULE. The caller writes the returned figure into a staged price
+ * and the merchant may edit it from there. Nothing re-evaluates this when the
+ * line's cost later changes — see design.md Decision 4 for why storing the
+ * rule instead would apply a price the line never showed.
+ */
+export const markupOnCost = (unitCost: number, percent: number): number | null => {
+    if (unitCost <= 0) return null;
+
+    return round2(unitCost * (1 + percent / 100));
+};
+
+/**
+ * A price moved by a fixed amount: `delta` positive to increase, negative to
+ * decrease. The decrease case is the same function with a negative number —
+ * there is no separate subtract, because there is no separate arithmetic.
+ *
+ * CLAMPED AT ZERO. A decrease larger than the price would otherwise produce a
+ * negative figure, and every reader of these `Decimal(12, 2)` columns assumes
+ * a non-negative price. Clamping keeps the mistake visible (the merchant sees
+ * 0.00 and knows the adjustment was too large) rather than storing a value
+ * that would misprice a product or break a total downstream.
+ *
+ * Deliberately unaware of WHICH price it is adjusting: offer, regular, or a
+ * figure the merchant typed. It takes a number and returns a number, so there
+ * is one implementation rather than one per field.
+ */
+export const adjustByAmount = (price: number, delta: number): number => {
+    return round2(Math.max(0, price + delta));
 };

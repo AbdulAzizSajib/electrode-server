@@ -320,9 +320,22 @@ export type HomeSectionKey = (typeof HOME_SECTION_KEYS)[number];
  * tuple and every store that has never opened the screen silently restyles.
  *
  *   SPLIT_THREE   slider left | 2 square tiles + 1 wide tile right
- *   SPLIT_ONE     slider left | 1 large square tile right
  *   FULL_SLIDER   one wide slider, no tiles
  *   SLIDER_STACK  full-width slider above a row of 3 tiles
+ *   SPLIT_TALL    slider left (two thirds) | 1 tall tile right
+ *
+ * WITHDRAWN: `SPLIT_ONE` (slider left | 1 large square tile right). Removed on
+ * request — it was the only layout whose side column held a single tile at the
+ * full column width, which made it the odd one out in every surface that drew
+ * the set, and the merchant did not want it offered. Removing it is safe
+ * BECAUSE `resolveSectionVariant` treats an unrecognised stored value exactly
+ * as it treats an absent one: a store still holding "SPLIT_ONE" reads back as
+ * the default `SPLIT_THREE` and renders it, rather than erroring or rendering
+ * nothing. Nothing rewrites the stored row — the next save from the panel
+ * replaces it.
+ *
+ * DO NOT re-add a variant by inserting it into the middle of this tuple.
+ * Position 0 is the default, and the order is what the admin renders.
  *
  * All four draw on the SAME three hero placements. A layout that does not
  * render a slot simply does not read it — the banners stay on file and render
@@ -333,9 +346,31 @@ export type HomeSectionKey = (typeof HOME_SECTION_KEYS)[number];
  * See that change's design.md Decision 2 for why this is a per-key registry
  * rather than a flat union.
  */
-export const HERO_VARIANTS = ["SPLIT_THREE", "SPLIT_ONE", "FULL_SLIDER", "SLIDER_STACK"] as const;
+export const HERO_VARIANTS = ["SPLIT_THREE", "FULL_SLIDER", "SLIDER_STACK", "SPLIT_TALL"] as const;
 
 export type HeroVariant = (typeof HERO_VARIANTS)[number];
+
+/**
+ * The featured-categories section's LAYOUT — how its tiles are arranged, as
+ * distinct from which categories appear, which the category service decides.
+ *
+ * ORDER IS LOAD-BEARING, NOT COSMETIC. Position 0 is the default, and `GRID`
+ * holds it because that is the arrangement the storefront rendered before
+ * layouts were selectable: a wrapping grid, seven across at desktop. Reorder
+ * this tuple and every store that has never opened the control silently
+ * restyles.
+ *
+ *   GRID     the tiles in a wrapping grid                       (DEFAULT)
+ *   SLIDER   the same tiles in one horizontal row that scrolls
+ *
+ * Both layouts render the SAME categories in the SAME order at the SAME tile
+ * size; only the arrangement differs. A layout decision never costs data.
+ *
+ * See openspec/changes/add-featured-categories-layout, design.md Decision 1.
+ */
+export const FEATURED_CATEGORIES_VARIANTS = ["GRID", "SLIDER"] as const;
+
+export type FeaturedCategoriesVariant = (typeof FEATURED_CATEGORIES_VARIANTS)[number];
 
 /**
  * Which sections offer a choice of layout, and which layouts each offers.
@@ -352,17 +387,21 @@ export type HeroVariant = (typeof HERO_VARIANTS)[number];
  *
  * THIS IS A SIXTH PLACE A SECTION KEY IS NAMED. The HOME_SECTION_KEYS comment
  * above lists the other five; a section that offers layouts must also be
- * mirrored in `frontend/src/lib/hero-variants.ts` and
+ * mirrored in `nextjs/src/lib/section-layouts.ts` and
  * `admin/src/lib/api/store-settings.ts`, in the same order, by each repo's own
  * change. A storefront missing a component for a layout this map offers falls
  * back to the default rather than rendering nothing — but it is still drift.
  *
- * `PRODUCT_CARD` and `CATEGORY_GRID` join this map in later slices of the
- * preset work; the registry shape exists so that costs a data edit rather than
- * a second schema change.
+ * `FEATURED_CATEGORIES` was the second section to join, and it cost exactly
+ * what this shape was built to make it cost: one tuple and one entry here, no
+ * schema change, no migration, and nothing in validation, reconciliation or
+ * the public read — all of which are generic over this map. `PRODUCT_CARD`
+ * follows the same route when its slice comes. `scripts/verify-section-variants.ts`
+ * iterates every key here, so a new section is covered without editing it.
  */
 export const HOME_SECTION_VARIANTS = {
     HERO: HERO_VARIANTS,
+    FEATURED_CATEGORIES: FEATURED_CATEGORIES_VARIANTS,
 } as const satisfies Partial<Record<HomeSectionKey, readonly [string, ...string[]]>>;
 
 /** Every layout any section offers, across the whole registry. */
