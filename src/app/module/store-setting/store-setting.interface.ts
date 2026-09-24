@@ -117,6 +117,52 @@ export interface IDeliverySettings {
     options: IDeliveryOption[];
 }
 
+/** Which mobile-money service receives the advance. */
+export type IMobileBankingProvider = "BKASH" | "NAGAD" | "ROCKET";
+
+/** Which slice of the order total the shopper sends before it ships. */
+export type IAdvancePaymentChoice = "DELIVERY_CHARGE" | "FULL";
+
+/**
+ * One mobile-banking account a shopper sends the advance to.
+ *
+ * `id` is generated once by the admin and never rewritten, because a placed
+ * order's payment row references it — reordering or renaming must not reattach
+ * historical claims to a different account. `accountType` is the merchant's own
+ * label ("Personal", "Merchant"); nothing branches on it.
+ */
+export interface IMobileBankingAccount {
+    id: string;
+    provider: IMobileBankingProvider;
+    number: string;
+    accountType: string;
+}
+
+/** One bank account a shopper deposits the advance into. `id` as above. */
+export interface IBankAccount {
+    id: string;
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    /** Both optional in practice: a same-bank transfer needs neither. */
+    branch: string;
+    routingNumber: string;
+}
+
+/**
+ * Whether the store collects money before it ships, and where that money goes.
+ *
+ * Stored OPTIONAL on `checkoutConfig` so a row predating the feature still
+ * parses, but always PRESENT on this type: the read path fills an absent value
+ * with the disabled default, so no consumer has to handle `undefined`. See
+ * openspec/changes/add-advance-payment-checkout, design.md Decision 1.
+ */
+export interface IAdvancePaymentConfig {
+    enabled: boolean;
+    mobileAccounts: IMobileBankingAccount[];
+    bankAccounts: IBankAccount[];
+}
+
 export interface ICheckoutConfig {
     fields: Record<ICheckoutFieldKey, ICheckoutField>;
     showCouponBox: boolean;
@@ -124,6 +170,7 @@ export interface ICheckoutConfig {
     allowGuestCheckout: boolean;
     notice: string;
     delivery: IDeliverySettings;
+    advancePayment: IAdvancePaymentConfig;
 }
 
 /** Always the parsed pair — see google-font.ts on why the URL is rebuilt, never stored raw. */

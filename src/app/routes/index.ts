@@ -4,6 +4,7 @@ import { AuditLogRoutes } from "../module/audit-log/audit-log.route";
 import { AuthRoutes } from "../module/auth/auth.route";
 import { BackupRoutes } from "../module/backup/backup.route";
 import { BannerRoutes } from "../module/banner/banner.route";
+import { PromoBannerGroupRoutes } from "../module/promo-banner-group/promo-banner-group.route";
 import { BlogPostRoutes } from "../module/blog-post/blog-post.route";
 import { BrandRoutes } from "../module/brand/brand.route";
 import { CampaignRoutes } from "../module/campaign/campaign.route";
@@ -15,7 +16,7 @@ import { LandingPageRoutes } from "../module/landing-page/landing-page.route";
 import { NotificationRoutes } from "../module/notification/notification.route";
 import { OrderRoutes } from "../module/order/order.route";
 import { PageRoutes } from "../module/page/page.route";
-import { PaymentRoutes } from "../module/payment/payment.route";
+import { PaymentQueueRoutes, PaymentRoutes } from "../module/payment/payment.route";
 import { ProductRoutes } from "../module/product/product.route";
 import { PurchaseOrderRoutes } from "../module/purchase-order/purchase-order.route";
 import { ReportRoutes } from "../module/report/report.route";
@@ -69,6 +70,13 @@ router.use("/customers/me/addresses", CustomerAddressRoutes);
 // the literal "me" segment and 404 every self-service address request.
 router.use("/customers", CustomerRoutes);
 router.use("/orders/:id/payments", PaymentRoutes);
+/*
+ * The advance-payment verification queue, which reads pending claims across
+ * EVERY order and so cannot live under /orders/:id. A distinct top-level path
+ * with no /:id mount above it, so unlike the nested mounts here its position is
+ * not load-bearing — kept beside them because it is the same module.
+ */
+router.use("/payments", PaymentQueueRoutes);
 router.use("/orders/:id/shipment", ShipmentRoutes);
 router.use("/orders/:id/returns", ReturnNestedRoutes);
 router.use("/orders/:id/refunds", RefundNestedRoutes);
@@ -87,6 +95,11 @@ router.use("/purchase-orders", PurchaseOrderRoutes);
 router.use("/coupons", CouponRoutes);
 router.use("/campaigns", CampaignRoutes);
 router.use("/banners", BannerRoutes);
+// Beside /banners, NOT nested under it. A group is a homepage arrangement that
+// banners are assigned to, not a sub-resource of any one banner — and a banner
+// names its group rather than the other way round, so there is no
+// `/banners/:id/group` for this to be the parent of.
+router.use("/promo-banner-groups", PromoBannerGroupRoutes);
 router.use("/support-tickets/:id/messages", SupportMessageRoutes);
 router.use("/support-tickets", SupportTicketRoutes);
 router.use("/notifications", NotificationRoutes);

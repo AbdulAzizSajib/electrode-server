@@ -4,9 +4,10 @@ import AppError from "../../errorHelpers/AppError";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
-import { BANNERS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
+import { BANNERS_TAG, STORE_SETTINGS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { IBannerProductSummary, ICreateBannerPayload, IPublicBanner, IUpdateBannerPayload } from "./banner.interface";
 import { checkBannerTypeContract, staleDynamicFields } from "./banner.validation";
+import { PROMO_GROUP_PLACEMENT } from "../promo-banner-group/promo-banner-group.constant";
 
 /**
  * The slim product summary a banner needs to render — deliberately not the full
@@ -38,6 +39,51 @@ const assertProductExists = async (productId: string) => {
 
     if (!product) {
         throw new AppError(status.NOT_FOUND, "Product not found");
+    }
+};
+
+/**
+ * Guards a banner's promo-group membership.
+ *
+ * Two rules, both of which must be checked against the RESOLVED placement —
+ * that is, the one the banner will have after this write, not the one in the
+ * request. A PATCH that sets a group without mentioning `placement` has to be
+ * judged against the stored placement, and a PATCH that changes `placement`
+ * away from MID has to be judged against the new one. Passing the merged value
+ * in is what makes both cases the same call.
+ *
+ *  1. ONLY A `MID` BANNER MAY BELONG TO A GROUP. The hero placements are owned
+ *     by the Home Slider manager with its own per-layout capacity rules; a
+ *     group claiming one would mean the same record edited from two surfaces
+ *     under two different sets of rules.
+ *  2. The group must exist — a 404 rather than the raw Prisma foreign-key error
+ *     a dangling id would otherwise produce.
+ *
+ * `null` is not a violation of either: it is how a merchant takes a tile out of
+ * a strip without deleting the artwork.
+ *
+ * See openspec/changes/add-promo-banner-groups, design.md Decision 2.
+ */
+const assertPromoGroupAssignable = async (
+    promoBannerGroupId: string | null | undefined,
+    resolvedPlacement: ICreateBannerPayload["placement"],
+) => {
+    if (promoBannerGroupId === undefined || promoBannerGroupId === null) return;
+
+    if (resolvedPlacement !== PROMO_GROUP_PLACEMENT) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Only a ${PROMO_GROUP_PLACEMENT}-placement banner can belong to a promo banner group`,
+        );
+    }
+
+    const group = await prisma.promoBannerGroup.findUnique({
+        where: { id: promoBannerGroupId },
+        select: { id: true },
+    });
+
+    if (!group) {
+        throw new AppError(status.NOT_FOUND, "Promo banner group not found");
     }
 };
 
@@ -84,6 +130,10 @@ const createBanner = async (payload: ICreateBannerPayload) => {
         await assertProductExists(productId);
     }
 
+    // On create the request's own placement IS the resolved one — there is no
+    // stored row to merge against.
+    await assertPromoGroupAssignable(rest.promoBannerGroupId, rest.placement);
+
     const banner = await prisma.banner.create({
         data: {
             ...rest,
@@ -94,6 +144,14 @@ const createBanner = async (payload: ICreateBannerPayload) => {
     });
 
     revalidateStorefront(BANNERS_TAG);
+
+    // A banner created straight into a group changes what that strip renders,
+    // and group membership is read alongside the settings payload — so the same
+    // two-tag rule the group service follows applies here. See
+    // promo-banner-group.service.ts for why one tag is not enough.
+    if (banner.promoBannerGroupId) {
+        revalidateStorefront(STORE_SETTINGS_TAG);
+    }
 
     return banner;
 };
@@ -165,6 +223,25 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
         throw new AppError(status.BAD_REQUEST, violations.join("; "));
     }
 
+    /*
+     * Judged against the MERGED placement, so both directions are covered: a
+     * request that sets a group without mentioning placement is checked against
+     * the stored one, and a request that moves the banner off MID is checked
+     * against the new one.
+     *
+     * That second case matters — a banner already in a group whose placement is
+     * being changed to HERO_SIDE would otherwise keep a group membership its
+     * new placement is not allowed to have. `rest.promoBannerGroupId ?? existing`
+     * is what makes the stored membership visible to the check when the request
+     * is silent about it.
+     */
+    await assertPromoGroupAssignable(
+        rest.promoBannerGroupId !== undefined
+            ? rest.promoBannerGroupId
+            : existing.promoBannerGroupId,
+        merged.placement,
+    );
+
     const banner = await prisma.banner.update({
         where: { id },
         data: {
@@ -178,15 +255,33 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
 
     revalidateStorefront(BANNERS_TAG);
 
+    /*
+     * Fires when the banner was in a group BEFORE, or is in one AFTER — not
+     * only when the request mentions the field.
+     *
+     * Moving a tile out of a strip changes that strip as surely as moving one
+     * in does, and the two states are different rows. Checking only the new
+     * value would leave the source strip stale after every reassignment, which
+     * is the exact half-invalidated state that reads as "my save did nothing".
+     */
+    if (existing.promoBannerGroupId || banner.promoBannerGroupId) {
+        revalidateStorefront(STORE_SETTINGS_TAG);
+    }
+
     return banner;
 };
 
 const deleteBanner = async (id: string) => {
-    await getBannerOrThrow(id);
+    const existing = await getBannerOrThrow(id);
 
     const banner = await prisma.banner.delete({ where: { id } });
 
     revalidateStorefront(BANNERS_TAG);
+
+    // Deleting a tile shortens the strip it belonged to.
+    if (existing.promoBannerGroupId) {
+        revalidateStorefront(STORE_SETTINGS_TAG);
+    }
 
     return banner;
 };

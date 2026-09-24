@@ -52,8 +52,59 @@ const getOrderPayments = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const verifyAdvancePayment = catchAsync(async (req: Request, res: Response) => {
+    const result = await PaymentService.verifyAdvancePayment(
+        req.user.userId,
+        req.user.role,
+        req.params.id as string,
+        req.params.paymentId as string,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment verified",
+        data: result,
+    });
+});
+
+const rejectAdvancePayment = catchAsync(async (req: Request, res: Response) => {
+    const result = await PaymentService.rejectAdvancePayment(
+        req.user.userId,
+        req.user.role,
+        req.params.id as string,
+        req.params.paymentId as string,
+        req.body.reason,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment rejected",
+        data: result,
+    });
+});
+
+/**
+ * The queue, which is NOT under /orders/:id — it reads across every order.
+ * Mounted separately for that reason; see payment.route.ts.
+ */
+const getPendingVerifications = catchAsync(async (req: Request, res: Response) => {
+    const result = await PaymentService.getPendingVerifications(req.user.role);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Pending payment verifications fetched successfully",
+        data: result,
+    });
+});
+
 export const PaymentController = {
     recordPayment,
     updatePaymentStatus,
     getOrderPayments,
+    verifyAdvancePayment,
+    rejectAdvancePayment,
+    getPendingVerifications,
 };

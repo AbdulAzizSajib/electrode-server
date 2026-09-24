@@ -44,3 +44,19 @@ export const updatePaymentStatusZodSchema = z.object({
     gatewayResponse: z.record(z.string(), z.unknown()).optional(),
     paidAt: z.iso.datetime().optional(),
 });
+
+/**
+ * Why a claimed advance payment is being rejected.
+ *
+ * Required, and trimmed-non-empty rather than merely present: a rejection whose
+ * reason is a space is one the shopper cannot act on and the next staff member
+ * cannot interpret. The service re-checks this independently, so a caller that
+ * bypasses validation cannot write a blank one either.
+ */
+export const rejectPaymentZodSchema = z.object({
+    reason: z
+        .string()
+        .trim()
+        .min(1, "Give a reason for rejecting this payment")
+        .max(500),
+});

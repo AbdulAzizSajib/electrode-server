@@ -135,6 +135,37 @@ export const DEFAULT_NEWSLETTER = {
 };
 
 /**
+ * Advance payment as a store that has never configured it has it: OFF, with no
+ * accounts to send money to.
+ *
+ * Off is the only safe default. A store upgraded into this feature must keep
+ * taking plain cash-on-delivery orders exactly as it did the day before — the
+ * alternative is a checkout that starts demanding money up front because a
+ * deploy happened, which would read to the merchant as an outage.
+ *
+ * The empty account lists are not a placeholder to be filled with examples.
+ * There is no bKash number that is right for someone else's shop, and a
+ * seeded one would be a real number collecting real money.
+ */
+export const DEFAULT_ADVANCE_PAYMENT = {
+    enabled: false,
+    mobileAccounts: [] as {
+        id: string;
+        provider: "BKASH" | "NAGAD" | "ROCKET";
+        number: string;
+        accountType: string;
+    }[],
+    bankAccounts: [] as {
+        id: string;
+        bankName: string;
+        accountName: string;
+        accountNumber: string;
+        branch: string;
+        routingNumber: string;
+    }[],
+};
+
+/**
  * What checkout asks for when a store has never configured it.
  *
  * These reproduce the storefront's PREVIOUS hardcoded behaviour exactly — name,
@@ -183,6 +214,7 @@ export const DEFAULT_CHECKOUT_CONFIG = {
             days: number;
         }[],
     },
+    advancePayment: DEFAULT_ADVANCE_PAYMENT,
 };
 
 /**
@@ -224,6 +256,49 @@ export const DEFAULT_CATALOG_CONFIG = {
     showWishlist: true,
     showCompare: true,
     showQuickView: true,
+    /*
+     * Whether the cart drawer opens BY ITSELF after a shopper adds something.
+     *
+     * TRUE for the two reasons every default in this file is what it is. It
+     * reproduces the storefront's behaviour before the flag existed, so the
+     * column is added with no backfill and nothing changes for an existing
+     * store. And it is the only safe direction to fail in: this constant is
+     * also what a storefront reads when the settings request fails entirely,
+     * and a shopper who adds something, sees no drawer and has no other
+     * confirmation cannot tell a suppressed drawer from a broken cart.
+     *
+     * It governs ONLY the automatic open. Every control whose purpose is to
+     * show the cart — the header button, the mobile bar, the floating rail —
+     * opens it in both positions of this flag, which is why the storefront
+     * gates the four post-add call sites rather than the action itself.
+     *
+     * See openspec/changes/add-product-slider-and-card-quantity, design.md
+     * Decision 6.
+     */
+    openCartOnAdd: true,
+    /*
+     * Whether a listing's product card offers a QUANTITY STEPPER for something
+     * already in the cart, in place of its purchase action.
+     *
+     * FALSE, unlike every other flag in this block, and the asymmetry is the
+     * point. The three above reproduce the storefront's behaviour before they
+     * existed by being ON, because each withdraws something that was already
+     * there. This one ADDS something that never was, so reproducing the old
+     * behaviour means OFF — a store that never opens the switch keeps the plain
+     * "Add to cart" card it has always had.
+     *
+     * Off is also the safe direction for a failed settings read, for the same
+     * reason: a shopper is shown the card the shop has always shown rather than
+     * a control the merchant never chose to offer.
+     *
+     * It governs the CARD only. Changing a quantity in the cart drawer, on the
+     * cart page and in the checkout summary is how a cart is edited and is not
+     * a feature to be switched off.
+     *
+     * See openspec/changes/add-product-slider-and-card-quantity, design.md
+     * Decision 5c.
+     */
+    cardQuantityControl: false,
 };
 
 /**
@@ -373,6 +448,104 @@ export const FEATURED_CATEGORIES_VARIANTS = ["GRID", "SLIDER"] as const;
 export type FeaturedCategoriesVariant = (typeof FEATURED_CATEGORIES_VARIANTS)[number];
 
 /**
+ * The LAYOUT of a homepage row of products — how its cards are arranged, as
+ * distinct from which products appear, which each row's own query decides.
+ *
+ * ONE TUPLE, SHARED BY THREE SECTIONS. `BEST_SELLING`, `FEATURED_PRODUCTS` and
+ * `NEW_ARRIVALS` all render through the same component and offer the same two
+ * arrangements, so they name this rather than each declaring its own. They
+ * remain three separate entries in the map below, which is what lets a
+ * merchant show one row as a grid and another as a slider.
+ *
+ * ORDER IS LOAD-BEARING, NOT COSMETIC. Position 0 is the default, and `GRID`
+ * holds it because that is the arrangement the storefront rendered before
+ * these rows had a choice. Reorder this tuple and every store that has never
+ * opened the control silently restyles.
+ *
+ *   GRID     the cards in a wrapping grid                       (DEFAULT)
+ *   SLIDER   the same cards in one horizontal row that scrolls
+ *
+ * Both layouts render the SAME products in the SAME order at the SAME card
+ * size; only the arrangement differs. A layout decision never costs data.
+ *
+ * `DEAL_OF_WEEK` is deliberately NOT among the sections offering this. Its
+ * products share a six-column grid with a countdown panel, so a slider there
+ * is a different layout problem — see openspec/changes/add-product-slider-and-card-quantity,
+ * proposal.md.
+ *
+ * See that change's design.md Decision 1.
+ */
+export const PRODUCT_ROW_VARIANTS = ["GRID", "SLIDER"] as const;
+
+export type ProductRowVariant = (typeof PRODUCT_ROW_VARIANTS)[number];
+
+/**
+ * How many tiles across a promo banner strip renders.
+ *
+ * ORDER IS LOAD-BEARING HERE, exactly as it is for `HERO_VARIANTS` and
+ * `FEATURED_CATEGORIES_VARIANTS`: POSITION 0 IS THE DEFAULT, and `THREE` holds
+ * it because three-across is what the storefront rendered before promo banners
+ * were groupable at all. Reorder this tuple and every store that never opened
+ * the control silently restyles.
+ *
+ *   THREE   three tiles across                                     (DEFAULT)
+ *   TWO     two half-width tiles
+ *   ONE     one full-width tile
+ *
+ * ── Why this is NOT in HOME_SECTION_VARIANTS below ───────────────────────
+ *
+ * Every other layout on this page is a property of the SECTION and is stored on
+ * the homeConfig entry, which is what `HOME_SECTION_VARIANTS` and
+ * `resolveSectionVariant` exist to resolve. A promo strip's layout is a
+ * property of the GROUP and lives on the `PromoBannerGroup` row.
+ *
+ * It has to. A group can be named by an entry, have that entry deleted, and be
+ * spliced back in by reconciliation — if the layout lived on the entry, that
+ * round trip would silently reset the merchant's one-tile strip to three
+ * across. Worse, nothing stops two entries naming the same group, and then the
+ * same strip would render at two different widths depending on which entry was
+ * read. Putting it on the group gives the question one answer.
+ *
+ * So `MID_BANNERS` is absent from `HOME_SECTION_VARIANTS` on purpose: as a
+ * SECTION it offers no choice, and a request setting `variant` on it is
+ * correctly rejected. The choice is made on the group.
+ *
+ * Kept in sync by hand with the `PromoBannerLayout` enum in
+ * prisma/schema/enums.prisma, `promoBannerLayoutEnum` in
+ * promo-banner-group.validation.ts, and the mirrors in both frontends.
+ *
+ * See openspec/changes/add-promo-banner-groups, design.md Decision 4.
+ */
+/**
+ * The one section key that may appear more than once in a homeConfig.
+ *
+ * Named rather than written as the literal `"MID_BANNERS"` at each of the six
+ * places that branch on it: every one of those is a place where getting the
+ * comparison wrong means either deduplicating a merchant's promo strips down to
+ * one, or letting a fixed section repeat. A constant makes the set of such
+ * places greppable.
+ */
+export const PROMO_SECTION_KEY = "MID_BANNERS" as const satisfies HomeSectionKey;
+
+export const PROMO_BANNER_LAYOUTS = ["THREE", "TWO", "ONE"] as const;
+
+export type PromoBannerLayoutValue = (typeof PROMO_BANNER_LAYOUTS)[number];
+
+/**
+ * A group's layout as it should be REPORTED, given whatever is stored.
+ *
+ * Read-time only and never rewrites the row — the same contract
+ * `resolveSectionVariant` carries. An unrecognised value (a layout from a newer
+ * server, or a hand-edited row) resolves to position 0 rather than reaching a
+ * client that has no grid class for it and rendering nothing.
+ */
+export const resolvePromoBannerLayout = (stored: unknown): PromoBannerLayoutValue =>
+    typeof stored === "string" &&
+    (PROMO_BANNER_LAYOUTS as readonly string[]).includes(stored)
+        ? (stored as PromoBannerLayoutValue)
+        : PROMO_BANNER_LAYOUTS[0];
+
+/**
  * Which sections offer a choice of layout, and which layouts each offers.
  *
  * A key ABSENT from this map offers no choice: it has exactly one arrangement,
@@ -395,13 +568,26 @@ export type FeaturedCategoriesVariant = (typeof FEATURED_CATEGORIES_VARIANTS)[nu
  * `FEATURED_CATEGORIES` was the second section to join, and it cost exactly
  * what this shape was built to make it cost: one tuple and one entry here, no
  * schema change, no migration, and nothing in validation, reconciliation or
- * the public read — all of which are generic over this map. `PRODUCT_CARD`
- * follows the same route when its slice comes. `scripts/verify-section-variants.ts`
- * iterates every key here, so a new section is covered without editing it.
+ * the public read — all of which are generic over this map.
+ *
+ * The three PRODUCT ROWS took that route and confirmed the price: one shared
+ * tuple and three entries here, and nothing else in this module changed. Note
+ * they are three entries and not one — the layout is stored as `variant` on a
+ * section's own entry in `homeConfig`, so per-section is what the carrier
+ * already expresses, and a merchant can make the row of four a grid and the
+ * row of twelve a slider. `scripts/verify-section-variants.ts` iterates every
+ * key here, so all three were covered without the script being edited.
+ *
+ * Five entries now, which is five mirrors to keep in step by hand. See
+ * openspec/changes/add-product-slider-and-card-quantity, design.md Decision 1
+ * and its Risks section.
  */
 export const HOME_SECTION_VARIANTS = {
     HERO: HERO_VARIANTS,
     FEATURED_CATEGORIES: FEATURED_CATEGORIES_VARIANTS,
+    BEST_SELLING: PRODUCT_ROW_VARIANTS,
+    FEATURED_PRODUCTS: PRODUCT_ROW_VARIANTS,
+    NEW_ARRIVALS: PRODUCT_ROW_VARIANTS,
 } as const satisfies Partial<Record<HomeSectionKey, readonly [string, ...string[]]>>;
 
 /** Every layout any section offers, across the whole registry. */
@@ -449,6 +635,34 @@ export type HomeSectionConfig = {
      * resolved to the default on read, never backfilled.
      */
     variant?: HomeSectionVariant;
+    /**
+     * Which promo banner group this entry renders — `MID_BANNERS` ONLY.
+     *
+     * ── A SECTION ENTRY IS NO LONGER IDENTIFIED BY ITS KEY ALONE ──────────
+     *
+     * Every other section is a fixed registry key that appears AT MOST ONCE.
+     * `MID_BANNERS` may appear MANY times, once per promo strip the merchant
+     * created, each occurrence naming a different group and carrying its own
+     * `enabled` flag and its own position in the ordering. The identity of an
+     * entry is therefore `key` for the eleven fixed sections and
+     * `key` + `groupId` for this one.
+     *
+     * That is the single assumption this field breaks, and it is assumed in
+     * more places than it looks: `reconcileHomeConfig` deduped on a
+     * `Map<HomeSectionKey, …>`, `homeConfigSchema` rejected a repeated key, and
+     * the storefront looked each section up in a `Record<HomeSectionKey,
+     * ReactNode>`. All three had to learn the difference.
+     *
+     * A `MID_BANNERS` entry with no `groupId`, a non-string one, or one naming
+     * a group that no longer exists is DROPPED on read — the same treatment an
+     * unregistered key gets, and for the same reason: there is no component
+     * that could render it. A group that exists but is named by no entry is
+     * spliced in enabled, so creating a strip in the Promo Banners manager is
+     * enough to put it on the page.
+     *
+     * See openspec/changes/add-promo-banner-groups, design.md Decision 3.
+     */
+    groupId?: string;
 };
 
 /**

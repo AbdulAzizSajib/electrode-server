@@ -62,6 +62,24 @@ const bannerFields = {
     link: z.url("Link must be a valid URL").optional(),
     productId: z.string().optional(),
 
+    /**
+     * The promo strip this banner is a tile of.
+     *
+     * `.nullable().optional()` rather than `.optional()` alone, and that is the
+     * repo's three-state rule rather than a habit: omitted means "leave the
+     * membership unchanged", and NULL IS THE ONLY WAY TO REMOVE A BANNER FROM
+     * ITS GROUP without deleting the banner. Without the nullable, a merchant
+     * who assigned a tile to the wrong strip could only move it to another one,
+     * never take it out — the same reasoning `freeShippingThreshold` and
+     * `activeLandingPageId` carry.
+     *
+     * Whether the banner's placement ALLOWS a group is checked in
+     * banner.service.ts, not here: the rule depends on the stored `placement`
+     * for a PATCH that does not mention it, and a Zod schema cannot read the
+     * database.
+     */
+    promoBannerGroupId: z.string().nullable().optional(),
+
     status: bannerStatusEnum.optional(),
     sortOrder: z.number().int().optional(),
     startsAt: z.iso.datetime().optional(),

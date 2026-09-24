@@ -226,7 +226,8 @@ model StoreSetting {
   /// and both carry invariants Postgres cannot express.
   ///
   /// checkoutConfig: { fields: { <fieldKey>: { show, required } }, showCouponBox,
-  ///                   showOrderNote, allowGuestCheckout, notice }
+  ///                   showOrderNote, allowGuestCheckout, notice,
+  ///                   delivery, advancePayment }
   ///   Field keys are the ORDER PAYLOAD's own keys (fullName, phone,
   ///   addressLine1, addressLine2, city, postalCode) so order.service.ts can
   ///   validate by iterating the map rather than by a switch it has to keep in
@@ -235,6 +236,39 @@ model StoreSetting {
   ///   (guest order lookup and the per-phone COD cap are both keyed on it).
   ///   order.service.ts re-checks phone independently, so a row edited outside
   ///   the API cannot disable it either.
+  ///
+  ///   delivery: { offersPickup, options: [{ key, label, kind, price, days }] }
+  ///     The shopper PICKS one; an option is never matched from the address
+  ///     they typed. `key` survives a rename so orders stay groupable by it,
+  ///     `label` is captured onto the order. An EMPTY option list is a store
+  ///     that has never configured delivery and cannot take orders - it must
+  ///     stay storable, so only a merchant SAVE rejects one.
+  ///
+  ///   advancePayment: { enabled, mobileAccounts: [{ id, provider, number,
+  ///                     accountType }], bankAccounts: [{ id, bankName,
+  ///                     accountName, accountNumber, branch, routingNumber }] }
+  ///     Money taken BEFORE the order ships, to make a fake order cost the
+  ///     person placing it something. The accounts live here, on a column the
+  ///     storefront reads, and NOT in IntegrationCredential: a number the
+  ///     shopper must read off the checkout page in order to send money to it
+  ///     is published by the act of being used. That is the same rule applied
+  ///     to the Facebook Pixel id against its CAPI token below.
+  ///
+  ///     Each account `id` is generated once and NEVER rewritten, because a
+  ///     placed order's Payment row references it - addressing accounts
+  ///     positionally would reattach historical claims to a different account
+  ///     the first time the merchant reorders a row.
+  ///
+  ///     OPTIONAL in storage while `delivery` is required, and that asymmetry
+  ///     is deliberate: this column is read with a wholesale merge() that
+  ///     swaps in the whole default when a stored row lacks a key, so a
+  ///     required key here would make every store configured before this
+  ///     feature fail the parse and lose its real settings. Reads normalise an
+  ///     absent value to disabled-with-no-accounts, so an old row and an
+  ///     explicitly disabled one mean the same thing. Adding a key to this
+  ///     blob means adding it to `withCheckoutDefaults` in
+  ///     store-setting.service.ts, not writing a second shim beside it.
+  ///     See openspec/changes/add-advance-payment-checkout, design.md D1.
   ///
   /// theme: { background, foreground, brand, brandDark, accent, sale,
   ///          maxWidth, font: { family, url }, adminFont: { family, url } }

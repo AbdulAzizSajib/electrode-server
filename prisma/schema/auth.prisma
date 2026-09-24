@@ -30,6 +30,11 @@ model User {
   assignedTickets    SupportTicket[]
   sentMessages       SupportMessage[]
   auditLogs          AuditLog[]
+  /// Advance payment claims this staff member verified or rejected. Named for
+  /// the same reason `createdOrders` is: `Payment` has no other relation to
+  /// `User`, and the name says which act it records - the decision, not the
+  /// payment. Kept even when the account is deleted, with the actor nulled.
+  verifiedPayments   Payment[]            @relation("PaymentsVerifiedByStaff")
 
   @@index([roleId])
   @@map("user")

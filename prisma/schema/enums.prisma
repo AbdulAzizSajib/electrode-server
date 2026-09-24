@@ -324,6 +324,39 @@ enum BannerType {
   DYNAMIC // title, price, discount, button etc dynamically shown on top of bg
 }
 
+/// How many tiles across a PromoBannerGroup renders on the storefront.
+///
+/// UNLIKE `HERO_VARIANTS` AND THE OTHER LAYOUT TUPLES, ORDER HERE IS NOT
+/// LOAD-BEARING — those are TypeScript tuples whose position 0 IS the default,
+/// so reordering them restyles every store that never opened the control. This
+/// is a Prisma enum with an explicit `@default(THREE)` on the column, so the
+/// default is named rather than positional and the members may be listed in any
+/// order.
+///
+/// THREE is the default because three-across is what the storefront rendered
+/// before promo banners were groupable at all — the same reasoning that pins
+/// SPLIT_THREE and GRID at position 0 of their tuples. A store migrated from
+/// before this change must look identical afterwards.
+///
+///   ONE     one full-width tile
+///   TWO     two half-width tiles
+///   THREE   three tiles across                                     (DEFAULT)
+///
+/// A GROUP'S LAYOUT IS INDEPENDENT OF HOW MANY BANNERS IT HOLDS. A THREE group
+/// holding two banners renders two tiles; that is not an error state. Refusing
+/// it would deadlock the merchant — they could not remove a banner without
+/// first changing the layout, nor change the layout without first adding
+/// banners. The admin warns; the API does not refuse. See
+/// openspec/changes/add-promo-banner-groups, design.md Decision 4.
+///
+/// Kept in sync by hand with `PROMO_BANNER_LAYOUTS` in
+/// store-setting.constant.ts and its mirrors in both frontends.
+enum PromoBannerLayout {
+  ONE
+  TWO
+  THREE
+}
+
 /// Only two states on purpose. Versioning, scheduled publishing and
 /// drafts-alongside-live are explicitly out of scope for content pages — see
 /// add-admin-ui-cms-section design.md, Non-Goals. DRAFT is indistinguishable

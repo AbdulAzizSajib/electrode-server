@@ -4,6 +4,19 @@ model Payment {
   orderId String
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  /// The reference the money moved under - a bKash TrxID, a deposit slip
+  /// number, a gateway's own id.
+  ///
+  /// UNIQUE, and that is a behaviour rather than a storage detail. For an
+  /// advance payment the shopper TYPES this, so the constraint is what stops
+  /// one transaction being claimed against two orders. The service checks for
+  /// an existing reference first and answers 409 naming it; this constraint is
+  /// the backstop for the race between two simultaneous claims, where the
+  /// loser surfaces as P2002 rather than as a silent duplicate.
+  ///
+  /// A REJECTED claim still occupies its reference. Freeing it would let a
+  /// shopper resubmit the same fabricated id until a different admin passed
+  /// it, which is the whole thing verification exists to prevent.
   transactionId String? @unique
 
   amount Decimal @db.Decimal(12, 2)
@@ -16,6 +29,59 @@ model Payment {
 
   paidAt DateTime?
 
+  /// ---------------------------------------------------------------------
+  /// Manual advance payment - a claim the shopper makes, which staff verify.
+  ///
+  /// All nullable, and all null for every payment that is not an advance
+  /// claim: a COD row records money collected at the door and has no claim to
+  /// review. See openspec/changes/add-advance-payment-checkout.
+  ///
+  /// These are TYPED COLUMNS rather than keys inside `gatewayResponse`, which
+  /// is unused and would have held them without a migration. Postgres does not
+  /// constrain a Json column, so the values deciding whether an order may ship
+  /// would live outside the type system, and no query could answer "every
+  /// claim from this sender number" - which is exactly the question asked when
+  /// one shopper is suspected of fabricating references. See design.md D4.
+  /// ---------------------------------------------------------------------
+
+  /// Who the shopper says sent the money: their own mobile number for mobile
+  /// banking, or the depositor's name or account for a bank transfer. Free
+  /// text because a bank deposit slip carries no format this can enforce.
+  senderIdentifier String?
+
+  /// Which of the merchant's configured accounts the money was sent to, by the
+  /// id borne in `StoreSetting.checkoutConfig.advancePayment`.
+  ///
+  /// Not a foreign key - the accounts are rows inside a Json column, not a
+  /// table. Validated against the configured list at placement, so a claim
+  /// cannot name an account the merchant does not hold.
+  paidToAccountId String?
+
+  /// The account's details AS THEY STOOD when the order was placed.
+  ///
+  /// Snapshotted for the same reason `Order.deliveryOptionLabel` is: the
+  /// merchant may edit or delete an account afterwards, and a claim that
+  /// cannot say which number it was sent to is unreviewable. `paidToAccountId`
+  /// answers "which account", this answers "what did the shopper actually
+  /// read off the page".
+  paidToAccountSnapshot Json?
+
+  /// The staff member who decided the claim. Null while it is undecided.
+  ///
+  /// SetNull rather than Cascade: deleting a staff account must not delete the
+  /// record that a payment was verified, only who verified it. A verification
+  /// whose actor is gone is still a verification.
+  verifiedByUserId String?
+  verifiedBy       User?   @relation("PaymentsVerifiedByStaff", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+
+  /// When the claim was decided, verified or rejected alike. Distinct from
+  /// `paidAt`, which is when the money is held to have arrived.
+  verifiedAt DateTime?
+
+  /// Why a claim was rejected. Required by the service on rejection - a
+  /// rejection nobody can be told the grounds for is not actionable.
+  rejectionReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -25,4 +91,9 @@ model Payment {
   @@index([status])
   @@index([method])
   @@index([createdAt])
+  /// The admin's "claims awaiting a decision" queue, which reads every payment
+  /// in one status across every order. Without this it is a sequential scan of
+  /// the whole table, growing with lifetime order volume rather than with the
+  /// size of the queue. Status leads because it is the selective half.
+  @@index([status, createdAt])
 }

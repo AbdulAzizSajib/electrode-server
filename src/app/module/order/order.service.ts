@@ -25,6 +25,7 @@ import { reportPurchaseToCapi } from "../integration/facebook-capi";
 import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
 import { StoreSettingService } from "../store-setting/store-setting.service";
+import type { ICheckoutConfig } from "../store-setting/store-setting.interface";
 import {
     collectMissingCheckoutFields,
     missingCheckoutFieldsMessage,
@@ -40,7 +41,7 @@ import {
     IQuoteCheckoutPayload,
     IUpdateOrderStatusPayload,
 } from "./order.interface";
-import { IPricingLine, quoteCharges, roundMoney } from "./order.pricing";
+import { IPricingLine, quoteCharges, roundMoney, splitAdvance } from "./order.pricing";
 
 /**
  * What the items read needs to paint each line's thumbnail.
@@ -766,9 +767,13 @@ const resolveCheckoutContext = async (
         );
     }
 
-    if (payload.paymentMethod && payload.paymentMethod !== PaymentMethod.COD) {
-        throw new AppError(status.BAD_REQUEST, "Only cash on delivery is available at checkout");
-    }
+    /*
+     * The payment-method check that used to sit here has moved to `placeOrder`,
+     * which is where the settings row is already in hand and where every actor
+     * converges. It was guest-only, and advance payment is not: a signed-in
+     * shopper sends the delivery charge on the same terms a guest does. Leaving
+     * it here would have let an authenticated order bypass the setting.
+     */
 
     /*
      * The shop-wide checkout configuration, skipped entirely for a campaign
@@ -860,6 +865,66 @@ const resolveCheckoutContext = async (
 };
 
 /**
+ * The one merchant account a claim names, resolved from the configured lists.
+ *
+ * Returns the account AND a snapshot of it, because the two answer different
+ * questions later: the id says which account the merchant meant, the snapshot
+ * says what the shopper actually read off the checkout page. A merchant who
+ * edits a number afterwards must not make an old claim unreviewable.
+ *
+ * Refuses an id that is in neither list. That is what stops a claim naming an
+ * account the merchant does not hold — a shopper could otherwise send money
+ * anywhere, name any id, and leave staff verifying against a statement that
+ * could never contain it.
+ */
+const resolveClaimedAccount = (
+    checkoutConfig: ICheckoutConfig,
+    accountId: string,
+): { method: PaymentMethod; snapshot: Prisma.InputJsonValue } => {
+    const { mobileAccounts, bankAccounts } = checkoutConfig.advancePayment;
+
+    const mobile = mobileAccounts.find((account) => account.id === accountId);
+    if (mobile) {
+        /*
+         * The METHOD comes from the account, not from the request body. A
+         * shopper who could name a bKash account and declare it Nagad would
+         * send staff to the wrong statement to verify it.
+         */
+        return {
+            method: mobile.provider as PaymentMethod,
+            snapshot: {
+                kind: "MOBILE_BANKING",
+                id: mobile.id,
+                provider: mobile.provider,
+                number: mobile.number,
+                accountType: mobile.accountType,
+            },
+        };
+    }
+
+    const bank = bankAccounts.find((account) => account.id === accountId);
+    if (bank) {
+        return {
+            method: PaymentMethod.BANK_TRANSFER,
+            snapshot: {
+                kind: "BANK",
+                id: bank.id,
+                bankName: bank.bankName,
+                accountName: bank.accountName,
+                accountNumber: bank.accountNumber,
+                branch: bank.branch,
+                routingNumber: bank.routingNumber,
+            },
+        };
+    }
+
+    throw new AppError(
+        status.BAD_REQUEST,
+        "That payment account is no longer available — please go back and choose one of the accounts shown.",
+    );
+};
+
+/**
  * Checkout: snapshots the buyer's cart into an immutable Order, per
  * `api/checkout` spec. Serves both an authenticated customer and a guest —
  * `resolveCheckoutContext` absorbs the difference, and everything from the
@@ -884,6 +949,39 @@ const placeOrder = async (
      */
     const storeSetting = await StoreSettingService.getStoreSetting();
     const checkoutConfig = StoreSettingService.checkoutConfigOf(storeSetting.checkoutConfig);
+
+    /*
+     * Whether this order may pay in advance at all, for EVERY actor.
+     *
+     * Not in the guest branch, where the old COD-only check lived: a signed-in
+     * shopper sends the delivery charge on the same terms a guest does, and a
+     * guest-only check would have let an authenticated order carry a claim the
+     * merchant never enabled.
+     *
+     * The method is refused against the SETTING, not against the enum. A
+     * shopper whose page was loaded before the merchant switched advance
+     * payment off gets a clear answer instead of an order recorded as bKash-paid
+     * at a shop that no longer takes bKash.
+     */
+    const claim = payload.advancePayment;
+    const wantsAdvance = Boolean(payload.paymentMethod && payload.paymentMethod !== PaymentMethod.COD);
+
+    if (wantsAdvance && !checkoutConfig.advancePayment.enabled) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "This store takes cash on delivery only — please place the order again without an advance payment.",
+        );
+    }
+
+    /*
+     * Resolved BEFORE any stock is touched, so a claim naming an account the
+     * merchant does not hold fails while nothing has been written. The method
+     * this returns overrides whatever the request body said: it is derived from
+     * the account, which the merchant configured, rather than from a field the
+     * shopper controls.
+     */
+    const claimedAccount =
+        wantsAdvance && claim ? resolveClaimedAccount(checkoutConfig, claim.accountId) : null;
 
     const { customer, shippingAddressId } = await resolveCheckoutContext(
         actor,
@@ -1186,6 +1284,82 @@ const placeOrder = async (
         );
     }
 
+    /*
+     * WHAT THE SHOPPER SHOULD HAVE SENT, computed from the choice and the
+     * delivery charge as actually resolved — never from the request body,
+     * which carries no amount at all for exactly this reason.
+     *
+     * Placed AFTER the stock, price and coupon checks above so the common
+     * failure happens before any of the claim work: an out-of-stock order is
+     * refused citing stock, which is the honest reason, rather than citing a
+     * transaction id. The shopper has already sent real money by the time they
+     * press the button, so there is no ordering here that makes a failed
+     * placement free — but there is one that makes it comprehensible.
+     */
+    const advanceSplit =
+        claim && claimedAccount
+            ? splitAdvance(claim.choice, totalAmount, shippingAmount)
+            : { advanceAmount: 0, balanceAmount: totalAmount };
+
+    if (claim && claimedAccount) {
+        /*
+         * A zero advance is not an order, it is a mistake. It happens when the
+         * shopper picked "pay the delivery charge" on an order whose delivery
+         * was waived — the free-shipping threshold, or a coupon. Asking them to
+         * send ৳0 and then verify it would be asking for a transaction that
+         * cannot exist.
+         */
+        if (advanceSplit.advanceAmount <= 0) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "There is no delivery charge to pay in advance on this order — please place it as cash on delivery.",
+            );
+        }
+
+        /*
+         * The page the shopper acted on must still be current. They read a
+         * figure, went to another app and sent exactly it; accepting a claim
+         * against a DIFFERENT figure would record them as having underpaid for
+         * an amount they were never shown.
+         *
+         * A CONFLICT rather than a 400: nothing about the request is malformed,
+         * the world moved underneath it. The message names both figures so the
+         * shopper can see which one they actually sent.
+         */
+        const expected = claim.expectedAdvanceAmount;
+        if (expected !== undefined && Math.abs(expected - advanceSplit.advanceAmount) > 0.01) {
+            const money = currencyFormatOf(storeSetting);
+            throw new AppError(
+                status.CONFLICT,
+                `The advance has changed — this order needs ${formatMoney(advanceSplit.advanceAmount, money)}, but ${formatMoney(expected, money)} was shown. Please check the amount and place the order again.`,
+            );
+        }
+
+        /*
+         * A reference already claimed is refused HERE, with the reused id
+         * named, rather than left to surface from the unique constraint as a
+         * P2002 and a 500. The constraint stays as the backstop for two
+         * simultaneous claims racing this check; what it cannot do is explain
+         * itself to the shopper.
+         *
+         * A REJECTED claim still occupies its reference — this looks at every
+         * payment, whatever its status. Freeing it on rejection would let a
+         * shopper resubmit the same fabricated id until a different admin
+         * passed it, which is the whole thing verification exists to prevent.
+         */
+        const alreadyClaimed = await prisma.payment.findUnique({
+            where: { transactionId: claim.transactionId },
+            select: { id: true },
+        });
+
+        if (alreadyClaimed) {
+            throw new AppError(
+                status.CONFLICT,
+                `Transaction id ${claim.transactionId} has already been used for another order. Check the id and try again.`,
+            );
+        }
+    }
+
     const runCheckout = (orderNumber: string) =>
         prisma.$transaction(async (tx) => {
             const order = await tx.order.create({
@@ -1265,35 +1439,70 @@ const placeOrder = async (
                         },
                     },
                     /*
-                     * The condition is "this order is cash-on-delivery", not
-                     * "this actor is a guest" — it read as the latter only
-                     * because guests were once the only COD population. A
-                     * staff-placed order is COD by definition here: the customer
-                     * agreed to pay the courier, and money already collected in
-                     * advance is recorded afterwards through
-                     * `POST /orders/:id/payments` rather than at creation, so
-                     * there is one way to record a payment rather than two.
+                     * THE PAYMENT ROW, in one of two shapes.
                      *
-                     * The row is created inside this transaction so a COD order
-                     * can never commit without one and go missing from
-                     * reconciliation.
+                     * An ADVANCE CLAIM records money the shopper says they have
+                     * already sent: the computed amount (never a figure they
+                     * named), the method derived from the account they chose,
+                     * and PROCESSING — claimed, not confirmed. It is created for
+                     * EVERY actor, including the authenticated shopper who
+                     * otherwise gets no payment row, because there is a claim to
+                     * verify either way and an order that cannot be verified
+                     * cannot ship.
                      *
-                     * An AUTHENTICATED storefront order still gets no Payment
-                     * row. That predates this change and is left alone —
-                     * widening it to every order changes existing reconciliation
-                     * and is not what this change is for.
+                     * This is a deliberate, narrow exception to the rule stated
+                     * below it: money collected in advance is normally recorded
+                     * afterwards through `POST /orders/:id/payments`, so there is
+                     * one way to record a payment rather than two. A claim made
+                     * DURING checkout has no later moment to be recorded at —
+                     * the shopper has already sent the money by the time they
+                     * press the button, and an order that commits without the
+                     * claim attached is an order nobody can reconcile.
+                     * See openspec/changes/add-advance-payment-checkout,
+                     * design.md Decision 3.
+                     *
+                     * Only ONE row, for the advance alone. The remainder is not
+                     * a payment, it is the balance — derived by every reader
+                     * that already sums payments against the total, and
+                     * recorded as its own COD row when it is collected at the
+                     * door.
+                     *
+                     * Otherwise: the COD row exactly as before. The condition is
+                     * "this order is cash-on-delivery", not "this actor is a
+                     * guest" — it read as the latter only because guests were
+                     * once the only COD population. An AUTHENTICATED storefront
+                     * COD order still gets no Payment row; that predates this
+                     * change and is left alone.
+                     *
+                     * Either row is created inside this transaction so an order
+                     * can never commit without the payment record it needs and
+                     * go missing from reconciliation.
                      */
-                    ...(isGuest || actor.kind === "staff"
+                    ...(claimedAccount && claim
                         ? {
                               payments: {
                                   create: {
-                                      amount: totalAmount,
-                                      method: PaymentMethod.COD,
-                                      status: PaymentStatus.PENDING,
+                                      amount: advanceSplit.advanceAmount,
+                                      method: claimedAccount.method,
+                                      status: PaymentStatus.PROCESSING,
+                                      transactionId: claim.transactionId,
+                                      senderIdentifier: claim.senderIdentifier,
+                                      paidToAccountId: claim.accountId,
+                                      paidToAccountSnapshot: claimedAccount.snapshot,
                                   },
                               },
                           }
-                        : {}),
+                        : isGuest || actor.kind === "staff"
+                          ? {
+                                payments: {
+                                    create: {
+                                        amount: totalAmount,
+                                        method: PaymentMethod.COD,
+                                        status: PaymentStatus.PENDING,
+                                    },
+                                },
+                            }
+                          : {}),
                     // No shipment is opened here. One is created when the parcel
                     // actually goes out (ShipmentService.createShipment), so an
                     // order does not claim a dispatch that has not happened.
@@ -1659,6 +1868,32 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
                 : Number(storeSetting.freeShippingThreshold),
     });
 
+    const quotedTotal = roundMoney(
+        charges.subtotal + charges.shippingAmount + charges.taxAmount - discountAmount,
+    );
+
+    /*
+     * What each advance-payment choice would cost, computed HERE rather than by
+     * the storefront.
+     *
+     * The shopper is told a figure and then asked to go to another app and send
+     * exactly it, so the number they read has to be the number placement will
+     * accept — and placement recomputes it from the same function. A storefront
+     * that multiplied or rounded for itself would show ৳130, take ৳130, and
+     * have the claim refused for not being ৳130.4.
+     *
+     * Both choices are always quoted, even when the store has advance payment
+     * off: this is a pure derivation of a total the response already carries,
+     * the storefront renders the choices from `advancePayment.enabled` in the
+     * settings rather than from their presence here, and a quote that omitted
+     * them would have to be re-fetched the moment a merchant switched the
+     * feature on mid-session.
+     */
+    const advanceOptions = {
+        DELIVERY_CHARGE: splitAdvance("DELIVERY_CHARGE", quotedTotal, charges.shippingAmount),
+        FULL: splitAdvance("FULL", quotedTotal, charges.shippingAmount),
+    };
+
     return {
         subtotal: charges.subtotal,
         discountAmount,
@@ -1667,9 +1902,12 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
         /** What delivery costs before any waiver — so "Free" can be shown as a saving. */
         shippingBeforeWaiver: charges.shippingBeforeWaiver,
         deliveryDays: charges.deliveryDays,
-        totalAmount: roundMoney(
-            charges.subtotal + charges.shippingAmount + charges.taxAmount - discountAmount,
-        ),
+        totalAmount: quotedTotal,
+        /**
+         * What to send now and what is left for the door, per choice. See
+         * `splitAdvance` — the two always sum to `totalAmount`.
+         */
+        advanceOptions,
         /**
          * Echoed back so the storefront can confirm it priced what the shopper
          * sees selected, and so a stale key surfaces as a mismatch rather than
@@ -1872,6 +2110,55 @@ const ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus);
  */
 const allowedOrderTransitions = (from: OrderStatus): OrderStatus[] =>
     ORDER_STATUSES.filter((candidate) => candidate !== from);
+
+/**
+ * The methods that mean "the shopper says they already sent this".
+ *
+ * COD is money collected at the door and has nothing to verify. Everything else
+ * checkout can reach is an advance claim, and a claim sitting in PROCESSING is
+ * one nobody has checked against a bank statement yet.
+ */
+const ADVANCE_PAYMENT_METHODS: PaymentMethod[] = [
+    PaymentMethod.BKASH,
+    PaymentMethod.NAGAD,
+    PaymentMethod.ROCKET,
+    PaymentMethod.BANK_TRANSFER,
+];
+
+/**
+ * Is this order waiting on someone to confirm money actually arrived?
+ *
+ * ONE definition, used by every caller. The alternative — each status writer
+ * spelling out its own `status === PROCESSING && method in (...)` — is how one
+ * of them ends up checking a slightly different thing and lets an unverified
+ * order ship. See openspec/changes/add-advance-payment-checkout, design.md
+ * Decision 5.
+ *
+ * Deliberately a QUERY rather than a column on `Order`. There is no
+ * `paymentMethod` on `Order` and this change does not add one: how an order is
+ * paid lives on its payment rows, so "is it blocked" is derived from them and
+ * cannot fall out of step with them.
+ *
+ * VERIFIED and REJECTED both read as not-awaiting, and that asymmetry is
+ * intentional: a rejected claim leaves the order blocked by a different rule
+ * (there is no verified payment), not by this one. Only PROCESSING — claimed,
+ * undecided — is what this asks about.
+ */
+const isAwaitingPaymentVerification = async (
+    orderId: string,
+    client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<boolean> => {
+    const pending = await client.payment.findFirst({
+        where: {
+            orderId,
+            status: PaymentStatus.PROCESSING,
+            method: { in: ADVANCE_PAYMENT_METHODS },
+        },
+        select: { id: true },
+    });
+
+    return pending !== null;
+};
 
 const assertOrderTransitionAllowed = (from: OrderStatus, to: OrderStatus) => {
     if (!allowedOrderTransitions(from).includes(to)) {
@@ -2135,6 +2422,34 @@ const updateOrderStatus = async (
         throw new AppError(status.NOT_FOUND, "Order not found");
     }
 
+    /*
+     * BEFORE the no-op and legality checks below, and the order matters.
+     *
+     * An admin confirming an order whose advance payment is unverified must be
+     * told about VERIFICATION, not about a transition that was legal anyway.
+     * Run after `assertOrderTransitionAllowed`, the two answers would be
+     * indistinguishable in the common case — the transition is legal, so the
+     * legality check passes silently and the real reason surfaces only second.
+     * The spec requires the two be distinguishable.
+     *
+     * CANCELLED is exempt. A shopper whose claim is unverified must still be
+     * able to have the order cancelled — holding it hostage to a verification
+     * that may never come would leave the stock deducted and the order frozen
+     * with no way out. Cancelling restocks on exactly the same terms as any
+     * other cancellation.
+     *
+     * This is NOT the transition map. Legality describes what may follow what;
+     * this describes whether this particular order may move at all yet. Folding
+     * the second into the first is what makes the error message unable to tell
+     * them apart. See design.md Decision 5.
+     */
+    if (payload.status !== OrderStatus.CANCELLED && (await isAwaitingPaymentVerification(orderId))) {
+        throw new AppError(
+            status.CONFLICT,
+            `This order's advance payment has not been verified yet — verify it before moving the order to ${payload.status}.`,
+        );
+    }
+
     if (order.status === payload.status) {
         throw new AppError(status.BAD_REQUEST, `Order is already ${payload.status}`);
     }
@@ -2229,4 +2544,12 @@ export const OrderService = {
     updateOrderStatus,
     /** Exposed so the admin offers exactly the transitions this service will accept. */
     allowedOrderTransitions,
+    /**
+     * Exposed so the payment module and the admin can ask the same question
+     * this service enforces, rather than each re-deriving "is it blocked" and
+     * one of them getting it subtly wrong.
+     */
+    isAwaitingPaymentVerification,
+    /** The methods that carry a claim to verify. COD is not one of them. */
+    ADVANCE_PAYMENT_METHODS,
 };

@@ -28,6 +28,80 @@ const checkoutItemZodSchema = z.object({
 });
 
 /**
+ * The payment methods checkout can actually reach.
+ *
+ * A SUBSET of `PaymentMethod`, and deliberately narrower than it. CARD, STRIPE
+ * and PAYPAL exist in the enum for records created elsewhere; no checkout path
+ * charges a card, so accepting one here would create an order recorded as paid
+ * by a means nobody was ever charged through.
+ *
+ * COD is money collected at the door. The other three are money the shopper
+ * says they have already sent, and they are only permitted when the merchant
+ * has advance payment turned on — a store setting, checked in the service.
+ */
+export const CHECKOUT_PAYMENT_METHODS = [
+    "COD",
+    "BKASH",
+    "NAGAD",
+    "ROCKET",
+    "BANK_TRANSFER",
+] as const;
+
+/** Which slice of the total the shopper sent. The server computes the amount. */
+export const ADVANCE_PAYMENT_CHOICES = ["DELIVERY_CHARGE", "FULL"] as const;
+
+/**
+ * What the shopper says about money they have already sent.
+ *
+ * NO AMOUNT FIELD, and that is the point: the amount is computed by the server
+ * from the choice and the delivery option actually resolved. A client-supplied
+ * figure would let a shopper declare they had sent ৳10 against a ৳130 charge,
+ * and the claim would be verified by a human reading a statement that says ৳10.
+ *
+ * `accountId` references an account in the merchant's own configured list
+ * (`StoreSetting.checkoutConfig.advancePayment`); the service refuses an id
+ * that is not in it, so a claim cannot name an account the merchant does not
+ * hold. Free text is accepted for the sender and the reference because a bank
+ * deposit slip carries no format worth enforcing — a wrong one is caught by the
+ * human who verifies it, which is the whole design.
+ */
+const advanceClaimZodSchema = z
+    .object({
+        choice: z.enum(ADVANCE_PAYMENT_CHOICES),
+        accountId: z.string().min(1).max(60),
+        /*
+         * The figure the shopper was SHOWN, echoed back — an agreement check,
+         * not an instruction. The server still computes what the advance is;
+         * this only lets it notice that the page the shopper acted on is out of
+         * date, and refuse rather than accept a claim for a different sum.
+         *
+         * `expectedTotal` beside it does not cover this. Switching between two
+         * delivery options that cost the same leaves the total identical and
+         * the advance identical too — but switching to one that is waived, or
+         * crossing the free-shipping threshold by editing the cart in another
+         * tab, moves the advance while the total moves for a different reason.
+         * The shopper has ALREADY SENT the money by then, so accepting a claim
+         * against a figure they never saw is the one failure that cannot be
+         * undone by re-rendering the page.
+         *
+         * Optional, so a client that does not track it still works — the server
+         * is the authority either way. See design.md Decision 7.
+         */
+        expectedAdvanceAmount: z.number().nonnegative().optional(),
+        senderIdentifier: z
+            .string()
+            .trim()
+            .min(1, "Enter the number or account the payment was sent from")
+            .max(120),
+        transactionId: z
+            .string()
+            .trim()
+            .min(1, "Enter the transaction id")
+            .max(150),
+    })
+    .strict();
+
+/**
  * Shape-level validation only. Whether the *guest* fields are required
  * depends on the session, which `validateRequest` cannot see — it runs before
  * the actor is resolved and only ever parses `req.body`. The guest/authenticated
@@ -59,11 +133,66 @@ export const createOrderZodSchema = z.object({
         .optional(),
     shippingAddress: guestAddressZodSchema.optional(),
     items: z.array(checkoutItemZodSchema).min(1).max(50).optional(),
-    // Guests are COD-only (enforced in the service). Accepting the full enum
-    // here would let an authenticated flow pass a method this endpoint does
-    // not yet act on, so only COD is spellable.
-    paymentMethod: z.literal("COD").optional(),
-});
+    /*
+     * How the shopper intends to pay. COD is money collected at the door and
+     * carries no claim; the other three are money the shopper says they have
+     * ALREADY sent, and each must arrive with `advancePayment` below.
+     *
+     * Only the methods checkout can actually reach are spellable. The enum has
+     * CARD, STRIPE and PAYPAL too, and they stay unspellable here because no
+     * code path acts on them — accepting one would create an order recorded as
+     * card-paid that nobody ever charged.
+     *
+     * Whether an advance method is ALLOWED is a store setting, not a shape
+     * question, so it is enforced in order.service.ts where the settings row is
+     * already in hand. This schema's job is that whatever is present is
+     * well-formed.
+     */
+    paymentMethod: z.enum(CHECKOUT_PAYMENT_METHODS).optional(),
+
+    /*
+     * The advance payment claim: what the shopper says they sent, where, and
+     * under what reference.
+     *
+     * Paired with `paymentMethod` by the refinement below rather than modelled
+     * as a discriminated union on it, because `paymentMethod` is optional (a
+     * plain COD order omits it entirely) and a discriminator cannot be absent.
+     * The refinement enforces the same thing a union would: an advance method
+     * without a claim, or a claim without an advance method, is rejected — so
+     * an order can never carry half of one.
+     */
+    advancePayment: advanceClaimZodSchema.optional(),
+})
+    .superRefine((payload, ctx) => {
+        const isAdvanceMethod =
+            payload.paymentMethod !== undefined && payload.paymentMethod !== "COD";
+
+        /*
+         * Half a claim is the failure this exists to prevent. Without it, a
+         * bKash order missing its `advancePayment` block would reach the
+         * service, which would have to either invent a claim or create an
+         * order recorded as bKash-paid with nothing to verify — and the second
+         * is indistinguishable from a verified order to every reader.
+         */
+        if (isAdvanceMethod && !payload.advancePayment) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["advancePayment"],
+                message: `Paying by ${payload.paymentMethod} needs the payment details — the account you sent to, your number and the transaction id.`,
+            });
+        }
+
+        // The mirror case: a claim against cash on delivery describes money
+        // sent for an order nobody was asked to pay for in advance.
+        if (!isAdvanceMethod && payload.advancePayment) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["paymentMethod"],
+                message:
+                    "Payment details were supplied but the payment method is cash on delivery — choose the method you paid with.",
+            });
+        }
+    });
 
 /**
  * A pre-checkout price quote.

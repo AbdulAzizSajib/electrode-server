@@ -23,6 +23,14 @@ export interface ICreateBannerPayload {
     link?: string;
     productId?: string;
 
+    /**
+     * The promo strip this banner is a tile of. `null` REMOVES it from its
+     * group — it is not the same as omitting the key, which leaves membership
+     * unchanged. Only a `MID` banner may carry one; enforced in
+     * banner.service.ts, where the stored placement is visible.
+     */
+    promoBannerGroupId?: string | null;
+
     status?: "DRAFT" | "ACTIVE" | "INACTIVE" | "SCHEDULED";
     sortOrder?: number;
     startsAt?: string;

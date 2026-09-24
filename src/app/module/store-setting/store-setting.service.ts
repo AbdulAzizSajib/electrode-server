@@ -16,6 +16,7 @@ import {
     STORE_SETTINGS_TAG,
 } from "../../utils/revalidateStorefront";
 import {
+    DEFAULT_ADVANCE_PAYMENT,
     DEFAULT_CHECKOUT_CONFIG,
     DEFAULT_HOME_CONFIG,
     DEFAULT_PUBLIC_SETTINGS,
@@ -23,6 +24,8 @@ import {
     HomeSectionConfig,
     HomeSectionKey,
     HomeSectionVariant,
+    PROMO_SECTION_KEY,
+    resolvePromoBannerLayout,
     resolveSectionVariant,
     SINGLETON_ID,
 } from "./store-setting.constant";
@@ -183,37 +186,128 @@ const withVariant = (section: HomeSectionConfig): HomeSectionConfig => {
         : { key: section.key, enabled: section.enabled, variant };
 };
 
-export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
-    if (!Array.isArray(stored)) return DEFAULT_HOME_CONFIG.map(withVariant);
+/**
+ * The identity of a stored entry, for deduplication.
+ *
+ * `MID_BANNERS` IS THE ONE KEY THAT MAY REPEAT — once per promo strip — so its
+ * identity has to include the group it names. Every other key identifies itself,
+ * and keeps the at-most-once rule it always had.
+ *
+ * Returning a string rather than a tuple keeps the `Map` a plain `Map`: two
+ * entries naming the same group produce the same string and therefore still
+ * collapse to the first occurrence, which is the existing duplicate rule
+ * applied to the new identity rather than an exception carved out of it.
+ */
+const entryIdentity = (key: HomeSectionKey, groupId?: string) =>
+    key === PROMO_SECTION_KEY ? `${key}:${groupId}` : key;
+
+/**
+ * @param stored     The `homeConfig` column as it sits in the database.
+ * @param groupIds   Every promo banner group that currently EXISTS, in the
+ *                   order they should be spliced in. Required, never defaulted
+ *                   — see the note below.
+ *
+ * REQUIRED, NOT OPTIONAL, and deliberately so. A default of `[]` would make
+ * every call site that forgot to pass groups silently drop every promo strip
+ * from the merchant's homepage — a change that type-checks, runs, and produces
+ * a page missing sections the merchant configured. Making it required turns
+ * that into a compile error at the one moment it can still be caught.
+ */
+export const reconcileHomeConfig = (
+    stored: unknown,
+    groupIds: readonly string[],
+): HomeSectionConfig[] => {
+    const existingGroups = new Set(groupIds);
+
+    /*
+     * The non-array path splices in the groups too, rather than returning the
+     * bare default: a store whose column was never written still HAS its promo
+     * groups, and the migration's carried-over group is exactly that case for
+     * any store whose homeConfig was null.
+     *
+     * DEFAULT_HOME_CONFIG's OWN `MID_BANNERS` ENTRY IS REMOVED FIRST, and that
+     * is not tidying. It is a groupless promo entry — the default predates
+     * groups and names none — so leaving it in would serve a section that names
+     * no strip, which every consumer has to ignore and which the very next read
+     * drops. The splice below re-adds one entry per group that actually exists,
+     * which is the same position and the same enabled state, but renderable.
+     *
+     * A store with no groups therefore gets NO promo section from the default,
+     * which is correct: there is no strip to render.
+     */
+    if (!Array.isArray(stored)) {
+        const base = DEFAULT_HOME_CONFIG.filter((section) => section.key !== PROMO_SECTION_KEY).map(
+            withVariant,
+        );
+
+        return spliceMissingGroups(base, groupIds, new Set());
+    }
 
     const registry = new Set<string>(HOME_SECTION_KEYS);
-    const seen = new Map<HomeSectionKey, { enabled: boolean; variant?: HomeSectionVariant }>();
+    const seen = new Map<
+        string,
+        { key: HomeSectionKey; enabled: boolean; variant?: HomeSectionVariant; groupId?: string }
+    >();
+    /** Which groups a stored entry already places, so the splice below adds only the rest. */
+    const placedGroups = new Set<string>();
 
     for (const entry of stored) {
         if (typeof entry !== "object" || entry === null) continue;
 
-        const { key, enabled, variant } = entry as {
+        const { key, enabled, variant, groupId } = entry as {
             key?: unknown;
             enabled?: unknown;
             variant?: unknown;
+            groupId?: unknown;
         };
 
         // An unregistered key is dropped rather than carried: a section removed
         // from the registry has no component left to render, and passing it
         // through would hand the storefront a key it cannot map.
         if (typeof key !== "string" || !registry.has(key)) continue;
-        // First occurrence wins — see the duplicate note above.
-        if (seen.has(key as HomeSectionKey)) continue;
+
+        const sectionKey = key as HomeSectionKey;
+
+        /*
+         * A PROMO ENTRY MUST NAME A GROUP THAT EXISTS, or it is dropped — the
+         * same treatment, for the same reason, as the unregistered key above:
+         * there is nothing left that could render it.
+         *
+         * This covers three cases that all arrive looking alike: a missing
+         * `groupId` (an entry written before groups existed, and the migration
+         * did not reach it), a non-string one (a hand-edited row), and one
+         * naming a group the merchant has since deleted. Dropping is right for
+         * all three — and for the deleted case it is the ONLY thing that
+         * removes the strip, since deleting a group deliberately does not write
+         * to StoreSetting.
+         */
+        let promoGroupId: string | undefined;
+
+        if (sectionKey === PROMO_SECTION_KEY) {
+            if (typeof groupId !== "string" || !existingGroups.has(groupId)) continue;
+            promoGroupId = groupId;
+        }
+
+        const identity = entryIdentity(sectionKey, promoGroupId);
+
+        // First occurrence wins — see the duplicate note above. For a promo
+        // entry that means two entries naming the SAME group collapse to one,
+        // while two naming DIFFERENT groups are both kept.
+        if (seen.has(identity)) continue;
 
         // A non-boolean `enabled` is treated as ON, matching the splice
         // direction: the safe failure is showing a section, not hiding one.
         // `variant` is resolved rather than trusted, so an unrecognised string
         // becomes the default instead of reaching a client that cannot render
         // it.
-        seen.set(key as HomeSectionKey, {
+        seen.set(identity, {
+            key: sectionKey,
             enabled: enabled !== false,
-            variant: resolveSectionVariant(key as HomeSectionKey, variant),
+            variant: resolveSectionVariant(sectionKey, variant),
+            ...(promoGroupId !== undefined ? { groupId: promoGroupId } : {}),
         });
+
+        if (promoGroupId !== undefined) placedGroups.add(promoGroupId);
     }
 
     /*
@@ -226,15 +320,29 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
      */
     const ordered: HomeSectionConfig[] = [];
 
-    for (const [key, { enabled, variant }] of seen) {
-        // `variant` omitted entirely, not set to undefined, for a section that
-        // offers no choice — otherwise eleven of the twelve entries would carry
-        // a dead key into every settings response.
-        ordered.push(variant === undefined ? { key, enabled } : { key, enabled, variant });
+    for (const { key, enabled, variant, groupId } of seen.values()) {
+        // `variant` and `groupId` are omitted entirely, not set to undefined,
+        // for a section that has neither — otherwise eleven of the twelve
+        // entries would carry dead keys into every settings response.
+        ordered.push({
+            key,
+            enabled,
+            ...(variant === undefined ? {} : { variant }),
+            ...(groupId === undefined ? {} : { groupId }),
+        });
     }
 
     HOME_SECTION_KEYS.forEach((key, registryIndex) => {
-        if (seen.has(key)) return;
+        /*
+         * MID_BANNERS IS SKIPPED HERE. This loop splices in a section the
+         * stored config is missing, and "missing" is a question about a single
+         * fixed entry — it cannot answer "which of the merchant's four promo
+         * strips are absent". `spliceMissingGroups` below handles that per
+         * group, and running this branch for the promo key as well would add a
+         * groupless entry that the next read would immediately drop.
+         */
+        if (key === PROMO_SECTION_KEY) return;
+        if (ordered.some((section) => section.key === key)) return;
 
         /*
          * The insertion point is just after the last section that precedes this
@@ -258,6 +366,49 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
         ordered.splice(insertAt, 0, withVariant({ key, enabled: true }));
     });
 
+    return spliceMissingGroups(ordered, groupIds, placedGroups);
+};
+
+/**
+ * Adds an enabled entry for every group that exists but no entry names.
+ *
+ * This is what makes creating a strip in the Promo Banners manager enough to
+ * put it on the page — without it, a merchant would create a group, see nothing
+ * change, and have to go to a second screen to place it. It is the same splice
+ * the registry loop performs for a section shipped in a later release, applied
+ * per group instead of per key.
+ *
+ * Placed at the promo section's REGISTRY POSITION, against the nearest
+ * already-placed preceding section — so a new strip lands where promo banners
+ * belong on the default page, not at the bottom. Several new groups are
+ * inserted in `groupIds` order, each after the last, so they arrive in the
+ * merchant's own group ordering rather than reversed.
+ */
+const spliceMissingGroups = (
+    ordered: HomeSectionConfig[],
+    groupIds: readonly string[],
+    placedGroups: ReadonlySet<string>,
+): HomeSectionConfig[] => {
+    const registryIndex = HOME_SECTION_KEYS.indexOf(PROMO_SECTION_KEY);
+    const precedingKeys = new Set(HOME_SECTION_KEYS.slice(0, registryIndex));
+
+    let insertAt = 0;
+
+    ordered.forEach((section, index) => {
+        if (precedingKeys.has(section.key)) insertAt = index + 1;
+    });
+
+    // Past any promo entries already sitting at that position, so a new group
+    // joins the end of the existing run rather than cutting into it.
+    while (ordered[insertAt]?.key === PROMO_SECTION_KEY) insertAt += 1;
+
+    for (const groupId of groupIds) {
+        if (placedGroups.has(groupId)) continue;
+
+        ordered.splice(insertAt, 0, { key: PROMO_SECTION_KEY, enabled: true, groupId });
+        insertAt += 1;
+    }
+
     return ordered;
 };
 
@@ -276,19 +427,34 @@ export const reconcileHomeConfig = (stored: unknown): HomeSectionConfig[] => {
  *     `freeShippingThreshold` and the COD abuse limits stay admin-only.
  */
 const getPublicStoreSetting = async () => {
-    const stored = await prisma.storeSetting.findUnique({
-        where: { id: SINGLETON_ID },
-        /*
-         * The active landing page's slug travels with the settings the
-         * storefront already fetches in its root layout on every page, so
-         * routing the root costs no second request and needs no second cache.
-         *
-         * Only the two fields the storefront routes on — never the page's
-         * content, which the landing page route fetches for itself. This stays
-         * an allow-list.
-         */
-        include: { activeLandingPage: { select: { slug: true, title: true, status: true } } },
-    });
+    /*
+     * Concurrent, not sequential: the groups are needed to reconcile the
+     * section list, but nothing about reading them depends on the settings row.
+     *
+     * The groups are read HERE rather than inside `reconcileHomeConfig` on
+     * purpose — that function stays pure over its inputs so the verify script
+     * can exercise every branch of it without a database, which is the only way
+     * the "drop an entry whose group was deleted" rule is testable at all.
+     */
+    const [stored, promoGroups] = await Promise.all([
+        prisma.storeSetting.findUnique({
+            where: { id: SINGLETON_ID },
+            /*
+             * The active landing page's slug travels with the settings the
+             * storefront already fetches in its root layout on every page, so
+             * routing the root costs no second request and needs no second cache.
+             *
+             * Only the two fields the storefront routes on — never the page's
+             * content, which the landing page route fetches for itself. This stays
+             * an allow-list.
+             */
+            include: { activeLandingPage: { select: { slug: true, title: true, status: true } } },
+        }),
+        prisma.promoBannerGroup.findMany({
+            orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+            select: { id: true, name: true, layout: true, sortOrder: true },
+        }),
+    ]);
 
     // Merged over the in-code defaults so a cleared column — or a fresh install
     // before the seed script runs — still yields a renderable header/footer
@@ -378,12 +544,12 @@ const getPublicStoreSetting = async () => {
          * otherwise.
          */
         /*
-         * `withDeliveryDefault` rather than a bare `merge`: `merge` swaps the
+         * `withCheckoutDefaults` rather than a bare `merge`: `merge` swaps the
          * WHOLE value for the fallback, so a row stored before delivery lived
          * in this blob would be served as-is — without `delivery` at all — and
          * the storefront would have no options to render and no flag to read.
          */
-        checkoutConfig: withDeliveryDefault(
+        checkoutConfig: withCheckoutDefaults(
             merge(stored?.checkoutConfig, DEFAULT_PUBLIC_SETTINGS.checkoutConfig),
         ),
 
@@ -398,7 +564,7 @@ const getPublicStoreSetting = async () => {
          * A PER-KEY SPREAD, not the wholesale `merge()` above. `merge()` swaps
          * the entire stored value for the fallback, so a blob written before a
          * key existed is served WITHOUT that key — which is precisely what
-         * forced `withDeliveryDefault` into existence one line up. This blob is
+         * forced `withCheckoutDefaults` into existence one line up. This blob is
          * a flat map of booleans and is certain to gain more, so it is read the
          * right way from the start and never needs a shim of its own. A missing
          * flag reads at its default instead of `undefined`, which is falsy and
@@ -426,15 +592,43 @@ const getPublicStoreSetting = async () => {
          * be worse than useless — it only substitutes when the whole value is
          * null, so a config saved before a section existed would be served
          * as-is, permanently missing that section. That is precisely the bug
-         * `withDeliveryDefault` exists to paper over for checkoutConfig, and
+         * `withCheckoutDefaults` exists to paper over for checkoutConfig, and
          * reconcileHomeConfig is how this column avoids ever needing one.
          */
-        homeConfig: reconcileHomeConfig(stored?.homeConfig),
+        homeConfig: reconcileHomeConfig(
+            stored?.homeConfig,
+            promoGroups.map((group) => group.id),
+        ),
+
+        /*
+         * The promo strips themselves — name, tile count and order.
+         *
+         * Served ALONGSIDE `homeConfig` rather than embedded in its entries.
+         * The config says WHERE each strip renders and whether it is on; this
+         * says WHAT each strip is. Embedding would duplicate a group's layout
+         * into every entry naming it, and then two entries could disagree about
+         * one strip's width.
+         *
+         * On the settings payload rather than its own endpoint because the
+         * storefront already fetches this in its root layout, so the homepage
+         * pays no extra round trip — the same reasoning `homeConfig` and
+         * `siteMode` are here for. Nothing private: a strip's name is a label
+         * the merchant chose and its layout is visible to anyone who loads the
+         * page.
+         *
+         * The layout is RESOLVED, not passed through, so a value this release
+         * does not recognise reaches the storefront as THREE instead of as a
+         * string it has no grid class for.
+         */
+        promoBannerGroups: promoGroups.map((group) => ({
+            ...group,
+            layout: resolvePromoBannerLayout(group.layout),
+        })),
 
         /*
          * A PER-KEY merge with a nested repair for both font keys, not the
          * wholesale `merge()` this used to be — the same correction
-         * `withDeliveryDefault` and `catalogConfig` above already carry.
+         * `withCheckoutDefaults` and `catalogConfig` above already carry.
          *
          * `merge()` swaps the WHOLE stored value for the fallback only when it
          * is null, so a theme row written before `adminFont` existed — which is
@@ -535,24 +729,40 @@ const getPublicStoreSetting = async () => {
 };
 
 /**
- * Supplies `delivery` to a stored config written before delivery lived here.
+ * Supplies the keys a stored checkout config was written before.
  *
- * Necessary because `delivery` is a REQUIRED key on `checkoutConfigSchema`, and
- * this schema parses rows that predate it. Without this, every store configured
- * before this change would fail that parse and fall all the way back to
- * DEFAULT_CHECKOUT_CONFIG — silently discarding the merchant's own field, notice
- * and guest-checkout settings until the backfill ran. Filling in the one missing
- * key instead keeps the rest of their config intact, and leaves them with the
- * empty option list a store that has not configured delivery should have.
+ * Necessary because this schema parses rows older than its own shape. Without
+ * this, a store configured before `delivery` was added fails the parse and
+ * falls all the way back to DEFAULT_CHECKOUT_CONFIG — silently discarding the
+ * merchant's own field, notice and guest-checkout settings until a backfill
+ * ran. Filling in the missing keys instead keeps the rest of their config
+ * intact, and leaves them with the empty delivery list a store that has not
+ * configured delivery should have.
  *
- * Only fills what is absent. A stored `delivery` is passed through untouched, so
+ * Only fills what is ABSENT. A stored value is passed through untouched, so
  * this cannot overwrite a merchant's real settings, and a malformed one still
  * fails the parse below rather than being quietly repaired.
+ *
+ * `delivery` is filled because the schema REQUIRES it. `advancePayment` is
+ * filled although the schema makes it optional, and the difference is worth
+ * stating: optionality is what stops an old row failing the parse, and this
+ * normalisation is what stops every consumer downstream having to spell
+ * `?? { enabled: false }` for itself — an omission that reads as `undefined`,
+ * which is falsy in the right way by luck rather than by design. An absent key
+ * and an explicitly disabled block mean the same thing after this runs, which
+ * is the semantics a store predating the feature should have. See
+ * openspec/changes/add-advance-payment-checkout, design.md Decision 1.
+ *
+ * Adding a key to `checkoutConfig` means adding it here, not writing a second
+ * shim beside this one.
  */
-const withDeliveryDefault = (stored: unknown): unknown => {
+const withCheckoutDefaults = (stored: unknown): unknown => {
     if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return stored;
-    if ("delivery" in stored) return stored;
-    return { ...stored, delivery: DEFAULT_CHECKOUT_CONFIG.delivery };
+
+    const filled: Record<string, unknown> = { ...stored };
+    if (!("delivery" in filled)) filled.delivery = DEFAULT_CHECKOUT_CONFIG.delivery;
+    if (!("advancePayment" in filled)) filled.advancePayment = DEFAULT_ADVANCE_PAYMENT;
+    return filled;
 };
 
 /**
@@ -586,8 +796,18 @@ const getCheckoutConfig = async (): Promise<ICheckoutConfig> => {
 const checkoutConfigOf = (stored: Prisma.JsonValue | null | undefined): ICheckoutConfig => {
     if (!stored) return DEFAULT_CHECKOUT_CONFIG;
 
-    const parsed = checkoutConfigSchema.safeParse(withDeliveryDefault(stored));
-    return parsed.success ? parsed.data : DEFAULT_CHECKOUT_CONFIG;
+    const parsed = checkoutConfigSchema.safeParse(withCheckoutDefaults(stored));
+    if (!parsed.success) return DEFAULT_CHECKOUT_CONFIG;
+
+    /*
+     * `advancePayment` is optional on the SCHEMA and required on the TYPE, and
+     * this line is where the two meet. `withCheckoutDefaults` above already
+     * fills it, so this is belt-and-braces rather than the primary mechanism —
+     * but it is what makes the return type honest for every caller, including
+     * one that reaches this function by a path that skipped the shim. The cost
+     * of getting it wrong is a consumer reading `enabled` off `undefined`.
+     */
+    return { ...parsed.data, advancePayment: parsed.data.advancePayment ?? DEFAULT_ADVANCE_PAYMENT };
 };
 
 /**

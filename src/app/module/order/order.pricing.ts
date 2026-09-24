@@ -360,3 +360,54 @@ export const quoteCharges = async (input: IChargeQuoteInput): Promise<IChargeQuo
         delivery,
     };
 };
+
+/**
+ * How much of an order is sent in advance, and how much is left for the door.
+ *
+ * ONE PLACE, because three callers need the same answer and disagreement
+ * between them is money: the quote the shopper is shown before they send
+ * anything, the placement that records what they claim to have sent, and the
+ * revalidation that refuses a claim whose amount has gone stale. A second
+ * implementation of "how much should they have sent" is how a shopper is shown
+ * ৳130, sends ৳130, and has the claim rejected for not being ৳150.
+ *
+ * `DELIVERY_CHARGE` takes the delivery charge AS CHARGED — after any waiver,
+ * not before. A shopper whose order crossed the free-shipping threshold owes
+ * nothing in advance under this choice, and asking them to send ৳0 is asking
+ * them for money the order does not cost. The caller decides what to do with a
+ * zero advance; this function's job is to report it honestly rather than to
+ * invent a floor.
+ *
+ * `FULL` takes the whole total, and the balance is zero by construction.
+ *
+ * The two ALWAYS sum to the total, which is the property the spec states and
+ * the one a shopper checks by adding up what they were told.
+ *
+ * See openspec/changes/add-advance-payment-checkout, design.md Decision 3.
+ */
+export interface IAdvanceSplit {
+    /** What the shopper sends now. */
+    advanceAmount: number;
+    /** What remains payable on delivery. */
+    balanceAmount: number;
+}
+
+export const splitAdvance = (
+    choice: "DELIVERY_CHARGE" | "FULL",
+    totalAmount: number,
+    shippingAmount: number,
+): IAdvanceSplit => {
+    const total = roundMoney(totalAmount);
+
+    /*
+     * Clamped to the total rather than trusted blindly. A delivery charge
+     * cannot exceed the total that contains it, so this can only fire if a
+     * caller passes a mismatched pair — and the failure it prevents is a
+     * NEGATIVE balance, which would render to the shopper as "you will be
+     * refunded ৳20 on delivery" and be collected as a debt by the courier.
+     */
+    const advance =
+        choice === "FULL" ? total : Math.min(roundMoney(shippingAmount), total);
+
+    return { advanceAmount: advance, balanceAmount: roundMoney(total - advance) };
+};

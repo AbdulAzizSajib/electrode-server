@@ -1,10 +1,12 @@
 import status from "http-status";
 import { RoleName } from "../../constants/role.constant";
 import AppError from "../../errorHelpers/AppError";
-import { NotificationType, PaymentStatus, Prisma } from "../../../generated/prisma/client";
+import { AuditAction, NotificationType, PaymentStatus, Prisma } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
+import { OrderService } from "../order/order.service";
 import { ICreatePaymentPayload, IUpdatePaymentStatusPayload } from "./payment.interface";
 
 const isStaffRole = (role: RoleName) =>
@@ -151,6 +153,24 @@ const recordPayment = async (
 ) => {
     const order = await assertOrderAccess(userId, role, orderId);
 
+    /*
+     * A CUSTOMER MAY NOT DECLARE THEIR OWN PAYMENT SETTLED.
+     *
+     * This endpoint is open to every role, which was harmless while the only
+     * thing a customer could record was a COD row nobody acted on. With
+     * advance payment live it is not: a customer posting `{ status: 'PAID' }`
+     * against their own order would create a verified-looking payment and
+     * release the order to ship, with no staff member ever having looked at a
+     * bank statement. That is the entire feature defeated by one request.
+     *
+     * The status is FORCED rather than the request rejected, so an existing
+     * client that sends one keeps working — it simply cannot choose. Staff keep
+     * the free choice they had, because `updatePaymentStatus` already trusts
+     * them with it and a staff member recording a settled payment is the normal
+     * way money collected at the door gets recorded.
+     */
+    const requestedStatus = isStaffRole(role) ? payload.status : PaymentStatus.PENDING;
+
     const payment = await prisma.$transaction(async (tx) => {
         const created = await tx.payment.create({
             data: {
@@ -158,7 +178,7 @@ const recordPayment = async (
                 transactionId: payload.transactionId,
                 amount: payload.amount ?? Number(order.totalAmount),
                 method: payload.method,
-                status: payload.status,
+                status: requestedStatus,
                 gateway: payload.gateway,
                 gatewayResponse: payload.gatewayResponse,
                 paidAt: payload.paidAt ? new Date(payload.paidAt) : undefined,
@@ -263,10 +283,234 @@ const getOrderPayments = async (userId: string, role: RoleName, orderId: string)
     });
 };
 
+/**
+ * Loads a claim and refuses one that has already been decided.
+ *
+ * Shared by verify and reject so the two cannot disagree about what "already
+ * decided" means. A claim is decided once it leaves PROCESSING: PAID by a
+ * verification, FAILED by a rejection. Anything else — a COD row, a gateway
+ * payment — is not a claim at all and is refused as such rather than being
+ * silently verified into a state its own flow never expected.
+ *
+ * 409 rather than a silent overwrite, per the spec: re-deciding a decided claim
+ * would write a second verification over the first and lose which staff member
+ * actually made the call.
+ */
+const loadUndecidedClaim = async (
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    paymentId: string,
+) => {
+    const existing = await tx.payment.findUnique({ where: { id: paymentId } });
+
+    if (!existing || existing.orderId !== orderId) {
+        throw new AppError(status.NOT_FOUND, "Payment not found for this order");
+    }
+
+    if (existing.status !== PaymentStatus.PROCESSING) {
+        throw new AppError(
+            status.CONFLICT,
+            existing.verifiedAt
+                ? `This payment was already ${existing.status === PaymentStatus.PAID ? "verified" : "rejected"} on ${existing.verifiedAt.toISOString().slice(0, 10)}.`
+                : `Only a claimed advance payment can be decided; this one is ${existing.status}.`,
+        );
+    }
+
+    return existing;
+};
+
+/**
+ * Staff confirm that money a shopper claimed to have sent actually arrived.
+ *
+ * THE HUMAN IS THE VERIFICATION. The merchant reads their own bKash, Nagad or
+ * bank statement and matches it against the claim; this records the decision
+ * and who made it. Nothing here validates that the money exists, and nothing
+ * can — which is why the audit trail naming the actor is not decoration.
+ *
+ * Deliberately NOT spelled as `updatePaymentStatus(..., { status: PAID })`,
+ * although that path exists and is staff-gated. It accepts any status as a free
+ * parameter, so "verify" would be indistinguishable from any other status
+ * write, and it records no verifier at all. Reuses that function's internals —
+ * the `paidAt` stamp and the `totalSold` transition — rather than duplicating
+ * them.
+ *
+ * Releasing the order is implicit: once this row leaves PROCESSING,
+ * `OrderService.isAwaitingPaymentVerification` stops matching it and the order
+ * may advance. There is no second write to the order, so the two cannot
+ * disagree about whether it is released.
+ */
+const verifyAdvancePayment = async (
+    userId: string,
+    role: RoleName,
+    orderId: string,
+    paymentId: string,
+) => {
+    if (!isStaffRole(role)) {
+        throw new AppError(status.FORBIDDEN, "Only staff can verify a payment");
+    }
+
+    const { existing, updated } = await prisma.$transaction(async (tx) => {
+        const existing = await loadUndecidedClaim(tx, orderId, paymentId);
+
+        const updated = await tx.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: PaymentStatus.PAID,
+                verifiedByUserId: userId,
+                verifiedAt: new Date(),
+                // The money is held to have arrived now. Distinct from
+                // `verifiedAt`, which is when a human said so — they coincide
+                // here and would not if a gateway ever reported a settlement
+                // time of its own.
+                paidAt: new Date(),
+                /*
+                 * A prior rejection's reason is cleared, because the row now
+                 * says the opposite. The REASON is not lost: the audit log
+                 * below carries both decisions, which is where the history
+                 * lives. Leaving it on the row would render as "verified" with
+                 * a rejection reason printed beside it.
+                 */
+                rejectionReason: null,
+            },
+        });
+
+        await applyTotalSoldForPaymentTransition(tx, orderId, existing.status, PaymentStatus.PAID);
+
+        return { existing, updated };
+    });
+
+    /*
+     * Audited because this is the decision that lets an order ship. A merchant
+     * reviewing a disputed order needs to know which staff member passed it,
+     * and — for a claim verified after an earlier rejection — that both things
+     * happened, in that order.
+     */
+    await AuditLogService.record(userId, AuditAction.UPDATE, "Payment", paymentId, {
+        oldData: existing,
+        // The decision travels INSIDE newData because the audit record takes
+        // only the before/after pair. Spelled out rather than left implicit in
+        // the status change, so a reader of the trail does not have to know
+        // that PAID-with-a-verifier means "a human passed this".
+        newData: { ...updated, decision: "VERIFIED", orderId, amount: Number(updated.amount) },
+    });
+
+    return updated;
+};
+
+/**
+ * Staff record that a claimed payment did not arrive.
+ *
+ * The reason is REQUIRED. A rejection nobody can be told the grounds for is not
+ * actionable by the shopper (who cannot correct it), by other staff (who cannot
+ * tell a typo'd reference from a fabricated one), or by the merchant reviewing
+ * it later. Enforced here as well as in the schema because this is where it
+ * matters.
+ *
+ * The order stays blocked afterwards, by a different rule than before: it is no
+ * longer AWAITING verification, it simply has no verified payment. A rejected
+ * claim also keeps its `transactionId`, so the same reference cannot be
+ * resubmitted until a different admin happens to pass it.
+ */
+const rejectAdvancePayment = async (
+    userId: string,
+    role: RoleName,
+    orderId: string,
+    paymentId: string,
+    reason: string,
+) => {
+    if (!isStaffRole(role)) {
+        throw new AppError(status.FORBIDDEN, "Only staff can reject a payment");
+    }
+
+    const trimmed = reason.trim();
+    if (!trimmed) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Give a reason for rejecting this payment — it is what the shopper and the next staff member have to act on.",
+        );
+    }
+
+    const { existing, updated } = await prisma.$transaction(async (tx) => {
+        const existing = await loadUndecidedClaim(tx, orderId, paymentId);
+
+        const updated = await tx.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: PaymentStatus.FAILED,
+                verifiedByUserId: userId,
+                verifiedAt: new Date(),
+                rejectionReason: trimmed,
+            },
+        });
+
+        /*
+         * PROCESSING was never a paid status, so this moves no counter — the
+         * call is made anyway rather than skipped, so that every status write
+         * in this module goes through the one function that owns `totalSold`.
+         * Skipping it here is how the next status added to the flow quietly
+         * stops counting.
+         */
+        await applyTotalSoldForPaymentTransition(tx, orderId, existing.status, PaymentStatus.FAILED);
+
+        return { existing, updated };
+    });
+
+    await AuditLogService.record(userId, AuditAction.UPDATE, "Payment", paymentId, {
+        oldData: existing,
+        newData: {
+            ...updated,
+            decision: "REJECTED",
+            reason: trimmed,
+            orderId,
+            amount: Number(updated.amount),
+        },
+    });
+
+    return updated;
+};
+
+/**
+ * Every claim still waiting on a decision, newest first.
+ *
+ * Exists so the queue is not per-order. A merchant with fifty orders a day
+ * cannot find the three awaiting verification by opening fifty order pages,
+ * and the ones they miss are orders a shopper has already paid for.
+ *
+ * Served by `Payment_status_createdAt_idx`.
+ */
+const getPendingVerifications = async (role: RoleName) => {
+    if (!isStaffRole(role)) {
+        throw new AppError(status.FORBIDDEN, "Only staff can read pending payment verifications");
+    }
+
+    return prisma.payment.findMany({
+        where: {
+            status: PaymentStatus.PROCESSING,
+            method: { in: OrderService.ADVANCE_PAYMENT_METHODS },
+        },
+        orderBy: { createdAt: "desc" },
+        include: {
+            order: {
+                select: {
+                    id: true,
+                    orderNumber: true,
+                    status: true,
+                    totalAmount: true,
+                    createdAt: true,
+                    customer: { select: { id: true, firstName: true, lastName: true, phone: true } },
+                },
+            },
+        },
+    });
+};
+
 export const PaymentService = {
     recordPayment,
     updatePaymentStatus,
     getOrderPayments,
+    verifyAdvancePayment,
+    rejectAdvancePayment,
+    getPendingVerifications,
     applyTotalSoldDelta,
     /** Every writer that changes a payment's status must move the counter through this — see its doc comment. */
     applyTotalSoldForPaymentTransition,

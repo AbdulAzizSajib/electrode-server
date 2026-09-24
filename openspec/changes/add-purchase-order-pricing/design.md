@@ -88,6 +88,27 @@ Pre-filling the staged inputs with the current prices was rejected, and it is th
 
 Variant precedence for all four figures is the variant's own value falling back to the parent's, matching what `receivePurchaseOrder` already does when it values the line. Anything else would show one number and act on another.
 
+### 4a. The helper CONTROLS were removed from the admin (Decision 4 reversed in the UI)
+
+**Chosen (after implementation, on the merchant's request):** the markup and
+fixed-adjust controls are gone from the line pricing panel. The two staged
+inputs remain, and every figure in them is one a merchant typed.
+
+The merchant's reason is that these prices come off a supplier's invoice rather
+than being derived from cost, so the controls occupied the panel's width and
+reading without answering a question they had. Decision 4's arithmetic reasoning
+was sound; the premise that a merchant wants a computed selling price was not.
+
+**Only the UI went.** `markupOnCost` and `adjustByAmount` remain in
+`purchase-order.cost.ts` and remain covered by `verify-cost-basis.ts`, so
+restoring the controls is a UI change rather than a re-derivation. The admin's
+mirror of the two functions was deleted, which also retires the drift risk the
+Risks section listed.
+
+**Consequence:** nothing computes a staged price now. The "no automatic reprice"
+guarantee in proposal.md is strengthened rather than weakened — there is no
+longer any path that fills a staged price except typing one.
+
 ### 5a. The pricing controls live in an expandable row per line, not in new columns
 
 **Chosen (settled during implementation, on the merchant's answer):** each line keeps a chevron that opens a second row beneath it, holding the three current prices, the two staged inputs and the helpers. The main table is untouched.
@@ -97,6 +118,46 @@ The line-item table already carries seven columns — Product, Variant, Qty, Uni
 An expandable row also matches what the feature *is*: repricing is per line and occasional, so it should cost a click and be absent until asked for. It keeps the empty-by-default encoding of Decision 5 visible too — a collapsed row shows nothing staged, which is exactly what an untouched line means.
 
 *Rejected:* current prices inline under the product name with the staged inputs in a dialog. A dialog hides the unit cost the markup is computed from, so the merchant would be marking up a number they cannot see. *Rejected:* all five as columns with horizontal scroll, for the reason above.
+
+### 5b. Items are chosen before the line exists; the row is read-only text
+
+**Chosen (after implementation, on the merchant's request):** line items are
+added from a search bar above the table. A product with variants opens a dialog
+naming which variant; a simple product is added directly. The row then shows
+Product and Variant as TEXT, and the per-row comboboxes are gone.
+
+The old flow was "Add item" → blank row → find the product in the row's
+combobox → then the variant in a second one. Two steps after the one the
+merchant was thinking in ("I want this product"), with the row sitting in a
+state that fails validation in between.
+
+Moving the choice ahead of the line makes an invalid line unreachable rather
+than merely refused: a variable product's line could previously sit on the table
+naming no variant until save caught it, and that check — `Choose which variant
+this line is for` — now has nothing to catch, because a dismissed dialog adds
+nothing at all. It is also what lets the row be text: once there is nothing left
+to choose, a control there would only offer a way back into the state the dialog
+exists to prevent.
+
+**The duplicate rule:** same product AND same variant increments the existing
+line; a different variant of the same product gets its own line, because stock
+is held per (warehouse, product, variant) and merging them would order the right
+total of the wrong thing.
+
+**Changing a line's item is now removing it and adding the right one.** Accepted:
+it is rarer than adding, and the alternative is re-introducing the pickers whose
+removal is the point.
+
+*Rejected:* keeping the row's comboboxes alongside the search bar. Two ways to
+say the same thing, and the row's way is the one that can produce the invalid
+state.
+
+**The variant dialog is a listbox, not a list of buttons.** It first shipped as
+`<button>` elements, which answer arrow keys by doing nothing. It now follows the
+contract `components/ui/combobox` already implements — highlight as state,
+published through `aria-activedescendant`, options not focusable, Enter commits —
+and `purchase-order-form-page.test.tsx` pins it, because every mouse-driven
+assertion passed while the keyboard did nothing.
 
 ### 6. Validation stays a shape check; the invariant lives in the service
 

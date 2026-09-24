@@ -31,6 +31,26 @@ model Banner {
   productId String?
   product   Product? @relation(fields: [productId], references: [id])
 
+  // ---- Promo strip membership ----
+  /// The promotional strip this banner is a tile of, or null for none.
+  ///
+  /// A BANNER BELONGS TO AT MOST ONE GROUP. A nullable FK rather than a join
+  /// table, because a join table would model a cardinality that is not
+  /// permitted and would then need a uniqueness constraint to forbid it again.
+  ///
+  /// ONLY A `MID` BANNER MAY BE ASSIGNED — enforced in banner.service.ts, not
+  /// here, since Postgres cannot express "this column may only be set when that
+  /// column holds a particular value". The hero placements are owned by the
+  /// Home Slider manager with its own capacity rules (hero-slots.ts); letting a
+  /// group claim one would mean the same record edited from two surfaces under
+  /// two different sets of rules.
+  ///
+  /// Null is a REAL state, not "unset": a `MID` banner with no group is on file
+  /// and editable in the admin, and renders in no strip. That is what makes
+  /// `onDelete: SetNull` on the relation a complete answer to a deleted group.
+  promoBannerGroupId String?
+  promoBannerGroup   PromoBannerGroup? @relation(fields: [promoBannerGroupId], references: [id], onDelete: SetNull)
+
   status    BannerStatus @default(DRAFT)
   sortOrder Int          @default(0)
 
@@ -43,4 +63,7 @@ model Banner {
   @@index([status])
   @@index([placement])
   @@index([placement, sortOrder])
+  /// The storefront reads a strip's tiles as "this group, in the merchant's
+  /// order", and the admin's group editor reads the same thing.
+  @@index([promoBannerGroupId, sortOrder])
 }

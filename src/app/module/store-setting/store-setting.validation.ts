@@ -1,6 +1,7 @@
 import z from "zod";
+import { isValidPhone } from "../../utils/phone";
 import { parseGoogleFontEmbed } from "./google-font";
-import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS } from "./store-setting.constant";
+import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS, PROMO_SECTION_KEY } from "./store-setting.constant";
 
 /**
  * These schemas are the ONLY thing standing between a malformed nav tree and
@@ -252,6 +253,116 @@ const deliverySettingsSchema = z
         }
     });
 
+/* ------------------------------------------------------------------ *
+ * Advance payment
+ * ------------------------------------------------------------------ */
+
+/**
+ * More than this and the checkout's account picker is a directory rather than a
+ * choice. A merchant listing a dozen bKash numbers is describing an agent
+ * network, which is not what this models.
+ */
+export const MAX_PAYMENT_ACCOUNTS = 10;
+
+/** The mobile-money services a Bangladeshi merchant actually receives on. */
+export const MOBILE_BANKING_PROVIDERS = ["BKASH", "NAGAD", "ROCKET"] as const;
+
+/**
+ * Which slice of the order the shopper sends in advance.
+ *
+ * DELIVERY_CHARGE takes the delivery option's price and leaves the rest for the
+ * door; FULL takes the whole total. They are the same code path with a
+ * different amount — see design.md, Decision 3.
+ */
+export const ADVANCE_PAYMENT_CHOICES = ["DELIVERY_CHARGE", "FULL"] as const;
+
+/**
+ * The id borne by one configured payment account.
+ *
+ * Generated once by the admin and NEVER rewritten, because a placed order's
+ * payment row references it. Addressing accounts by position instead would
+ * reattach every historical claim to a different account the first time the
+ * merchant reorders or deletes a row. Same slug shape as a delivery option's
+ * `key`, and deliberately unlike it in one respect: a delivery key is generated
+ * positionally and survives renames but not reordering, which is fine for a
+ * label and wrong for a foreign reference. See design.md, Decision 2.
+ */
+const paymentAccountIdSchema = z
+    .string()
+    .min(1)
+    .max(60)
+    .regex(slugPattern, "Payment account id must be lowercase words separated by single hyphens");
+
+/**
+ * One mobile-banking account the shopper sends money to.
+ *
+ * `accountType` is the free-text label the merchant writes beside the number —
+ * "Personal", "Merchant", "Agent". It is presentation only: nothing branches on
+ * it, and bKash's own rules about which account types accept what are the
+ * merchant's business, not this schema's.
+ */
+const mobileBankingAccountSchema = z
+    .object({
+        id: paymentAccountIdSchema,
+        provider: z.enum(MOBILE_BANKING_PROVIDERS),
+        number: z
+            .string()
+            .trim()
+            .min(1, "A mobile banking account needs a number")
+            .max(20)
+            .refine(isValidPhone, "Enter a valid Bangladeshi mobile number"),
+        accountType: z.string().trim().max(40),
+    })
+    .strict();
+
+/**
+ * One bank account the shopper deposits into.
+ *
+ * Branch and routing number are optional because a shopper transferring inside
+ * the same bank needs neither, and a merchant who leaves them blank is not
+ * misconfigured. Account name is NOT optional: a deposit slip made out to the
+ * wrong name is the one error that cannot be undone from the merchant's side.
+ */
+const bankAccountSchema = z
+    .object({
+        id: paymentAccountIdSchema,
+        bankName: z.string().trim().min(1, "A bank account needs a bank name").max(120),
+        accountName: z.string().trim().min(1, "A bank account needs an account name").max(120),
+        accountNumber: z.string().trim().min(1, "A bank account needs an account number").max(60),
+        branch: z.string().trim().max(120),
+        routingNumber: z.string().trim().max(40),
+    })
+    .strict();
+
+/**
+ * Whether the store takes money before it ships, and where that money goes.
+ *
+ * OPTIONAL on `checkoutConfig`, which is load-bearing rather than incidental:
+ * that column is read with a wholesale `merge()` that swaps in the whole
+ * default object when a stored row lacks a key, so a REQUIRED key here would
+ * make every store configured before this change fail the parse and fall all
+ * the way back to DEFAULT_CHECKOUT_CONFIG — silently discarding the merchant's
+ * own fields, notice and guest-checkout settings. `withDeliveryDefault` in
+ * store-setting.service.ts exists to paper over exactly that for the one key
+ * added since the column was created; optionality avoids needing a second one.
+ * An absent key and `enabled: false` therefore mean the same thing, which is
+ * the semantics wanted: a store that predates the feature has this off. See
+ * design.md, Decision 1.
+ *
+ * The accounts live HERE, on a column the storefront reads, and not in
+ * `IntegrationCredential`, because a number the shopper must read off the
+ * checkout page in order to send money to it is published by the act of being
+ * used. That is the rule stated on `StoreSetting.integrationConfig` and already
+ * applied to the Facebook Pixel id against its CAPI token.
+ */
+const advancePaymentSchema = z
+    .object({
+        enabled: z.boolean(),
+        mobileAccounts: z.array(mobileBankingAccountSchema).max(MAX_PAYMENT_ACCOUNTS),
+        bankAccounts: z.array(bankAccountSchema).max(MAX_PAYMENT_ACCOUNTS),
+    })
+    .strict();
+
 /**
  * Everything the SEO menu owns beyond the three scalar columns (siteUrl,
  * metaTitle, metaDescription), which stay where they are.
@@ -445,17 +556,24 @@ export const seoConfigSchema = z
  * Which optional catalog features the storefront offers.
  *
  * `.strict()` like the blobs around it, so a typo'd key is a 400 rather than a
- * flag silently reading at its default forever. All three are required on write:
+ * flag silently reading at its default forever. All FIVE are required on write:
  * the admin panel edits them as one screen, and a partial write would leave the
  * reader unable to tell "the merchant turned this off" from "this key predates
  * the flag" — a distinction the per-key read default already handles, and which
  * a partial write would make ambiguous.
+ *
+ * `openCartOnAdd` joined the other three rather than starting a `cartConfig` of
+ * its own: what it governs is what a LISTING does when a shopper acts on it,
+ * which is what the three beside it govern too. See
+ * openspec/changes/add-product-slider-and-card-quantity, design.md Decision 6.
  */
 export const catalogConfigSchema = z
     .object({
         showWishlist: z.boolean(),
         showCompare: z.boolean(),
         showQuickView: z.boolean(),
+        openCartOnAdd: z.boolean(),
+        cardQuantityControl: z.boolean(),
     })
     .strict();
 
@@ -502,6 +620,20 @@ export const homeConfigSchema = z
                  * starts sending the field.
                  */
                 variant: z.string().optional(),
+                /*
+                 * Which promo strip a MID_BANNERS entry renders.
+                 *
+                 * The object is `.strict()`, so declaring it here is what stops
+                 * the whole save being rejected the moment the admin starts
+                 * sending it — and the admin MUST send it, because its Home
+                 * Sections editor writes the filtered list back and an entry
+                 * that loses its groupId is dropped on the next read.
+                 *
+                 * Required-ness is enforced per key in the refinement below,
+                 * not here: only one of the twelve keys may carry it, and a
+                 * flat field cannot say that.
+                 */
+                groupId: z.string().min(1).optional(),
             })
             .strict(),
     )
@@ -513,18 +645,64 @@ export const homeConfigSchema = z
          * collapses duplicates to the first occurrence on READ so a hand-edited
          * row still renders, but a duplicate arriving through the API is a bug
          * in the caller and is rejected rather than silently halved.
+         *
+         * MID_BANNERS IS THE EXCEPTION, and it is an exception to the KEY being
+         * the identity, not to the rule itself: a merchant may have several
+         * promo strips, so the same key legitimately repeats — but each
+         * occurrence must name a DIFFERENT group. Two entries naming one group
+         * have exactly the ambiguity this check exists to reject, so the
+         * identity becomes `key:groupId` and the rule is otherwise unchanged.
+         *
+         * See openspec/changes/add-promo-banner-groups, design.md Decision 3.
          */
         const seen = new Set<string>();
 
         sections.forEach((section, index) => {
-            if (seen.has(section.key)) {
+            const isPromo = section.key === PROMO_SECTION_KEY;
+
+            /*
+             * A groupId on any other section is rejected rather than ignored.
+             * Ignoring would store a field that governs nothing and reads as
+             * though it does — the same reasoning the variant checks below
+             * give for refusing rather than dropping.
+             */
+            if (!isPromo && section.groupId !== undefined) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [index, "groupId"],
+                    message: `${section.key} does not render a promo banner group, so it cannot name one.`,
+                });
+            }
+
+            /*
+             * A promo entry WITHOUT a group names no strip and would be dropped
+             * on the very next read. Rejecting it here is what turns that
+             * silent disappearance into an error the caller can act on — and
+             * the caller this protects is the admin's Home Sections editor,
+             * whose save path rebuilds every entry.
+             */
+            if (isPromo && section.groupId === undefined) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [index, "groupId"],
+                    message:
+                        "A promo banners section must name the group it renders. " +
+                        "Reload the page and try again if this persists.",
+                });
+            }
+
+            const identity = isPromo ? `${section.key}:${section.groupId}` : section.key;
+
+            if (seen.has(identity)) {
                 ctx.addIssue({
                     code: "custom",
                     path: [index, "key"],
-                    message: `${section.key} is listed more than once.`,
+                    message: isPromo
+                        ? "The same promo banner group is listed more than once."
+                        : `${section.key} is listed more than once.`,
                 });
             }
-            seen.add(section.key);
+            seen.add(identity);
 
             /*
              * A layout is checked against what ITS OWN section offers.
@@ -585,6 +763,13 @@ export const checkoutConfigSchema = z
         allowGuestCheckout: z.boolean(),
         notice: z.string().max(300),
         delivery: deliverySettingsSchema,
+        /*
+         * Optional, unlike `delivery` above. See advancePaymentSchema's comment:
+         * a required key here breaks every store configured before this change.
+         * Reads normalise an absent value to disabled-with-no-accounts, so no
+         * consumer has to spell `?? { enabled: false }` for itself.
+         */
+        advancePayment: advancePaymentSchema.optional(),
     })
     .strict()
     .superRefine((config, ctx) => {
@@ -640,6 +825,50 @@ export const checkoutConfigUpdateSchema = checkoutConfigSchema.superRefine((conf
                 "Add at least one delivery option — a store that takes orders has to be able to say what delivery costs.",
         });
     }
+
+    const advance = config.advancePayment;
+    if (!advance) return;
+
+    /*
+     * Advance payment on with nowhere to send the money is a checkout that
+     * asks for a transaction id against no account — the shopper is told to
+     * pay and given no way to. Refused on SAVE only, like the empty delivery
+     * list above: a stored row in this state has to stay parseable, and the
+     * read path resolves it to "off" rather than to an unusable checkout.
+     */
+    if (advance.enabled && advance.mobileAccounts.length === 0 && advance.bankAccounts.length === 0) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["advancePayment", "enabled"],
+            message:
+                "Add a mobile banking or bank account before turning advance payment on — otherwise checkout asks for a payment with nowhere to send it.",
+        });
+    }
+
+    /*
+     * Ids are unique across BOTH lists, not within each. A placed order stores
+     * one account id and nothing saying which list it came from, so a bank
+     * account sharing an id with a mobile one would make an existing claim
+     * resolve to either, depending on which list a reader happened to search.
+     */
+    const seenIds = new Set<string>();
+    const dedupe = (
+        accounts: { id: string }[],
+        list: "mobileAccounts" | "bankAccounts",
+    ) => {
+        accounts.forEach((account, index) => {
+            if (seenIds.has(account.id)) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: ["advancePayment", list, index, "id"],
+                    message: `Two payment accounts share the id "${account.id}"`,
+                });
+            }
+            seenIds.add(account.id);
+        });
+    };
+    dedupe(advance.mobileAccounts, "mobileAccounts");
+    dedupe(advance.bankAccounts, "bankAccounts");
 });
 
 /* ------------------------------------------------------------------ *

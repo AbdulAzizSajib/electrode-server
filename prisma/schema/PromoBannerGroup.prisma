@@ -1,0 +1,70 @@
+/// One promotional banner strip on the homepage — a merchant-created, named,
+/// ordered row of promo tiles with its own layout.
+///
+/// The storefront used to render exactly one three-across promo strip: one
+/// `MID_BANNERS` key in the section registry, one `MID` value in
+/// BannerPlacement, and `sm:grid-cols-3` hardcoded into MidBanners.tsx. A
+/// merchant who wanted a single full-width promo, or two half-width ones, or a
+/// second strip further down the page, had none of those. A group is that
+/// strip made into data: the COUNT of strips is now merchant data rather than
+/// a compiled-in tuple.
+///
+/// ── Why a table, and not a JSON array on StoreSetting ────────────────────
+///
+/// Banner membership is a relation. A banner id inside a JSON array has no
+/// foreign key, so deleting a banner would leave a dangling id that every
+/// reader has to defend against forever — and this repo's own rule is that a
+/// Json column is unconstrained by Postgres, leaving the Zod schema as the only
+/// gate. A real column with `onDelete: SetNull` makes the detach behaviour the
+/// database's job rather than seven call sites'.
+///
+/// ── DELETING A GROUP DETACHES ITS BANNERS, IT DOES NOT DELETE THEM ───────
+///
+/// `Banner.promoBannerGroup` is declared `onDelete: SetNull`, so removing a
+/// group leaves every banner it held on file with no group. A merchant who
+/// deletes a strip is removing an ARRANGEMENT, not throwing away artwork they
+/// paid someone to make. Detached banners surface in the admin's banner list as
+/// unassigned, which is a state the merchant can already see and fix by
+/// assigning them elsewhere. Do not change this to Cascade.
+///
+/// Deleting a group also drops the homepage section entry naming it — not by a
+/// write here, but because `reconcileHomeConfig` discards an entry whose group
+/// no longer exists. That is the same path an unregistered section key already
+/// takes: there is no component left that could render it.
+///
+/// See openspec/changes/add-promo-banner-groups, design.md Decisions 1 and 2.
+model PromoBannerGroup {
+  id String @id @default(uuid(7))
+
+  /// The merchant's own label for the strip — "Week deals", "iPhone push".
+  /// Shown in the admin's Home Sections list so a merchant with three strips
+  /// can tell which row is which; the storefront does NOT render it. A
+  /// group-level heading above the strip is deliberately out of scope, see the
+  /// change's design.md Open Questions.
+  name String
+
+  /// How many tiles the strip renders across. Resolved on read rather than
+  /// trusted — an unrecognised value reads back as THREE — mirroring
+  /// `resolveSectionVariant`'s handling of a layout from a newer server.
+  ///
+  /// Lives HERE and not on the homeConfig entry because it is a property of
+  /// this strip, and a strip's identity is the group. On the config entry, the
+  /// same group would render at different widths depending on which entry
+  /// named it, and "delete the entry, re-add it" would silently lose the
+  /// layout.
+  layout PromoBannerLayout @default(THREE)
+
+  /// The merchant's ordering among groups, ascending. This orders the groups
+  /// themselves — where each STRIP sits on the page is the homepage section
+  /// configuration's business, not this column's. It decides only the position
+  /// a newly-created group is spliced into that configuration at, and the order
+  /// the admin's manager lists them in.
+  sortOrder Int @default(0)
+
+  banners Banner[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder])
+}

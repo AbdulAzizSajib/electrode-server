@@ -56,6 +56,31 @@ export interface ICheckoutItemPayload {
     quantity: number;
 }
 
+/** Which slice of the order total the shopper sent before it ships. */
+export type IAdvancePaymentChoice = "DELIVERY_CHARGE" | "FULL";
+
+/**
+ * What the shopper claims about money they have already sent.
+ *
+ * Deliberately has NO amount. The server derives it from `choice` and the
+ * delivery option it resolves, so the figure a human later matches against a
+ * bank statement is one the shopper could not name.
+ */
+export interface IAdvanceClaimPayload {
+    choice: IAdvancePaymentChoice;
+    /** An id from the merchant's own configured accounts; an unknown one is refused. */
+    accountId: string;
+    /**
+     * The advance the shopper was shown, echoed back as an agreement check.
+     * The server computes the real figure regardless; a mismatch means the page
+     * went stale after they sent the money, and is refused rather than accepted.
+     */
+    expectedAdvanceAmount?: number;
+    /** The shopper's own number, or the depositor's name/account for a bank transfer. */
+    senderIdentifier: string;
+    transactionId: string;
+}
+
 export interface ICreateOrderPayload {
     shippingAddressId?: string;
     notes?: string;
@@ -85,8 +110,23 @@ export interface ICreateOrderPayload {
      * stock are still resolved from the database; nothing here is trusted.
      */
     items?: ICheckoutItemPayload[];
-    /** Guest checkout is cash-on-delivery only; anything else is rejected. */
+    /**
+     * How the shopper intends to pay. Absent means cash on delivery.
+     *
+     * Anything other than COD is an ADVANCE method — money the shopper says
+     * they have already sent — and is refused unless the merchant has advance
+     * payment turned on. It must arrive with `advancePayment` below; the
+     * validation schema rejects one without the other.
+     */
     paymentMethod?: string;
+    /**
+     * The advance payment claim, when one is being made.
+     *
+     * Carries no amount: the server computes that from `choice` and the
+     * delivery option it resolves, so a client cannot declare how much it sent.
+     * See openspec/changes/add-advance-payment-checkout, design.md Decision 7.
+     */
+    advancePayment?: IAdvanceClaimPayload;
     /** Client's expected total, used as an optimistic price-agreement check against the server-computed total. */
     expectedTotal?: number;
     /**
