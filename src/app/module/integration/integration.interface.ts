@@ -73,8 +73,18 @@ export interface IWebhookDescriptor {
     instructions: string[];
 }
 
-/** Where an integration appears in the admin, so cards group sensibly. */
-export type IntegrationCategory = "COURIER" | "MARKETING";
+/**
+ * Where an integration appears in the admin, so cards group sensibly.
+ *
+ * `NOTIFICATION` is its own category rather than a corner of `MARKETING`
+ * because the categories are how the admin page groups its cards, and a
+ * merchant looking for "where do I turn off the order alerts" would be hunting
+ * under Marketing, next to ad measurement — a grouping that is wrong about what
+ * the integration is for. A one-word union member is a cheaper fix than a
+ * misleading page. See openspec/changes/add-telegram-notifications, design.md
+ * Decision 2.
+ */
+export type IntegrationCategory = "COURIER" | "MARKETING" | "NOTIFICATION";
 
 /**
  * One integration, as declared by the registry.

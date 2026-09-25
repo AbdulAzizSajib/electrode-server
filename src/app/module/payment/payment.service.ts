@@ -274,12 +274,29 @@ const updatePaymentStatus = async (
     });
 };
 
+/**
+ * Every payment on one order, including an advance claim's full detail.
+ *
+ * The verifier is joined for STAFF CALLERS ONLY, and that split is the reason
+ * this is not a bare `findMany`. The admin's claim panel has to name who decided
+ * a claim and when — a verification whose actor the panel cannot state is not an
+ * audit trail anyone can read — and it cannot get the name from `/users/:id`,
+ * which is OWNER/ADMIN only while verifying is open to STAFF. So a STAFF member
+ * would see their own decision attributed to nobody.
+ *
+ * A customer reads the same endpoint for their own order. They are shown the
+ * claim and its outcome, which is theirs, and NOT which staff member decided it,
+ * which is the merchant's internal business.
+ */
 const getOrderPayments = async (userId: string, role: RoleName, orderId: string) => {
     await assertOrderAccess(userId, role, orderId);
 
     return prisma.payment.findMany({
         where: { orderId },
         orderBy: { createdAt: "desc" },
+        include: isStaffRole(role)
+            ? { verifiedBy: { select: { id: true, name: true, email: true } } }
+            : undefined,
     });
 };
 

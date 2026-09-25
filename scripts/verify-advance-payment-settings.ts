@@ -2,7 +2,7 @@
  * Pins the two things about advance-payment SETTINGS that break silently.
  *
  * 1. THE THREE HAND-SYNCED COPIES AGREE. The shape lives in the backend's Zod
- *    schema, in `nextjs/src/types/store-settings.ts`, and in
+ *    schema, in `frontend/src/types/store-settings.ts`, and in
  *    `admin/src/lib/api/store-settings.ts`. The packages never import each
  *    other, so a field renamed in one place produces no type error anywhere —
  *    the admin simply saves a key the backend strips, and the merchant's change
@@ -109,7 +109,7 @@ const ALL_KEYS = [...new Set([...BLOCK_KEYS, ...MOBILE_KEYS, ...BANK_KEYS])];
  * ------------------------------------------------------------------ */
 
 const mirrors: [string, string][] = [
-    ["nextjs", "nextjs/src/types/store-settings.ts"],
+    ["storefront", "frontend/src/types/store-settings.ts"],
     ["admin", "admin/src/lib/api/store-settings.ts"],
 ];
 

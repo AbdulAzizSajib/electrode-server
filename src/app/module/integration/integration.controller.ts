@@ -13,6 +13,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { IntegrationService } from "./integration.service";
+import { testIntegration as testIntegrationSend } from "./integration.test-send";
 
 const listIntegrations = catchAsync(async (_req: Request, res: Response) => {
     const result = await IntegrationService.listIntegrations();
@@ -88,10 +89,31 @@ const setEnabled = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+/*
+ * The one endpoint in this controller that reports a delivery failure.
+ *
+ * Everything else here is configuration, where the interesting outcomes are
+ * "saved" and "refused". This one exists precisely to surface whether an
+ * outbound message worked, so a failure travels back as an `AppError` carrying
+ * the other side's own words rather than being swallowed the way the
+ * event-driven sends are. See `integration.test-send.ts`.
+ */
+const testIntegration = catchAsync(async (req: Request, res: Response) => {
+    const result = await testIntegrationSend(req.params.provider as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: result.message,
+        data: result,
+    });
+});
+
 export const IntegrationController = {
     listIntegrations,
     getIntegration,
     updateCredentials,
     generateWebhookSecret,
     setEnabled,
+    testIntegration,
 };

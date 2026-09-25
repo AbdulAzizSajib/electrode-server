@@ -6,6 +6,8 @@ import { prisma } from "../../lib/prisma";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { CustomerService } from "../customer/customer.service";
+import { dispatchTelegramMessage } from "../integration/telegram";
+import { buildSupportTicketMessage } from "../integration/telegram-messages";
 import { NotificationService } from "../notification/notification.service";
 import {
     ICreateSupportMessagePayload,
@@ -45,10 +47,26 @@ const createTicket = async (userId: string, payload: ICreateSupportTicketPayload
     const customer = await CustomerService.getOrCreateCustomerByUserId(userId);
     const ticketNumber = await generateUniqueTicketNumber();
 
-    return prisma.supportTicket.create({
+    const ticket = await prisma.supportTicket.create({
         data: { ticketNumber, customerId: customer.id, ...payload },
         include: TICKET_INCLUDE,
     });
+
+    /*
+     * A newly opened ticket has no assignee yet, so `notifyOtherParticipant`
+     * below — which routes a MESSAGE to whoever did not send it — has nobody to
+     * route to and does not run on this path at all. Until now, opening a ticket
+     * notified nobody in the shop; it waited to be noticed in the panel.
+     *
+     * Not awaited and unable to fail the creation: a customer must never be told
+     * their ticket failed because an alert did. See module/integration/telegram.ts.
+     */
+    dispatchTelegramMessage(
+        buildSupportTicketMessage(ticket),
+        `support ticket ${ticket.ticketNumber}`,
+    );
+
+    return ticket;
 };
 
 const getTickets = async (userId: string, role: RoleName, queryParams: IQueryParams) => {

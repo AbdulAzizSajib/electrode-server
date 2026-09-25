@@ -28,6 +28,8 @@ export const CredentialKind = {
     SECRET_KEY: "secretKey",
     WEBHOOK_TOKEN: "webhookToken",
     ACCESS_TOKEN: "accessToken",
+    BOT_TOKEN: "botToken",
+    CHAT_ID: "chatId",
 } as const;
 
 /** Integration ids, named once, for the same reason as the kinds above. */
@@ -36,6 +38,7 @@ export const IntegrationId = {
     MANUAL: "MANUAL",
     FACEBOOK_PIXEL: "FACEBOOK_PIXEL",
     FACEBOOK_CAPI: "FACEBOOK_CAPI",
+    TELEGRAM: "TELEGRAM",
 } as const;
 
 /**
@@ -123,6 +126,46 @@ export const INTEGRATIONS: IIntegrationDescriptor[] = [
                 label: "Access Token (CAPI)",
                 secret: true,
                 placeholder: "Paste Access Token",
+            },
+        ],
+    },
+    {
+        /**
+         * Staff-facing order alerts over a Telegram bot.
+         *
+         * THE CHAT ID IS A CREDENTIAL WITH `secret: false`, NOT
+         * `StoreSetting.integrationConfig`. That is where the Meta pixel id
+         * lives and it is the wrong home here: `GET /settings/public` serves
+         * that row to every visitor of the storefront. A pixel id is published
+         * to every visitor anyway by the act of rendering the pixel; a chat id
+         * is not secret, but it is nobody's business outside the shop, and
+         * putting it one careless `select` away from a public endpoint buys
+         * nothing. `secret: false` on a credential row gives exactly what is
+         * wanted — readable to an authenticated OWNER/ADMIN, invisible to
+         * everyone else — and the merchant has to be able to read it back to
+         * confirm which chat is wired up.
+         *
+         * The bot token is the opposite: whoever holds it owns the bot.
+         *
+         * See openspec/changes/add-telegram-notifications, design.md
+         * Decisions 1 and 3.
+         */
+        id: IntegrationId.TELEGRAM,
+        displayName: "Telegram",
+        description: "Order and stock alerts to a staff chat",
+        category: "NOTIFICATION",
+        credentials: [
+            {
+                kind: CredentialKind.BOT_TOKEN,
+                label: "Bot Token",
+                secret: true,
+                placeholder: "From @BotFather after /newbot",
+            },
+            {
+                kind: CredentialKind.CHAT_ID,
+                label: "Chat ID",
+                secret: false,
+                placeholder: "From @userinfobot — negative for a group",
             },
         ],
     },

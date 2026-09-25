@@ -22,6 +22,11 @@ import { CampaignService } from "../campaign/campaign.service";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
 import { reportPurchaseToCapi } from "../integration/facebook-capi";
+import { dispatchTelegramMessage } from "../integration/telegram";
+import {
+    buildNewOrderMessage,
+    buildOrderCancelledMessage,
+} from "../integration/telegram-messages";
 import { NotificationService } from "../notification/notification.service";
 import { StockService } from "../stock/stock.service";
 import { StoreSettingService } from "../store-setting/store-setting.service";
@@ -1608,6 +1613,21 @@ const placeOrder = async (
     ).catch((error) => console.error("New-order staff notification failed after checkout:", error));
 
     /*
+     * The same alert, on a channel that reaches the merchant away from the desk.
+     * The in-app notification above stays the durable record; this is the push
+     * that makes a cash-on-delivery confirmation call happen in minutes rather
+     * than whenever someone next refreshes the panel.
+     *
+     * ONE HOOK COVERS BOTH ORDER SOURCES. `LandingPageService` places campaign
+     * orders through this same `placeOrder`, so a second call site on the
+     * landing-page path would double every campaign alert.
+     *
+     * Silent and free on a shop that never connected Telegram; it cannot fail
+     * this order, and it is not awaited. See module/integration/telegram.ts.
+     */
+    dispatchTelegramMessage(buildNewOrderMessage(created), `new order ${created.orderNumber}`);
+
+    /*
      * The server-side half of Purchase measurement. Not awaited, for the same
      * reason as the two calls above — and additionally because a shopper must
      * never wait on Meta to see their confirmation.
@@ -2397,6 +2417,16 @@ const cancelOwnOrder = async (userId: string, orderId: string) => {
         `Your order ${cancelled.orderNumber} has been cancelled.`,
     );
 
+    /*
+     * The notification above reaches the CUSTOMER — this one reaches staff.
+     * A self-cancellation is the case where nobody in the shop is necessarily
+     * looking, and it frees reserved stock, so it is worth a push.
+     */
+    dispatchTelegramMessage(
+        buildOrderCancelledMessage(cancelled, order.status),
+        `cancelled order ${cancelled.orderNumber}`,
+    );
+
     // Customer self-cancel — staff use `updateOrderStatus` instead.
     return flattenedWithoutCosts(cancelled);
 };
@@ -2517,6 +2547,21 @@ const updateOrderStatus = async (
             NotificationType.ORDER,
             "Order status updated",
             `Your order ${updated.orderNumber} is now ${payload.status}.`,
+        );
+    }
+
+    /*
+     * CANCELLED ONLY, not every status change. This endpoint moves an order
+     * through its whole lifecycle, and a Telegram push on each of PROCESSING,
+     * PACKED, SHIPPED and DELIVERED would be the staff announcing their own
+     * work back to themselves — noise that gets the whole integration muted.
+     * A cancellation is the transition somebody who is not at the panel needs
+     * to hear about, because it frees reserved stock and ends a sale.
+     */
+    if (payload.status === OrderStatus.CANCELLED) {
+        dispatchTelegramMessage(
+            buildOrderCancelledMessage(updated, order.status),
+            `cancelled order ${updated.orderNumber}`,
         );
     }
 

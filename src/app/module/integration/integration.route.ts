@@ -58,6 +58,23 @@ router.put(
     IntegrationController.generateWebhookSecret,
 );
 
+/*
+ * Above `PATCH /:provider` only incidentally — they differ by method as well as
+ * by path — but kept adjacent to its siblings so the provider-scoped actions
+ * read as one group.
+ *
+ * No request body and no `validateRequest`: the only input is the provider in
+ * the URL, which the service checks against its handler map. This is a POST
+ * rather than a GET because it has an external side effect — a message actually
+ * leaves the building — and a GET that sends something is a GET a proxy or a
+ * link preview can fire on the merchant's behalf.
+ */
+router.post(
+    "/:provider/test",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN),
+    IntegrationController.testIntegration,
+);
+
 router.patch(
     "/:provider",
     checkAuth(RoleName.OWNER, RoleName.ADMIN),

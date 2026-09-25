@@ -294,12 +294,43 @@ const paymentAccountIdSchema = z
     .regex(slugPattern, "Payment account id must be lowercase words separated by single hyphens");
 
 /**
+ * The service's own logo, shown beside the account on the checkout page.
+ *
+ * OPTIONAL, and that is load-bearing rather than tidy. This schema re-parses
+ * what is already STORED — see `checkoutConfigOf` in the service — so a
+ * required key here would fail every account saved before this field existed,
+ * and a failed parse does not merely lose the icon: it drops the merchant's
+ * whole `checkoutConfig` back to DEFAULT_CHECKOUT_CONFIG, taking their delivery
+ * options and payment accounts with it. Same reasoning as `advancePayment`
+ * being optional on the block below, one level down.
+ *
+ * The empty string is accepted beside a URL because this blob is replaced
+ * wholesale on save rather than deep-merged, so "" is how the admin says the
+ * merchant cleared the icon. That is the opposite of the `faviconUrl` case,
+ * where an omitted key means "leave unchanged" and `null` had to be added to
+ * express removal — there is no partial write to be ambiguous about here.
+ *
+ * Shape only. Nothing fetches the URL to check it is an image, is square, or
+ * resolves at all; this server does not fetch merchant-supplied URLs anywhere,
+ * and a wrong address costs a fallback glyph on one card.
+ */
+const accountIconUrlSchema = z
+    .union([z.literal(""), z.url("Account icon URL must be valid").max(500)])
+    .optional();
+
+/**
  * One mobile-banking account the shopper sends money to.
  *
  * `accountType` is the free-text label the merchant writes beside the number —
  * "Personal", "Merchant", "Agent". It is presentation only: nothing branches on
  * it, and bKash's own rules about which account types accept what are the
  * merchant's business, not this schema's.
+ *
+ * `iconUrl` is per ACCOUNT rather than per provider, although the artwork is a
+ * property of the service. Storing it against the provider would mean a second
+ * place for the merchant to configure and a map to keep in step with the enum —
+ * for a value the account row already has somewhere obvious to sit. Two bKash
+ * accounts carrying the same icon is the cost, and it is the cheaper one.
  */
 const mobileBankingAccountSchema = z
     .object({
@@ -312,6 +343,7 @@ const mobileBankingAccountSchema = z
             .max(20)
             .refine(isValidPhone, "Enter a valid Bangladeshi mobile number"),
         accountType: z.string().trim().max(40),
+        iconUrl: accountIconUrlSchema,
     })
     .strict();
 
@@ -322,6 +354,12 @@ const mobileBankingAccountSchema = z
  * the same bank needs neither, and a merchant who leaves them blank is not
  * misconfigured. Account name is NOT optional: a deposit slip made out to the
  * wrong name is the one error that cannot be undone from the merchant's side.
+ *
+ * `iconUrl` is the same field as on a mobile account, for the same reason and
+ * with the same optionality — except that here there is no bundled artwork to
+ * fall back to. Forty-odd banks operate in this market and this app ships none
+ * of their logos; the merchant's upload is the only way a bank card ever
+ * carries one, which is precisely why it has to be uploadable.
  */
 const bankAccountSchema = z
     .object({
@@ -331,6 +369,7 @@ const bankAccountSchema = z
         accountNumber: z.string().trim().min(1, "A bank account needs an account number").max(60),
         branch: z.string().trim().max(120),
         routingNumber: z.string().trim().max(40),
+        iconUrl: accountIconUrlSchema,
     })
     .strict();
 

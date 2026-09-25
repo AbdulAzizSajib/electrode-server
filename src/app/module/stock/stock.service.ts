@@ -6,6 +6,8 @@ import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { PRODUCTS_TAG, revalidateStorefront } from "../../utils/revalidateStorefront";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { dispatchTelegramMessage } from "../integration/telegram";
+import { buildLowStockMessage } from "../integration/telegram-messages";
 import { NotificationService } from "../notification/notification.service";
 import { IAdjustStockPayload, ILowStockCheckResult, IReassignStockPayload } from "./stock.interface";
 
@@ -173,6 +175,16 @@ const notifyIfLowStock = async (productId: string, variantId: string | null, pro
             NotificationType.INVENTORY,
             "Low stock alert",
             `"${productLabel}" is low on stock: ${result.availableQuantity} remaining (threshold ${result.lowStockThreshold}).`,
+        );
+
+        /*
+         * Inside the threshold check, not outside it — this fires when stock
+         * CROSSES the line, exactly as often as the in-app alert above, not on
+         * every stock write. Silent on a shop that never connected Telegram.
+         */
+        dispatchTelegramMessage(
+            buildLowStockMessage(productLabel, result.availableQuantity, result.lowStockThreshold),
+            `low stock for "${productLabel}"`,
         );
     }
 };

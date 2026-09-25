@@ -245,8 +245,9 @@ model StoreSetting {
   ///     stay storable, so only a merchant SAVE rejects one.
   ///
   ///   advancePayment: { enabled, mobileAccounts: [{ id, provider, number,
-  ///                     accountType }], bankAccounts: [{ id, bankName,
-  ///                     accountName, accountNumber, branch, routingNumber }] }
+  ///                     accountType, iconUrl? }], bankAccounts: [{ id,
+  ///                     bankName, accountName, accountNumber, branch,
+  ///                     routingNumber, iconUrl? }] }
   ///     Money taken BEFORE the order ships, to make a fake order cost the
   ///     person placing it something. The accounts live here, on a column the
   ///     storefront reads, and NOT in IntegrationCredential: a number the
@@ -258,6 +259,12 @@ model StoreSetting {
   ///     placed order's Payment row references it - addressing accounts
   ///     positionally would reattach historical claims to a different account
   ///     the first time the merchant reorders a row.
+  ///
+  ///     `iconUrl`, on either kind of account, is the merchant's own upload of
+  ///     the service or bank logo, and is
+  ///     OPTIONAL for the same reason the block itself is: this column is
+  ///     re-parsed on READ, so a required key would fail every account stored
+  ///     before it existed and drop the whole checkout config to its default.
   ///
   ///     OPTIONAL in storage while `delivery` is required, and that asymmetry
   ///     is deliberate: this column is read with a wholesale merge() that

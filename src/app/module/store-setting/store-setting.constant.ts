@@ -154,6 +154,7 @@ export const DEFAULT_ADVANCE_PAYMENT = {
         provider: "BKASH" | "NAGAD" | "ROCKET";
         number: string;
         accountType: string;
+        iconUrl?: string;
     }[],
     bankAccounts: [] as {
         id: string;
@@ -162,6 +163,7 @@ export const DEFAULT_ADVANCE_PAYMENT = {
         accountNumber: string;
         branch: string;
         routingNumber: string;
+        iconUrl?: string;
     }[],
 };
 

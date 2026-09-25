@@ -136,6 +136,12 @@ export interface IMobileBankingAccount {
     provider: IMobileBankingProvider;
     number: string;
     accountType: string;
+    /**
+     * The service's logo, as a URL. Optional on the type as well as in storage:
+     * an account configured before this field existed has none, and the
+     * storefront falls back to a mark it ships with rather than to a gap.
+     */
+    iconUrl?: string;
 }
 
 /** One bank account a shopper deposits the advance into. `id` as above. */
@@ -147,6 +153,8 @@ export interface IBankAccount {
     /** Both optional in practice: a same-bank transfer needs neither. */
     branch: string;
     routingNumber: string;
+    /** The bank's logo, as a URL. Optional exactly as on a mobile account. */
+    iconUrl?: string;
 }
 
 /**
