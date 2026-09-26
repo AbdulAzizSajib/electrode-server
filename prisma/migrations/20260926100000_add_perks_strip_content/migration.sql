@@ -1,0 +1,39 @@
+-- Makes the homepage's perks strip -- the coloured band reading "Free Shipping
+-- / Money Return / Member Discount / Special Gifts" -- merchant-editable. Its
+-- four columns were hardcoded in the storefront (`src/data/content.ts`), so the
+-- only way to change a word of them was a code deploy.
+--
+-- ONE NULLABLE COLUMN, NO BACKFILL, and that is the whole compatibility story.
+-- Null means "never configured" and is resolved on read to DEFAULT_PERKS in
+-- store-setting.constant.ts, which reproduces those four columns exactly --
+-- icon, title and supporting line. Every existing store therefore renders the
+-- band on the day this deploys exactly as it did the day before, with nothing
+-- to run and nothing to check afterwards. A backfill would have written the
+-- same values into the row while also making "never configured" and "configured
+-- to the shipped default" indistinguishable, which is the distinction the admin
+-- panel needs in order to seed its editor honestly.
+--
+-- Json, like every other presentation column on this row, and constrained by
+-- `perksSchema` in store-setting.validation.ts rather than by Postgres. An
+-- ordered array: position IS the order the band renders its columns in, so it
+-- cannot be internally inconsistent the way per-perk sort integers could. The
+-- same shape and the same reasoning as `homeConfig`.
+--
+-- NOT A NEW HOMEPAGE SECTION. `PERKS_BAR` is already an entry in `homeConfig`
+-- and still owns whether the band appears at all; this column only carries what
+-- it says. The two are edited from the same admin row.
+--
+-- See openspec/changes/add-perks-strip-content, design.md.
+--
+-- NOTE -- the trigram index hazard (carried forward from
+-- 20260916183105_add_hot_path_indexes, which is where the full account lives):
+-- `Product_name_trgm_idx`, `Product_sku_trgm_idx` and `Brand_name_trgm_idx`
+-- were raw-SQL indexes Prisma read as drift and emitted DROP INDEX for in every
+-- generated migration. Those are now declared in Product.prisma and
+-- Brand.prisma, but CHECK EVERY GENERATED MIGRATION ANYWAY -- committing those
+-- drops silently degrades ProductService.searchProducts to a sequential scan
+-- and nothing fails loudly when it happens. This file is hand-written and
+-- carries no DROP INDEX.
+
+-- AlterTable
+ALTER TABLE "StoreSetting" ADD COLUMN     "perks" JSONB;

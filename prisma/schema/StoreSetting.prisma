@@ -214,12 +214,41 @@ model StoreSetting {
   /// No `source` binding, unlike an announcement link. These are ordinary
   /// links; binding one to the store's phone or email would be a contact
   /// detail, which is what the strip above is for.
+  /// The homepage's perks strip - the coloured band under the product rows
+  /// reading "Free Shipping / Money Return / ..." - as an ORDERED array of
+  /// `{ icon, title, description }`. Position in the array is the order the
+  /// band renders its columns in, exactly as with `homeConfig` below.
+  ///
+  /// Zod-validated on write like every blob here: `perksSchema` in
+  /// store-setting.validation.ts is the ONLY gate, and it caps the list at
+  /// MAX_PERKS. That cap is a LAYOUT limit rather than a storage one - the band
+  /// is one row of equal columns, and past four they stop fitting side by side.
+  ///
+  /// `icon` is an Iconify name (`lucide:truck`), the same convention
+  /// `announcementBar.links` and `middleBarLinks` already use, and NOT an
+  /// uploaded image: these are glyphs tinted with the band's own foreground
+  /// colour, so artwork would have to be re-cut every time the merchant changed
+  /// their brand colour.
+  ///
+  /// Read with `merge()` - an EMPTY ARRAY is a merchant who cleared every
+  /// column and must be served empty (the storefront then renders no band),
+  /// while null is a column never written and takes DEFAULT_PERKS. The same
+  /// null-versus-empty distinction `middleBarLinks` above documents.
+  ///
+  /// Nullable with no backfill: null resolves to DEFAULT_PERKS, which is the
+  /// four columns the storefront hardcoded before this column existed, so the
+  /// additive migration changes no storefront on deploy.
+  ///
+  /// WHETHER THE BAND APPEARS AT ALL IS NOT HERE - that is the `PERKS_BAR`
+  /// entry in `homeConfig`, like every other homepage section. This column is
+  /// only what the band SAYS.
   mainNav         Json?
   footerColumns   Json?
   socialLinks     Json?
   announcementBar Json?
   middleBarLinks  Json?
   newsletter      Json?
+  perks           Json?
 
   /// Zod-validated on write exactly like the presentation columns above - the
   /// schemas in store-setting.validation.ts are the ONLY gate on their shape,

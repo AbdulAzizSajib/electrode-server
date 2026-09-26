@@ -123,6 +123,41 @@ export const DEFAULT_MIDDLE_BAR_LINKS = [
     { icon: "fa-solid:truck", label: "Track Order", href: "/track-order" },
 ];
 
+/**
+ * The homepage perks strip's four columns, exactly as the storefront hardcoded
+ * them in `src/data/content.ts` before this became a settings column.
+ *
+ * Reproducing the shipped rendering is the entire job of a default here, so
+ * these are NOT improved copy: "Special Gifts / Contact us anytime" reads like
+ * a mismatched pair because it was one, and correcting it here would change
+ * every unconfigured store's homepage on deploy rather than on a merchant's
+ * decision. The merchant now owns these words and can fix them in the panel.
+ *
+ * ICONS ARE ICONIFY NAMES under the `lucide` set, which is where the four
+ * glyphs the storefront was importing from the `lucide-react` package live —
+ * so an unconfigured store renders the same four marks it always did, now
+ * resolved through the same Iconify path `announcementBar.links` and
+ * `middleBarLinks` already use. Nothing about a perk is an uploaded image.
+ *
+ * MIRRORED IN BOTH FRONTENDS and kept in step by hand, like
+ * DEFAULT_MIDDLE_BAR_LINKS above:
+ *  - `frontend/src/services/store-settings.ts` (FALLBACK_SETTINGS.perks), so a
+ *    settings outage still paints the band rather than a gap;
+ *  - `admin/src/lib/api/store-settings.ts` (DEFAULT_PERKS), because the admin
+ *    read returns the row as stored and otherwise cannot tell "never
+ *    configured" from "configured to exactly this".
+ */
+export const DEFAULT_PERKS = [
+    { icon: "lucide:truck", title: "Free Shipping", description: "For orders over ৳130." },
+    { icon: "lucide:rotate-ccw", title: "Money Return", description: "30 days for an exchange" },
+    {
+        icon: "lucide:gift",
+        title: "Member Discount",
+        description: "Shop smart and save bigger",
+    },
+    { icon: "lucide:headset", title: "Special Gifts", description: "Contact us anytime" },
+];
+
 export const DEFAULT_NEWSLETTER = {
     // ৳, not $ — the store's currencySymbol is BDT's. The storefront rendered
     // "৳10 Off" while this constant said "$10", which would have been a visible
@@ -877,6 +912,7 @@ export const STOREFRONT_SEED_DEFAULTS = {
     announcementBar: DEFAULT_ANNOUNCEMENT_BAR,
     middleBarLinks: DEFAULT_MIDDLE_BAR_LINKS,
     newsletter: DEFAULT_NEWSLETTER,
+    perks: DEFAULT_PERKS,
 };
 
 /**
@@ -968,6 +1004,15 @@ export const DEFAULT_PUBLIC_SETTINGS = {
     announcementBar: DEFAULT_ANNOUNCEMENT_BAR,
     middleBarLinks: DEFAULT_MIDDLE_BAR_LINKS,
     newsletter: DEFAULT_NEWSLETTER,
+    /*
+     * The four columns the storefront hardcoded. Reached by two roads that must
+     * both be right, like `homeConfig` below: a store that has never opened the
+     * Home sections screen, AND a storefront whose settings read failed
+     * entirely. Serving the real band in both is the safe direction — an empty
+     * array is reserved for a merchant who deliberately cleared every column,
+     * and a shopper cannot tell that apart from an outage.
+     */
+    perks: DEFAULT_PERKS,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     catalogConfig: DEFAULT_CATALOG_CONFIG,
     /*

@@ -19,9 +19,11 @@ import {
     checkoutConfigSchema,
     checkoutConfigUpdateSchema,
     homeConfigSchema,
+    perksSchema,
     themeSchema,
     updateStoreSettingZodSchema,
     MAX_LOGO_HEIGHT,
+    MAX_PERKS,
     MIN_LOGO_HEIGHT,
     SITE_CONTENT_WIDTHS,
 } from "../src/app/module/store-setting/store-setting.validation";
@@ -29,6 +31,7 @@ import {
     DEFAULT_CATALOG_CONFIG,
     DEFAULT_CHECKOUT_CONFIG,
     DEFAULT_HOME_CONFIG,
+    DEFAULT_PERKS,
     DEFAULT_PUBLIC_SETTINGS,
     DEFAULT_THEME,
     HOME_SECTION_KEYS,
@@ -643,17 +646,24 @@ check(
         "so a fresh install cannot store a shape its own reader would reject",
     );
 
+    /*
+     * COMPARED AGAINST THE DEFAULT ITSELF, not against a literal list of flags.
+     * A literal freezes the blob's shape on the day it is written, and this one
+     * is certain to gain flags — it has gained two since this check was added,
+     * and the check then failed on a default that was perfectly correct. What
+     * is being asserted is that a null column reads as the default, whatever
+     * the default currently contains.
+     */
     check(
         "an unconfigured store offers every feature",
-        JSON.stringify(publicRead(null)) ===
-            JSON.stringify({ showWishlist: true, showCompare: true, showQuickView: true }),
+        JSON.stringify(publicRead(null)) === JSON.stringify(DEFAULT_CATALOG_CONFIG),
         "a null column is what every store has until a merchant opens the screen",
     );
 
     check(
         "turning one feature off leaves the others offered",
-        JSON.stringify(publicRead({ showWishlist: true, showCompare: false, showQuickView: true })) ===
-            JSON.stringify({ showWishlist: true, showCompare: false, showQuickView: true }),
+        JSON.stringify(publicRead({ ...DEFAULT_CATALOG_CONFIG, showCompare: false })) ===
+            JSON.stringify({ ...DEFAULT_CATALOG_CONFIG, showCompare: false }),
         "the merchant's stored choice wins over the default, per key",
     );
 
@@ -908,15 +918,37 @@ console.log("\n--- Home sections: NEWSLETTER ---\n");
      * stores would never see the section and could not switch it on — the
      * section would be indistinguishable from broken.
      */
-    const preRelease = HOME_SECTION_KEYS.filter((key) => key !== "NEWSLETTER").map((key) => ({
+    /*
+     * MID_BANNERS IS EXCLUDED, and not because it is uninteresting.
+     *
+     * Since add-promo-banner-groups a promo entry must NAME a group that
+     * exists, and a groupless one is dropped on read by design — so a
+     * `{ key: "MID_BANNERS", enabled: true }` in this fixture does not survive
+     * reconciliation, and the two checks below were failing on that rather than
+     * on anything to do with NEWSLETTER. The promo splice has its own rule and
+     * its own path (`spliceMissingGroups`); what is under test here is the
+     * splice of a MISSING FIXED SECTION.
+     */
+    const preRelease = HOME_SECTION_KEYS.filter(
+        (key) => key !== "NEWSLETTER" && key !== "MID_BANNERS",
+    ).map((key) => ({
         key,
         enabled: true,
     }));
-    const reconciled = reconcileHomeConfig(preRelease);
+    /*
+     * `[]` — no promo strips, which is this script's world: it runs against no
+     * database, so there are no groups to splice in. The second parameter dates
+     * from add-promo-banner-groups; these three calls were never updated for it
+     * and crashed on `for (const groupId of undefined)`, which made every check
+     * below this line unreachable.
+     */
+    const reconciled = reconcileHomeConfig(preRelease, []);
 
     check(
         "a configuration saved before NEWSLETTER existed reads back with it",
-        reconciled.length === HOME_SECTION_KEYS.length &&
+        // One shorter than the registry: MID_BANNERS is not in the fixture and,
+        // with no groups, nothing splices one in.
+        reconciled.length === preRelease.length + 1 &&
             reconciled[reconciled.length - 1]?.key === "NEWSLETTER" &&
             reconciled[reconciled.length - 1]?.enabled === true,
         `ends: ${keysOf(reconciled).slice(-3).join(", ")}`,
@@ -938,7 +970,7 @@ console.log("\n--- Home sections: NEWSLETTER ---\n");
         { key: "BLOG", enabled: false },
         { key: "BEST_SELLING", enabled: true },
     ];
-    const fromMerchant = reconcileHomeConfig(merchant);
+    const fromMerchant = reconcileHomeConfig(merchant, []);
 
     check(
         "a reordered, partial configuration keeps its order and gains NEWSLETTER last",
@@ -956,10 +988,110 @@ console.log("\n--- Home sections: NEWSLETTER ---\n");
 
     check(
         "a stored NEWSLETTER switched off survives a read",
-        reconcileHomeConfig([...preRelease, { key: "NEWSLETTER", enabled: false }]).find(
+        reconcileHomeConfig([...preRelease, { key: "NEWSLETTER", enabled: false }], []).find(
             (section) => section.key === "NEWSLETTER",
         )?.enabled === false,
         "the splice must only fill a GAP, never overwrite a merchant's choice",
+    );
+}
+
+/* ------------------------------------------------------------------ *
+ * Perks strip  (add-perks-strip-content)
+ * ------------------------------------------------------------------ */
+
+{
+    console.log("");
+    console.log("--- Perks strip ---");
+    console.log("");
+
+    const perk = (over: Record<string, unknown> = {}) => ({
+        icon: "lucide:truck",
+        title: "Free Shipping",
+        description: "For orders over 130.",
+        ...over,
+    });
+
+    check(
+        "a well-formed list of columns is accepted",
+        perksSchema.safeParse([perk(), perk({ title: "Money Return" })]).success,
+        "three fields per column, in the order the band renders them",
+    );
+
+    check(
+        "a column with no icon is refused",
+        !perksSchema.safeParse([perk({ icon: "" })]).success,
+        "the band is a row of aligned columns - a missing mark is a hole in it",
+    );
+
+    check(
+        "a column with no title is refused",
+        !perksSchema.safeParse([perk({ title: "" })]).success,
+        "an icon floating over a sentence is not a column",
+    );
+
+    check(
+        "a column with no supporting line is refused",
+        !perksSchema.safeParse([perk({ description: "" })]).success,
+        "all three required, unlike a middle-bar link's optional icon",
+    );
+
+    check(
+        "an unknown field on a column is refused",
+        !perksSchema.safeParse([{ ...perk(), href: "/shipping" }]).success,
+        "strict() - an unknown key is an error the merchant sees, not a silent drop",
+    );
+
+    check(
+        `more than ${MAX_PERKS} columns are refused`,
+        !perksSchema.safeParse(Array.from({ length: MAX_PERKS + 1 }, () => perk())).success,
+        "a layout limit: the band is one row of equal columns",
+    );
+
+    check(
+        `exactly ${MAX_PERKS} columns are accepted`,
+        perksSchema.safeParse(Array.from({ length: MAX_PERKS }, () => perk())).success,
+        "the cap is the limit, not one below it",
+    );
+
+    /*
+     * THE DISTINCTION THE WHOLE READ PATH RESTS ON. An empty list must be
+     * STORABLE, because it is how a merchant removes the band; null is what
+     * "never configured" means and is the only thing that resolves to the
+     * shipped columns. If the schema refused an empty list, clearing the band
+     * would be impossible and the merchant would be stuck with four columns.
+     */
+    check(
+        "an empty list is accepted",
+        perksSchema.safeParse([]).success,
+        "emptying the band is a decision, distinct from never configuring it",
+    );
+
+    check(
+        "an unconfigured store reads the columns the storefront used to hardcode",
+        Array.isArray(DEFAULT_PUBLIC_SETTINGS.perks) &&
+            DEFAULT_PUBLIC_SETTINGS.perks.length === DEFAULT_PERKS.length &&
+            DEFAULT_PUBLIC_SETTINGS.perks[0]?.title === DEFAULT_PERKS[0]?.title,
+        `defaults: ${DEFAULT_PERKS.map((entry) => entry.title).join(", ")}`,
+    );
+
+    check(
+        "every default column is itself valid",
+        perksSchema.safeParse(DEFAULT_PERKS).success,
+        "a default its own schema refuses would fail the first save that echoed it back",
+    );
+
+    check(
+        "PERKS_BAR is still a home section key",
+        (HOME_SECTION_KEYS as readonly string[]).includes("PERKS_BAR"),
+        "this column is what the band SAYS - whether it renders is still homeConfig",
+    );
+
+    const perksOnly = updateStoreSettingZodSchema.safeParse({ perks: [perk()] });
+
+    check(
+        "a perks-only patch carries nothing else",
+        perksOnly.success && Object.keys(perksOnly.data).join(",") === "perks",
+        `keys: ${perksOnly.success ? Object.keys(perksOnly.data).join(", ") : "parse failed"}`,
     );
 }
 

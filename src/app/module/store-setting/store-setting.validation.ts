@@ -118,6 +118,53 @@ export const newsletterSchema = z.object({
     buttonLabel: z.string().max(50).optional(),
 });
 
+/**
+ * How many columns the homepage's perks band may carry.
+ *
+ * A LAYOUT limit, not a storage one, and the same kind of bound
+ * `middleBarLinks` is capped by: the band is a single row of equal columns —
+ * four across on a laptop, two on a tablet — so a fifth either wraps into a
+ * ragged second row or squeezes all of them until the supporting lines break
+ * mid-word. Four is what the row was built for.
+ *
+ * Mirrored in the admin as `SETTINGS_LIMITS.perks` so the editor can stop the
+ * merchant at the fourth row rather than surfacing a 400 they have to decode.
+ */
+export const MAX_PERKS = 4;
+
+/**
+ * The perks band's columns, in the order it renders them.
+ *
+ * As with every Json column on this row, THIS SCHEMA IS THE ONLY GATE —
+ * Postgres constrains nothing inside `perks`.
+ *
+ * EVERY FIELD IS REQUIRED, unlike the optional `icon` on a middle-bar link.
+ * A perk with no icon leaves a hole in a row of otherwise-aligned columns, and
+ * one with no title is an icon floating above a sentence — neither is a state
+ * the band can render tidily, so neither is storable. The way to remove a perk
+ * is to remove the row, and the way to remove the band is the `PERKS_BAR`
+ * switch in `homeConfig`.
+ *
+ * `.strict()` for the same reason the nav schemas use it: an unknown key must
+ * be an error the merchant sees, not a field Zod quietly drops.
+ *
+ * An EMPTY ARRAY is valid and means the merchant cleared every column; the
+ * storefront then renders no band. It is deliberately not how the band is
+ * switched off — see the note on the `perks` column in StoreSetting.prisma.
+ */
+export const perksSchema = z
+    .array(
+        z
+            .object({
+                /** An Iconify name, e.g. `lucide:truck`. */
+                icon: z.string().min(1, "Choose an icon for every perk").max(100),
+                title: z.string().min(1, "Every perk needs a title").max(100),
+                description: z.string().min(1, "Every perk needs a short line").max(200),
+            })
+            .strict(),
+    )
+    .max(MAX_PERKS, `The perks strip holds at most ${MAX_PERKS} columns`);
+
 /* ------------------------------------------------------------------ *
  * Checkout configuration
  * ------------------------------------------------------------------ */
@@ -1233,6 +1280,17 @@ export const updateStoreSettingZodSchema = z.object({
      */
     middleBarLinks: middleBarLinksSchema.optional(),
     newsletter: newsletterSchema.optional(),
+    /*
+     * `.optional()` alone, NOT `.nullable()`, exactly like `middleBarLinks`
+     * above: omitted means "leave the column untouched" under the partial
+     * upsert, which is what lets Home sections send `homeConfig`, `newsletter`
+     * and this together without clobbering the other editors' keys. "The
+     * merchant wants no perks" is the empty array.
+     *
+     * A present value REPLACES the whole column — the editor sends the complete
+     * ordered list, because the array's own order is the data.
+     */
+    perks: perksSchema.optional(),
 
     // Checkout and theme (Json columns). Optional like everything else here, so
     // the two new admin pages stay as non-clobbering as the existing three

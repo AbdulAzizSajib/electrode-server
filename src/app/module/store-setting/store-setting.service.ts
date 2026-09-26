@@ -534,6 +534,20 @@ const getPublicStoreSetting = async () => {
          */
         middleBarLinks: merge(stored?.middleBarLinks, DEFAULT_PUBLIC_SETTINGS.middleBarLinks),
         newsletter: merge(stored?.newsletter, DEFAULT_PUBLIC_SETTINGS.newsletter),
+        /*
+         * The perks band's wording, public for the same reason the newsletter's
+         * is: the homepage renders it from this payload with no second request,
+         * before any shopper session exists. Opted in one line like everything
+         * else here — this stays an allow-list.
+         *
+         * `merge` substitutes only on null/undefined, which is exactly what
+         * this field needs and the same reasoning `middleBarLinks` above
+         * carries: an EMPTY ARRAY is a merchant who cleared every column and
+         * must be served empty, while null is a column never written and takes
+         * the four shipped defaults. Swapping in the default for a falsy value
+         * would make "no perks" impossible to express.
+         */
+        perks: merge(stored?.perks, DEFAULT_PUBLIC_SETTINGS.perks),
 
         /*
          * Both are public because the storefront cannot render a page without

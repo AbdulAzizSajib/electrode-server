@@ -78,6 +78,20 @@ export interface INewsletter {
     buttonLabel?: string;
 }
 
+/**
+ * One column of the homepage's perks band.
+ *
+ * Every field required, unlike the optional `icon` on a middle-bar link: the
+ * band is a row of aligned columns, and a perk missing any of the three renders
+ * as a hole in it. See `perksSchema` in store-setting.validation.ts.
+ */
+export interface IPerk {
+    /** An Iconify name, e.g. `lucide:truck`. */
+    icon: string;
+    title: string;
+    description: string;
+}
+
 /** The six checkout fields a merchant may configure. Keys match the order payload. */
 export type ICheckoutFieldKey =
     | "fullName"
@@ -337,6 +351,12 @@ export interface IUpdateStoreSettingPayload {
     announcementBar?: IAnnouncementBar;
     middleBarLinks?: IMiddleBarLink[];
     newsletter?: INewsletter;
+    /**
+     * The perks band's columns, in render order. Optional like the blobs above
+     * — omitting it leaves the column untouched — but a PRESENT value replaces
+     * the whole list, because the array's order is the data.
+     */
+    perks?: IPerk[];
 
     checkoutConfig?: ICheckoutConfig;
     /**
