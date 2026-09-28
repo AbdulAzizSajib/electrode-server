@@ -115,6 +115,24 @@ model Order {
   landingPage      LandingPage? @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
   landingPageTitle String?
 
+  /// WHICH TIER of a multi-package campaign this order was for.
+  ///
+  /// Captured at placement and never updated, exactly like `landingPageTitle`
+  /// beside it and for the same reason: a merchant who edits or deletes a
+  /// package must not rewrite the history of orders placed under it. The key
+  /// says which package the merchant meant; the label and price say what the
+  /// shopper actually agreed to, and survive the package being removed
+  /// entirely.
+  ///
+  /// Null on every order from a page with no packages, and on every order from
+  /// the normal checkout. Without these, per-package revenue would be
+  /// underivable — a merchant running a two-tier offer could see the campaign's
+  /// total and never know which tier the money came from, which is precisely
+  /// the thing that decides what they advertise next.
+  landingPackageKey   String?
+  landingPackageLabel String?
+  landingPackagePrice Decimal? @db.Decimal(12, 2)
+
   shippingAddressId String?
   shippingAddress   CustomerAddress? @relation(fields: [shippingAddressId], references: [id], onDelete: SetNull)
 

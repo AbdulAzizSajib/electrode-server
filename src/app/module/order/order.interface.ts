@@ -166,6 +166,34 @@ export interface ICheckoutOverrides {
      */
     shippingOverride?: { amount: number; label: string };
     /**
+     * What one unit costs, instead of the product's own `offerPrice`.
+     *
+     * Exists for one caller: a landing page offering PACKAGES. ৫০০ গ্রাম and
+     * ১ কেজি are different quantities of the same goods at different prices,
+     * and a package authors its own — so the figure the page quotes is not on
+     * the product row this order's line points at.
+     *
+     * WITHOUT THIS the quote and the order disagree by construction: the page
+     * would state ৳১৫৯৯ and placement would charge the product's `offerPrice`,
+     * and the form's `expectedTotal` check would refuse every order from the
+     * page with a 409. That is not hypothetical — the same failure, campaign-
+     * shaped rather than package-shaped, already happened once on this path.
+     * See the comment in `quoteLandingPageOrder`.
+     *
+     * Here rather than on `ICreateOrderPayload` for exactly the reason
+     * `shippingOverride` above is: `createOrderZodSchema` has no idea this type
+     * exists, so it is unreachable from any request body. A shopper who could
+     * name their own unit price would be a shopper who shops for free.
+     *
+     * A RUNNING CAMPAIGN STILL APPLIES ON TOP, so this is a change of basis and
+     * not a bypass — a campaign discounting the package's product still reaches
+     * the page selling it, which is the property the original bug was about.
+     *
+     * Read from the merchant's stored package, never from the request, and only
+     * ever filled by `resolveLandingPackage`.
+     */
+    unitPriceOverride?: number;
+    /**
      * Skips the shop-wide `checkoutConfig` gate: its six-field requiredness map
      * AND `allowGuestCheckout`.
      *
@@ -181,8 +209,20 @@ export interface ICheckoutOverrides {
      * landing-page.service.ts.
      */
     bypassCheckoutConfig?: boolean;
-    /** Campaign attribution recorded on the resulting order. */
-    landingPage?: { id: string; title: string };
+    /**
+     * Campaign attribution recorded on the resulting order.
+     *
+     * `package` is present only when the page offered packages, and is captured
+     * onto the order the same way `title` is — so editing or deleting the
+     * package later cannot rewrite what a past order says it sold. Without it,
+     * a merchant running a two-tier offer could see the campaign's total and
+     * never know which tier the money came from.
+     */
+    landingPage?: {
+        id: string;
+        title: string;
+        package?: { key: string; label: string; price: number };
+    };
     /**
      * The two things a STAFF-placed order states that no checkout can: where
      * the customer reached the shop, and a price the operator negotiated.

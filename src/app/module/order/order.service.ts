@@ -1117,7 +1117,9 @@ const placeOrder = async (
             lines.map((line) => ({
                 productId: line.productId,
                 variantId: line.variantId,
-                unitPrice: Number(line.variant?.offerPrice ?? line.product.offerPrice),
+                unitPrice:
+                    overrides?.unitPriceOverride ??
+                    Number(line.variant?.offerPrice ?? line.product.offerPrice),
             })),
         ),
         payload.couponCode
@@ -1167,7 +1169,17 @@ const placeOrder = async (
          * discount rarely lands on a whole paisa, and rounding only the line
          * total would record a `unitPrice` that does not divide into it.
          */
-        const listPrice = Number(item.variant?.offerPrice ?? item.product.offerPrice);
+        /*
+         * A landing-page PACKAGE authors its own price, so it replaces the
+         * product's `offerPrice` as the basis here. Unreachable from any
+         * request body — see `unitPriceOverride` on ICheckoutOverrides.
+         *
+         * The campaign lookup still runs ON TOP of whichever basis applies, so
+         * this changes what a unit lists at and never bypasses a discount.
+         */
+        const listPrice =
+            overrides?.unitPriceOverride ??
+            Number(item.variant?.offerPrice ?? item.product.offerPrice);
         const unitPrice = roundMoney(
             campaignPriceByKey.get(stockKey(item.productId, item.variantId)) ?? listPrice,
         );
@@ -1429,6 +1441,15 @@ const placeOrder = async (
                      */
                     landingPageId: overrides?.landingPage?.id,
                     landingPageTitle: overrides?.landingPage?.title,
+                    /*
+                     * WHICH TIER, captured like the title beside it: a merchant
+                     * who edits or deletes the package must not rewrite what a
+                     * past order says it sold. Null for a page with no packages
+                     * and for every order from the normal checkout.
+                     */
+                    landingPackageKey: overrides?.landingPage?.package?.key,
+                    landingPackageLabel: overrides?.landingPage?.package?.label,
+                    landingPackagePrice: overrides?.landingPage?.package?.price,
                     items: { createMany: { data: orderItemsData } },
                     /*
                      * A manual order opens its history naming the operator, so

@@ -65,7 +65,12 @@ export const ADVANCE_PAYMENT_CHOICES = ["DELIVERY_CHARGE", "FULL"] as const;
  * deposit slip carries no format worth enforcing — a wrong one is caught by the
  * human who verifies it, which is the whole design.
  */
-const advanceClaimZodSchema = z
+/*
+ * EXPORTED so the landing-page order endpoint reuses it rather than declaring
+ * a second claim shape. Two schemas for one claim is two places for the rules
+ * to drift, and the rules here are about money a shopper has already sent.
+ */
+export const advanceClaimZodSchema = z
     .object({
         choice: z.enum(ADVANCE_PAYMENT_CHOICES),
         accountId: z.string().min(1).max(60),

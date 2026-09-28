@@ -191,7 +191,6 @@ const main = async () => {
                 productId: plain.id,
                 headline: `${PREFIX}page`,
                 bodyHtml: "<p>verify</p>",
-                deliveryZones: [{ key: "zone", label: "Zone", price: 0 }],
                 orderForm: {},
             },
         });
@@ -199,7 +198,7 @@ const main = async () => {
         const snapshot = await LandingPageService.buildProductSnapshot(plain.id);
         const landingQuote = await LandingPageService.quoteLandingPageOrder(`${PREFIX}page`, {
             quantity: 2,
-            zoneKey: "zone",
+            deliveryOptionKey: "zone",
         });
 
         check(

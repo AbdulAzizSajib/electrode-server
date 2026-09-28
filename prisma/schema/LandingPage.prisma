@@ -8,12 +8,27 @@
 /// prices products, it does not render them. See
 /// add-single-product-landing-page design.md, Decision 1.
 ///
-/// NO PRICE LIVES HERE. The page renders `product.offerPrice` and
-/// `product.sellingPrice` — which is already the merchant's "regular vs
-/// offer" pair — and cannot author a price of its own. A second place to write
-/// money is how a shop ends up quoting one number and charging another, which
-/// is the same reason StoreSetting.defaultTaxRatePercent was removed rather
-/// than defaulted. See design.md, Decision 2.
+/// THE PAGE ITSELF AUTHORS NO PRICE. Its bound product renders
+/// `product.offerPrice` and `product.sellingPrice` — already the merchant's
+/// "regular vs offer" pair — and the page cannot override them. A second place
+/// to write money is how a shop ends up quoting one number and charging
+/// another, which is the same reason StoreSetting.defaultTaxRatePercent was
+/// removed rather than defaulted. See add-single-product-landing-page
+/// design.md, Decision 2.
+///
+/// A PACKAGE IS THE ONE EXCEPTION, and it has to be. ৫০০ গ্রাম and ১ কেজি are
+/// DIFFERENT PRODUCTS at different prices; a package that could only show its
+/// product's own price would make the package list a product list, which is
+/// the feature. So `packages[].price` is authored.
+///
+/// The rule above is not thereby abandoned — its PURPOSE is what is preserved.
+/// The danger was ever quoting one number and charging another, and that is
+/// prevented structurally instead: `resolveLandingPackage` in
+/// landing-page.service.ts is the single answer to "what does this page sell
+/// right now", and the page render, the quote and the order placement all read
+/// it. There is no second pricing path to disagree with. Do not add one, and
+/// do not price a package anywhere but through that resolver. See
+/// openspec/changes/add-conversion-landing-page-sections, design.md Decision 1.
 ///
 /// The Json columns below carry every repeating content list. Postgres does not
 /// constrain their shape, so the Zod schemas in landing-page.validation.ts are
@@ -27,7 +42,7 @@ model LandingPage {
   /// Never rendered on the storefront — `headline` is what a shopper reads.
   title String
 
-  /// Served at `/lp/<slug>` in BOTH site modes. Constrained to
+  /// Served at `/offer/<slug>` in BOTH site modes. Constrained to
   /// `^[a-z0-9]+(?:-[a-z0-9]+)*$` in landing-page.validation.ts rather than
   /// here, because Postgres cannot express it. Unlike Page.slug this is not a
   /// top-level segment, so it has no reserved-slug list to collide with.
@@ -68,19 +83,139 @@ model LandingPage {
   quotes      Json?
   trustBadges Json?
 
-  /// The two Json columns that decide what an order costs and what it must
-  /// carry. Both hold invariants Postgres cannot express, and both are gated
-  /// only by landing-page.validation.ts.
+  /// ---------------------------------------------------------------------
+  /// Offer mechanics — everything below is OPTIONAL and absent by default.
   ///
-  /// deliveryZones: [{ key, label, price }]
-  ///   1–5 rows with unique keys, seeded `ঢাকার ভিতরে` 60 / `ঢাকার বাইরে` 120.
-  ///   The selected zone's price is CHARGED — a landing page order bypasses
-  ///   quoteShipping entirely and applies neither the shop's free-shipping
-  ///   threshold nor a coupon's shipping waiver, because the page stated a
-  ///   delivery charge and that is what the shopper agreed to. A page must
-  ///   always keep at least one zone: a page matching no zone can charge no
-  ///   delivery, and its product would be undeliverable. See design.md,
-  ///   Decision 3.
+  /// A page that sets none of it renders exactly as pages did before
+  /// openspec/changes/add-conversion-landing-page-sections, which is why no
+  /// backfill was needed: "not configured" and "as it always was" are the same
+  /// state. Keep it that way — a default that switched any of these on would
+  /// change every existing campaign on the day it deployed.
+  /// ---------------------------------------------------------------------
+
+  /// The tiers this campaign offers — a size, a bundle, a quantity.
+  /// packages: [{ key, label, productId, price, compareAtPrice?, freeGiftText?,
+  ///              badge?, preselected? }]
+  ///
+  /// `key` is authored once and NEVER rewritten, because an order records it:
+  /// addressing packages by POSITION would reattach every historical order to a
+  /// different tier the first time the merchant reordered the list. Same rule
+  /// a delivery option's key follows, and the same reason.
+  ///
+  /// `price` is authored — see the exception documented on the model above, and
+  /// resolve it only through `resolveLandingPackage`.
+  ///
+  /// EMPTY OR ABSENT MEANS "no packages", not "broken": the page falls back to
+  /// its bound product at that product's own price, which is what every page
+  /// did before this column existed. That fallback is also what makes removing
+  /// every package a safe rollback rather than a broken page.
+  packages Json?
+
+  /// whyUs:      [{ title, text? }]         — numbered "why we are different"
+  /// usageIdeas: [{ label, icon? }]         — "what would I do with this"
+  /// Both optional; an empty list renders no section at all, not an empty one.
+  whyUs      Json?
+  usageIdeas Json?
+
+  /// When this offer ends, as ONE ABSOLUTE INSTANT.
+  ///
+  /// Stored as a timestamp and never as a duration, because a duration is a
+  /// different deadline for every visitor — which is the fabrication this
+  /// feature refuses. Every shopper counts down to the same moment, and the
+  /// storefront computes the remainder IN THE BROWSER from this value: the page
+  /// is cached, so a server-rendered remainder would be wrong the moment it was
+  /// stored. Null means no countdown is shown.
+  offerEndsAt DateTime?
+
+  /// Whether passing `offerEndsAt` also CLOSES the offer.
+  ///
+  /// Separate from the countdown on purpose: "show urgency" and "actually stop
+  /// selling" are different merchant intents, and most campaigns want the first
+  /// without the second. Enforced in the SERVICE against the server's own
+  /// clock — a client that ignores an expired countdown must still be refused,
+  /// so the countdown is a courtesy and this is the control.
+  stopOrdersAtDeadline Boolean @default(false)
+
+  /// The size of a limited run — "first 100 buyers get the free rice".
+  ///
+  /// ONLY the target is stored. How many have been taken is COUNTED from this
+  /// page's real orders on every read, and there is deliberately no column to
+  /// store it in and no field to seed it with: a stored counter is a number
+  /// someone can set, and a number that can be set will eventually be set to
+  /// something flattering. A shopper who catches one fabricated figure
+  /// discounts every other claim on the page, including the true ones.
+  ///
+  /// Null means no scarcity indicator is rendered.
+  scarcityTarget Int?
+
+  /// A number to call instead of filling in the form, for shoppers who will not
+  /// type an address into a page they have just met. Null renders no dial
+  /// action anywhere.
+  orderPhone String?
+
+  /// Whether THIS campaign collects money before the order ships.
+  ///
+  /// DECIDES ONLY WHETHER TO ASK, never where the money goes. The accounts a
+  /// shopper sends to are the shop's, on
+  /// `StoreSetting.checkoutConfig.advancePayment`, configured once and shared
+  /// by every campaign — because a merchant maintaining the same bKash number
+  /// in six campaign pages will eventually update five of them, and the sixth
+  /// quietly takes money to a closed account. There is deliberately nowhere
+  /// here to declare an account.
+  ///
+  /// AN AND, NOT AN OVERRIDE. A campaign asks for an advance only when this is
+  /// true AND the shop has advance payment enabled with at least one account.
+  /// So removing every shop account degrades every campaign to cash on
+  /// delivery rather than leaving pages asking for money with nothing to show
+  /// — the only safe direction to fail in. Resolved once by
+  /// `resolveLandingAdvancePayment`, which the page render, the quote and the
+  /// placement all read.
+  ///
+  /// Advance payment matters MOST here. A campaign page is what paid ads land
+  /// on: a shopper who has known the shop for thirty seconds, with no account
+  /// and nothing at stake, is the one who refuses the parcel at the door.
+  ///
+  /// See openspec/changes/add-landing-page-advance-payment, design.md D1.
+  requiresAdvancePayment Boolean @default(false)
+
+  /// This campaign's own look, applied to THIS PAGE ONLY.
+  /// theme: { accent?, displayFont?: { family, url } }
+  ///
+  /// `accent` is a strict hex and reaches the page as a CSS custom property on
+  /// the page's own wrapper — never as a class name and never as a style string
+  /// the merchant composes, because the value is interpolated into an inline
+  /// `style` attribute. `displayFont.url` is REBUILT from validated components
+  /// and is never a substring of merchant input. Both rules are exactly
+  /// StoreSetting.theme's, for exactly its reasons.
+  ///
+  /// Scoped to the page's wrapper so a campaign's colours cannot leak into the
+  /// shop's chrome. Null renders the page in the shop's own theme.
+  theme Json?
+
+  /// The Json column that decides what an order must carry. It holds
+  /// invariants Postgres cannot express, and is gated only by
+  /// landing-page.validation.ts.
+  ///
+  /// THERE IS NO `deliveryZones` HERE ANY MORE, and there must not be one
+  /// again. A campaign used to author its own delivery prices and charge them
+  /// through `shippingOverride`, bypassing the shop's options entirely — so the
+  /// same customer at the same address paid one figure through the catalogue
+  /// and another through an ad, and a merchant raising their outside-Dhaka rate
+  /// in Checkout Setting changed only one of them. Two price lists for one
+  /// shop, and only one of them where the merchant looks.
+  ///
+  /// A campaign's delivery charge now comes from the shop's own delivery
+  /// options, derived from the district and area the shopper picks — the same
+  /// `resolveDeliveryOption` the shop's checkout uses. A merchant who needs a
+  /// campaign-specific rate needs a delivery option for it in Checkout Setting,
+  /// where every other price already lives.
+  ///
+  /// THE COST OF THIS, stated so it is not rediscovered: a campaign can no
+  /// longer sell while the shop has configured no delivery at all. That used to
+  /// work, deliberately (see add-single-product-landing-page design.md D3), and
+  /// it no longer does — a shop with no delivery options cannot take campaign
+  /// orders, exactly as it cannot take catalogue ones.
+  /// See openspec/changes/add-landing-page-destination-picker.
   ///
   /// orderForm: { fields: { fullName: { label, placeholder?, helper?, required },
   ///                        phone:    { label, placeholder?, helper? },
@@ -94,7 +229,6 @@ model LandingPage {
   ///   this form: it describes six fields this page does not ask for, and a
   ///   shop that requires a postal code at its normal checkout must still be
   ///   able to run a three-field campaign page.
-  deliveryZones Json
   orderForm     Json
 
   /// Shown in place after a successful order, without navigating away from the

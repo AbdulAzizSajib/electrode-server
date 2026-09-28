@@ -1,4 +1,4 @@
-import type { IDeliveryZone, ILandingPageOrderForm } from "./landing-page.interface";
+import type { ILandingPageOrderForm } from "./landing-page.interface";
 
 /**
  * What a newly created landing page starts with.
@@ -17,23 +17,6 @@ import type { IDeliveryZone, ILandingPageOrderForm } from "./landing-page.interf
 /** The storefront cache tag for landing page content. */
 export const LANDING_PAGES_TAG = "landing-pages";
 
-/**
- * The two zones every Bangladeshi single-product page offers.
- *
- * Seeded rather than left empty because an empty zone list is not a valid page
- * — a page with no zone can charge no delivery, and its product would be
- * undeliverable (enforced in landing-page.validation.ts). The prices are the
- * conventional ones and are the first thing most merchants will change.
- *
- * `key` is stable and ASCII on purpose: it is what the browser sends back and
- * what the server looks the price up by, so it must survive being put in a form
- * value and a JSON body. The Bangla is in `label`, which is what a shopper reads
- * and what is copied onto the order.
- */
-export const DEFAULT_DELIVERY_ZONES: IDeliveryZone[] = [
-    { key: "inside-dhaka", label: "ঢাকার ভিতরে", price: 60 },
-    { key: "outside-dhaka", label: "ঢাকার বাইরে", price: 120 },
-];
 
 /**
  * The three-field order form, pre-written.
@@ -81,7 +64,23 @@ export const MAX_HIGHLIGHTS = 12;
 export const MAX_FAQS = 20;
 export const MAX_QUOTES = 20;
 export const MAX_TRUST_BADGES = 8;
-export const MAX_DELIVERY_ZONES = 5;
+
+/**
+ * More than this and the package selector is a catalogue, not a choice.
+ *
+ * A shopper deciding between four tiers is already at the edge of what a single
+ * screen can present without scrolling past the price — and a campaign offering
+ * eight is a product listing page wearing a landing page's clothes, which is a
+ * different thing than this models.
+ */
+export const MAX_PACKAGES = 6;
+
+/**
+ * Bounds on the two grids. Both are read at a glance rather than studied, and a
+ * merchant who needs thirty reasons is not writing a landing page.
+ */
+export const MAX_WHY_US = 12;
+export const MAX_USAGE_IDEAS = 16;
 
 /**
  * The most units one landing-page order may carry.

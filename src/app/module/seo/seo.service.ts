@@ -29,7 +29,7 @@ const pathForSlug = (contentType: SeoContentType, slug: string): string => {
         case "blogPost":
             return `/blogs/${slug}`;
         case "landingPage":
-            return `/lp/${slug}`;
+            return `/offer/${slug}`;
     }
 };
 

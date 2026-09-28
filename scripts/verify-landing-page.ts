@@ -26,7 +26,6 @@
 import { LandingPageStatus, SiteMode } from "../src/generated/prisma/client";
 import { quoteCharges, type IPricingLine } from "../src/app/module/order/order.pricing";
 import {
-    DEFAULT_DELIVERY_ZONES,
     DEFAULT_ORDER_FORM,
 } from "../src/app/module/landing-page/landing-page.constant";
 import {
@@ -37,6 +36,7 @@ import {
     createLandingPageZodSchema,
     placeLandingPageOrderZodSchema,
 } from "../src/app/module/landing-page/landing-page.validation";
+import { StoreSettingService } from "../src/app/module/store-setting/store-setting.service";
 import { siteModeRejection } from "../src/app/module/store-setting/store-setting.site-mode";
 import type { ILandingPageOrderForm } from "../src/app/module/landing-page/landing-page.interface";
 
@@ -56,115 +56,87 @@ const line = (lineTotal: number, quantity = 1): IPricingLine => ({
     taxRuleId: null,
 });
 
-const INSIDE = DEFAULT_DELIVERY_ZONES[0];
-const OUTSIDE = DEFAULT_DELIVERY_ZONES[1];
+/*
+ * A delivery option the SHOP has. Read from settings rather than hardcoded, so
+ * the script prices against whatever this store is actually configured with —
+ * a campaign no longer carries a price list of its own to read.
+ */
+const SHOP_OPTION_KEY = await (async () => {
+    const config = await StoreSettingService.getCheckoutConfig();
+    const option = config.delivery.options.find((o) => o.kind === "DELIVERY");
+    if (!option) {
+        console.error(
+            "This store has no delivery option configured, so a campaign cannot be priced. Add one in Checkout Setting.",
+        );
+        process.exit(1);
+    }
+    return option.key;
+})();
 
 const main = async () => {
-    console.log("\n--- 1. The zone price is what gets charged ---\n");
+    console.log("\n--- 1 & 2. A campaign is priced by the SHOP's delivery options ---\n");
 
-    const insideQuote = await quoteCharges({
+    /*
+     * THESE TWO SECTIONS USED TO ASSERT THE OPPOSITE, and the reversal is the
+     * whole of `add-landing-page-destination-picker`.
+     *
+     * A campaign used to author its own delivery zones and charge them through
+     * `shippingOverride`, which bypassed the shop's options and — deliberately
+     * — both waivers. So the same customer at the same address paid one figure
+     * through the catalogue and another through an ad, and a merchant raising
+     * their outside-Dhaka rate in Checkout Setting changed only one of them.
+     *
+     * A campaign now prices through the shop's own options, which means it also
+     * RECEIVES the shop's free-shipping threshold and a coupon's shipping
+     * waiver. That is a real behaviour change, and it is asserted here rather
+     * than left for someone to discover from an order.
+     */
+    const shopPriced = await quoteCharges({
         lines: [line(990)],
-        destination: {},
         discountAmount: 0,
-        deliveryMethod: "DELIVERY",
+        deliveryOptionKey: SHOP_OPTION_KEY,
         couponWaivesShipping: false,
         freeShippingThreshold: null,
-        shippingOverride: { amount: INSIDE.price, label: INSIDE.label },
     });
 
     check(
-        "inside-Dhaka zone charges its own price",
-        insideQuote.shippingAmount === 60,
-        `expected 60, got ${insideQuote.shippingAmount}`,
+        "a campaign charges the SHOP's option price",
+        shopPriced.shippingAmount === shopPriced.delivery?.price,
+        `charged ${shopPriced.shippingAmount}, option price ${shopPriced.delivery?.price}`,
     );
 
-    const outsideQuote = await quoteCharges({
-        lines: [line(990)],
-        destination: {},
-        discountAmount: 0,
-        deliveryMethod: "DELIVERY",
-        couponWaivesShipping: false,
-        freeShippingThreshold: null,
-        shippingOverride: { amount: OUTSIDE.price, label: OUTSIDE.label },
-    });
-
-    check(
-        "outside-Dhaka zone charges its own price",
-        outsideQuote.shippingAmount === 120,
-        `expected 120, got ${outsideQuote.shippingAmount}`,
-    );
-
-    check(
-        "the two zones charge different amounts for the same basket",
-        insideQuote.shippingAmount !== outsideQuote.shippingAmount,
-        `${insideQuote.shippingAmount} vs ${outsideQuote.shippingAmount}`,
-    );
-
-    const freeZone = await quoteCharges({
-        lines: [line(990)],
-        destination: {},
-        discountAmount: 0,
-        deliveryMethod: "DELIVERY",
-        couponWaivesShipping: false,
-        freeShippingThreshold: null,
-        shippingOverride: { amount: 0, label: "ফ্রি ডেলিভারি" },
-    });
-
-    check(
-        "a zone priced 0 is free delivery, and is spellable",
-        freeZone.shippingAmount === 0,
-        `expected 0, got ${freeZone.shippingAmount}`,
-    );
-
-    console.log("\n--- 2. Nothing waives an overridden delivery charge ---\n");
-
-    // The whole point: the page printed "ডেলিভারি চার্জ ৳60" beside the order
-    // button. An unrelated shop-wide threshold must not silently zero it.
     const overThreshold = await quoteCharges({
         lines: [line(5000)],
-        destination: {},
         discountAmount: 0,
-        deliveryMethod: "DELIVERY",
+        deliveryOptionKey: SHOP_OPTION_KEY,
         couponWaivesShipping: false,
         freeShippingThreshold: 1000,
-        shippingOverride: { amount: INSIDE.price, label: INSIDE.label },
     });
 
     check(
-        "the shop's free-shipping threshold does NOT waive a zone charge",
-        overThreshold.shippingAmount === 60,
-        `basket 5000 over a 1000 threshold still charged ${overThreshold.shippingAmount}`,
+        "the shop's free-shipping threshold NOW reaches a campaign",
+        overThreshold.shippingAmount === 0,
+        `basket 5000 over a 1000 threshold charged ${overThreshold.shippingAmount} — it used to charge the zone price regardless`,
     );
 
     const couponWaived = await quoteCharges({
         lines: [line(990)],
-        destination: {},
         discountAmount: 0,
-        deliveryMethod: "DELIVERY",
+        deliveryOptionKey: SHOP_OPTION_KEY,
         couponWaivesShipping: true,
         freeShippingThreshold: null,
-        shippingOverride: { amount: INSIDE.price, label: INSIDE.label },
     });
 
     check(
-        "a coupon's free-shipping flag does NOT waive a zone charge",
-        couponWaived.shippingAmount === 60,
-        `expected 60, got ${couponWaived.shippingAmount}`,
+        "a coupon's shipping waiver NOW reaches a campaign too",
+        couponWaived.shippingAmount === 0,
+        `expected 0, got ${couponWaived.shippingAmount}`,
     );
 
     check(
-        "shippingBeforeWaiver equals the charge, because nothing waives it",
-        overThreshold.shippingBeforeWaiver === overThreshold.shippingAmount,
-        `${overThreshold.shippingBeforeWaiver} vs ${overThreshold.shippingAmount}`,
-    );
-
-    check(
-        "no store delivery option is reported under an override",
-        overThreshold.delivery === null,
-        // Null is the honest answer rather than a gap: the page's zone is not
-        // one of the store's options, and reporting one would put a
-        // landing-page order into that option's counts.
-        `delivery=${JSON.stringify(overThreshold.delivery)}`,
+        "the pre-waiver figure is still reported, so a saving can be shown",
+        overThreshold.shippingBeforeWaiver > 0,
+        `before ${overThreshold.shippingBeforeWaiver}, after ${overThreshold.shippingAmount}`,
     );
 
     console.log("\n--- 3. The override did not leak into the normal checkout ---\n");
@@ -298,39 +270,12 @@ const main = async () => {
     );
 
     check(
-        "an empty delivery zone list is refused",
-        !createLandingPageZodSchema.safeParse({ ...validPage, deliveryZones: [] }).success,
-        "a page matching no zone can charge no delivery",
-    );
-
-    check(
-        "duplicate zone keys are refused",
+        "a campaign cannot author delivery prices at all",
         !createLandingPageZodSchema.safeParse({
             ...validPage,
-            deliveryZones: [
-                { key: "dhaka", label: "ঢাকার ভিতরে", price: 60 },
-                { key: "dhaka", label: "ঢাকার বাইরে", price: 120 },
-            ],
+            deliveryZones: [{ key: "inside-dhaka", label: "ঢাকার ভিতরে", price: 60 }],
         }).success,
-        "which price is charged must not depend on array order",
-    );
-
-    check(
-        "a negative zone price is refused",
-        !createLandingPageZodSchema.safeParse({
-            ...validPage,
-            deliveryZones: [{ key: "dhaka", label: "ঢাকার ভিতরে", price: -60 }],
-        }).success,
-        "a discount hidden inside a shipping field",
-    );
-
-    check(
-        "the seeded zones are themselves valid",
-        createLandingPageZodSchema.safeParse({
-            ...validPage,
-            deliveryZones: DEFAULT_DELIVERY_ZONES,
-        }).success,
-        "the Bangla defaults pass their own schema",
+        "the shop's delivery options are the single price list — a campaign that could author its own would put two live at once",
     );
 
     check(
@@ -400,7 +345,7 @@ const main = async () => {
 
     const validOrder = {
         quantity: 1,
-        zoneKey: "inside-dhaka",
+        deliveryOptionKey: "option-2",
         phone: "01712345678",
         address: "ধানমন্ডি, ঢাকা",
     };
@@ -424,9 +369,9 @@ const main = async () => {
     );
 
     check(
-        "a missing zone is refused",
-        !placeLandingPageOrderZodSchema.safeParse({ ...validOrder, zoneKey: "" }).success,
-        "the shopper must choose a delivery area",
+        "an order with no delivery option is refused",
+        !placeLandingPageOrderZodSchema.safeParse({ ...validOrder, deliveryOptionKey: "" }).success,
+        "the destination must resolve to one of the shop's options before an order can be priced",
     );
 
     check(

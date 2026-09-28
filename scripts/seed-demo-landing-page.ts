@@ -172,7 +172,6 @@ async function main() {
         quotes: DEMO_CONTENT.quotes,
         trustBadges: DEMO_CONTENT.trustBadges,
         // The same Bangla defaults a page created in the admin panel starts with.
-        deliveryZones: DEFAULT_DELIVERY_ZONES,
         orderForm: DEFAULT_ORDER_FORM,
         successHeading: DEMO_CONTENT.successHeading,
         successMessage: DEMO_CONTENT.successMessage,

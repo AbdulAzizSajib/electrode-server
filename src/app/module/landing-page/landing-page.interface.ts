@@ -1,4 +1,6 @@
 import { LandingPageStatus } from "../../../generated/prisma/client";
+import type { IAdvanceSplit } from "../order/order.pricing";
+import type { IAdvanceClaimPayload } from "../order/order.interface";
 
 /**
  * The shapes behind LandingPage's Json columns.
@@ -32,9 +34,17 @@ export interface ILandingPageFaq {
 /** Social proof authored on the page itself, not the shop-wide Testimonial model. */
 export interface ILandingPageQuote {
     name: string;
-    text: string;
+    /**
+     * Optional, because a review may be a SCREENSHOT instead — the message a
+     * customer actually sent. A quote must carry text or an image; the Zod
+     * schema rejects one with neither, since an empty card is worse than none.
+     */
+    text?: string;
     rating?: number;
+    /** The reviewer's own avatar. */
     photoUrl?: string;
+    /** The review itself as an image. */
+    imageUrl?: string;
 }
 
 export interface ILandingPageTrustBadge {
@@ -43,18 +53,93 @@ export interface ILandingPageTrustBadge {
 }
 
 /**
- * One delivery option offered on the page — the `ঢাকার ভিতরে ৳60` /
- * `ঢাকার বাইরে ৳120` pair every Bangladeshi single-product page carries.
+ * One tier a campaign offers — a size, a bundle, a quantity.
  *
- * `key` is what the browser sends back and what the server looks the price up
- * by; `price` is what is CHARGED. The submitted price is never trusted, and the
- * label is copied onto the order's shipping address so the merchant and the
- * courier can both read which area the shopper declared.
+ * `key` is authored once and NEVER rewritten, because an order records it.
+ * `price` is the one price a landing page may author; see the model comment on
+ * LandingPage.prisma for why that is safe and what makes it so.
  */
-export interface IDeliveryZone {
+export interface ILandingPagePackage {
     key: string;
     label: string;
+    productId: string;
     price: number;
+    /** The struck-through "was" figure. Always above `price`, enforced in Zod. */
+    compareAtPrice?: number;
+    freeGiftText?: string;
+    badge?: string;
+    preselected?: boolean;
+}
+
+/** Numbered "why we are different" reasons. */
+export interface ILandingPageWhyUs {
+    title: string;
+    text?: string;
+}
+
+/** "What would I do with this" — a short label, optionally with an icon. */
+export interface ILandingPageUsageIdea {
+    label: string;
+    icon?: string;
+}
+
+/**
+ * A campaign's own look — every colour the page draws, as named tokens.
+ *
+ * All optional: each falls back to the value the storefront's globals.css
+ * declares, which is what the page rendered before tokens existed. Every value
+ * is a strict hex, validated on write, because these reach the page as CSS
+ * custom properties in an inline style attribute.
+ *
+ * See openspec/changes/add-landing-page-theme-tokens, design.md Decision 2.
+ */
+export interface ILandingPageTheme {
+    /** The campaign's colour: buttons, badges, active states. */
+    accent?: string;
+    /** A wash of it — band backgrounds and selected-card fills. */
+    accentSoft?: string;
+    /** What is legible ON the accent, usually white. */
+    accentContrast?: string;
+    /** The primary content background. */
+    surface?: string;
+    /** The alternating band background. */
+    surfaceAlt?: string;
+    /** Body and heading colour. */
+    text?: string;
+    /** Secondary copy. One muted weight; a second is opacity on this. */
+    textMuted?: string;
+    /** Every rule and card edge. */
+    border?: string;
+    displayFont?: { family: string; url: string };
+}
+
+/**
+ * What this page sells RIGHT NOW — the single answer every pricing path reads.
+ *
+ * Returned by `resolveLandingPackage`. The page render, the quote and the order
+ * placement all take their product and their price from here, which is what
+ * makes an authored package price safe: there is no second path to disagree
+ * with. See openspec/changes/add-conversion-landing-page-sections, design.md
+ * Decision 1.
+ *
+ * `packageKey` is null for a page with no packages — that page sells its bound
+ * product at the product's own price, exactly as before packages existed.
+ */
+export interface IResolvedLandingPackage {
+    productId: string;
+    /**
+     * What one unit costs, BEFORE any campaign discount is applied.
+     *
+     * Null for a page with no packages, meaning "read the product's own
+     * offerPrice". A package's authored price is a number here, and the
+     * campaign resolver is applied on top of whichever it is — so a campaign
+     * running against a package's product still reaches the page that sells it.
+     */
+    authoredPrice: number | null;
+    packageKey: string | null;
+    packageLabel: string | null;
+    freeGiftText: string | null;
+    compareAtPrice: number | null;
 }
 
 /** Authored presentation for one order-form field. */
@@ -107,9 +192,30 @@ export interface ICreateLandingPagePayload {
     quotes?: ILandingPageQuote[];
     trustBadges?: ILandingPageTrustBadge[];
 
-    /** Both optional on create only because the service fills them from the Bangla seed defaults. */
-    deliveryZones?: IDeliveryZone[];
+    /** Optional on create only because the service fills it from the Bangla seed default. */
     orderForm?: ILandingPageOrderForm;
+
+    /*
+     * Offer mechanics — all optional and absent by default. A page that sets
+     * none of them behaves exactly as pages did before packages existed.
+     */
+    packages?: ILandingPagePackage[];
+    whyUs?: ILandingPageWhyUs[];
+    usageIdeas?: ILandingPageUsageIdea[];
+    /** An absolute instant, never a duration. See LandingPage.prisma. */
+    offerEndsAt?: string;
+    stopOrdersAtDeadline?: boolean;
+    /** The SIZE of a limited run. How many are taken is counted, never stored. */
+    scarcityTarget?: number;
+    orderPhone?: string;
+    /**
+     * Whether this campaign collects money before the order ships.
+     *
+     * Decides only WHETHER to ask. The accounts come from the shop's
+     * `checkoutConfig.advancePayment`, shared by every campaign.
+     */
+    requiresAdvancePayment?: boolean;
+    theme?: ILandingPageTheme;
 
     successHeading?: string;
     successMessage?: string;
@@ -150,21 +256,62 @@ export interface ILandingPageProductSnapshot {
 /** `POST /landing-pages/by-slug/:slug/quote` — what the page displays before submitting. */
 export interface ILandingPageQuoteResult {
     quantity: number;
-    zoneKey: string;
-    zoneLabel: string;
+    /** The SHOP's delivery option this order is priced by. */
+    deliveryOptionKey: string;
+    deliveryOptionLabel: string;
     subtotal: number;
     taxAmount: number;
     shippingAmount: number;
     totalAmount: number;
+    /**
+     * What each advance-payment choice costs — what the shopper sends now and
+     * what remains for the door. The same shape the shop's own checkout quote
+     * returns, computed by the same function.
+     *
+     * Always present, even on a campaign that does not ask for an advance: it
+     * is a pure derivation of `totalAmount`, and a quote that omitted it would
+     * have to be re-fetched the moment a merchant flipped the switch.
+     */
+    advanceOptions: Record<"DELIVERY_CHARGE" | "FULL", IAdvanceSplit>;
 }
 
 /** `POST /landing-pages/by-slug/:slug/order` request body, after validation. */
+/**
+ * Where the order is going, as the shopper chose it.
+ *
+ * The same pair the shop's checkout captures. The storefront resolves it to one
+ * of the shop's delivery options and submits that key; this travels alongside so
+ * the order records the place, not just the band it fell into.
+ */
+export interface ILandingDestination {
+    district: string;
+    area: string;
+}
+
 export interface IPlaceLandingPageOrderPayload {
     quantity: number;
-    zoneKey: string;
+    /** One of the SHOP's delivery options, resolved from the destination. */
+    deliveryOptionKey: string;
+    destination?: ILandingDestination;
+    /** Which tier was picked. Absent on a page with no packages. */
+    packageKey?: string;
     fullName?: string;
     phone: string;
     address: string;
     notes?: string;
     expectedTotal?: number;
+    /**
+     * How the shopper paid. Absent means cash on delivery, which is what every
+     * campaign order was before advance payment reached this path.
+     */
+    paymentMethod?: string;
+    /**
+     * The advance-payment claim, when the campaign asks for one.
+     *
+     * The same shape the shop's checkout collects — forwarded to
+     * `OrderService.placeOrder`, which validates the account, refuses a reused
+     * reference and computes the amount. Refused outright on a campaign that
+     * does not ask for an advance.
+     */
+    advancePayment?: IAdvanceClaimPayload;
 }
