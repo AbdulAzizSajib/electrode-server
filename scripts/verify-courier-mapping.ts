@@ -104,16 +104,26 @@ check(
     "Steadfast is domestic-only; it would spend characters against a hard limit",
 );
 
+/*
+ * `state` carries the DESTINATION DISTRICT, and it must reach the courier.
+ *
+ * Same column on either path now: a campaign order writes the district there
+ * exactly as a catalogue order does, so this brief does not branch on which
+ * page produced the order. Orders placed before
+ * `add-landing-page-destination-picker` hold a campaign zone LABEL in the same
+ * column instead — still a place name, still composed the same way, which is
+ * why those orders keep briefing correctly without being rewritten.
+ */
 check(
-    "a landing-page order's delivery zone in `state` is carried",
+    "the destination district in `state` is carried",
     composeAddress({
         addressLine1: "House 44",
         addressLine2: null,
-        city: "Dhaka",
-        state: "Inside Dhaka",
+        city: "Mirpur",
+        state: "Dhaka",
         postalCode: null,
-    }) === "House 44, Dhaka, Inside Dhaka",
-    "that column is where a landing-page order records its zone",
+    }) === "House 44, Mirpur, Dhaka",
+    "that column is where every order records where it is going",
 );
 
 console.log("\n--- Address length: refused, never truncated ---\n");

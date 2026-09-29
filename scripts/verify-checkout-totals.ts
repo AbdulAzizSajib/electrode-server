@@ -248,9 +248,15 @@ const main = async () => {
         );
 
         /* -------------------------------------------------------------- *
-         * 3. A landing-page order is priced by its own zone and is
-         *    unaffected by any of the above — including by the empty list
-         *    still in force here, which is the strongest form of the check.
+         * 3. THE OVERRIDE BRANCH, which no caller uses any more.
+         *
+         *    A campaign landing page was the only one. It is priced by the
+         *    shop's own delivery options now — waivers and all — so these two
+         *    checks no longer describe any live order. They are kept because
+         *    the branch is kept: they pin what an override WOULD mean, so a
+         *    future caller cannot quietly acquire a waiver the branch was
+         *    built to refuse. See
+         *    openspec/changes/add-landing-page-destination-picker.
          * -------------------------------------------------------------- */
         const override = await quoteCharges({
             lines: [line(1000)],
@@ -258,7 +264,7 @@ const main = async () => {
             shippingOverride: { amount: 99, label: "ঢাকার ভিতরে" },
         });
         check(
-            "a landing-page order prices from its own zone even with no store options",
+            "an overridden charge stands even with no store options configured",
             override.shippingAmount === 99 && override.delivery === null,
             `charged ${override.shippingAmount}, delivery ${JSON.stringify(override.delivery)}`,
         );
@@ -271,7 +277,7 @@ const main = async () => {
             shippingOverride: { amount: 99, label: "ঢাকার ভিতরে" },
         });
         check(
-            "no waiver applies to a landing page's own delivery charge",
+            "no waiver applies to an overridden delivery charge",
             overrideWaived.shippingAmount === 99,
             `expected 99, got ${overrideWaived.shippingAmount}`,
         );

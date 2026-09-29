@@ -90,7 +90,6 @@ const main = async () => {
         });
     }
 
-    const zones = [{ key: "inside-dhaka", label: "ঢাকার ভিতরে", price: 60 }];
     const orderForm = {
         fields: {
             fullName: { label: "নাম", required: true },

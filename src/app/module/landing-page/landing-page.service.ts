@@ -255,6 +255,48 @@ const assertAdvancePaymentAvailable = async (requiresAdvance: boolean | undefine
     }
 };
 
+/**
+ * The optional text columns a merchant may take back OFF a page, with `""`
+ * normalised to a stored NULL.
+ *
+ * `""` is how the API spells "clear it" (see the schema's note beside
+ * `badgeText`), but writing that straight through would leave the column with
+ * two spellings of empty — `NULL` for a page that never set a badge and `""`
+ * for one that removed it. Every reader would then need to know both, and the
+ * storefront's `page.badgeText &&` test passing for both is luck, not design.
+ *
+ * Only these keys, and only when PRESENT: an absent key still means "leave
+ * unchanged", which is what makes the partial PATCH work.
+ */
+const CLEARABLE_TEXT_FIELDS = ["badgeText", "subheadline"] as const;
+
+type ClearableTextField = (typeof CLEARABLE_TEXT_FIELDS)[number];
+
+/**
+ * Returns the payload with each PRESENT blank clearable text swapped for null.
+ *
+ * Typed as "the payload, minus the clearable keys, plus those keys widened to
+ * allow null", because that is exactly what the function does and the callers
+ * hand the result to Prisma, whose input types accept null for a nullable
+ * column. Widening `T` in place instead would reduce back to `T`'s own
+ * `string | undefined` and reject the assignment.
+ */
+const normaliseClearableText = <T extends Partial<Record<ClearableTextField, string | undefined>>>(
+    payload: T,
+): Omit<T, ClearableTextField> & Partial<Record<ClearableTextField, string | null>> => {
+    const result: Record<string, unknown> = { ...payload };
+
+    for (const field of CLEARABLE_TEXT_FIELDS) {
+        const value = result[field];
+        if (typeof value === "string" && value.trim() === "") {
+            result[field] = null;
+        }
+    }
+
+    return result as Omit<T, ClearableTextField> &
+        Partial<Record<ClearableTextField, string | null>>;
+};
+
 const createLandingPage = async (
     userId: string | undefined,
     payload: ICreateLandingPagePayload,
@@ -267,7 +309,7 @@ const createLandingPage = async (
 
     const landingPage = await prisma.landingPage.create({
         data: {
-            ...payload,
+            ...normaliseClearableText(payload),
             slug,
             /*
              * Seeded here rather than defaulted in Postgres so the Bangla
@@ -332,7 +374,7 @@ const updateLandingPage = async (
         return tx.landingPage.update({
             where: { id },
             data: {
-                ...payload,
+                ...normaliseClearableText(payload),
                 ...(slug ? { slug } : {}),
             } as Prisma.LandingPageUncheckedUpdateInput,
         });
@@ -403,6 +445,20 @@ const duplicateLandingPage = async (userId: string | undefined, id: string) => {
             quotes: source.quotes,
             trustBadges: source.trustBadges,
             orderForm: source.orderForm,
+
+            /*
+             * THE SECTION LAYOUT COMES WITH THE COPY.
+             *
+             * A duplicate is drafted to become the next campaign, and the
+             * arrangement of its sections is part of what the merchant is
+             * copying - a duplicate that silently reverted to the default
+             * order would be a different page wearing the same content.
+             *
+             * Null copies as null, which is correct: a source that never
+             * configured its sections produces a copy that has not either, and
+             * both resolve to the same default order.
+             */
+            sectionConfig: source.sectionConfig,
 
             successHeading: source.successHeading,
             successMessage: source.successMessage,
@@ -1091,11 +1147,17 @@ const quoteLandingPageOrder = async (
  * core's payload and to say the three ways this path differs (ICheckoutOverrides).
  *
  * The address mapping is worth stating: the page's single address box becomes
- * `addressLine1`, and the chosen zone's LABEL becomes `state`, because that is
- * the delivery region the shopper declared and it is what the admin's order
- * detail and the courier both read. `city` and `postalCode` are left unset —
- * the page did not ask, and recording a guess would be worse than recording
- * nothing. `country` falls to CustomerAddress's own "Bangladesh" default.
+ * `addressLine1`, and the chosen DESTINATION becomes `state` (district) and
+ * `city` (area) — the same two columns a shop order writes them to, so the
+ * admin's order detail and the courier brief read one shape regardless of which
+ * path produced the order. `state` used to hold the campaign's own zone label;
+ * orders placed before that keep theirs, unrewritten. `postalCode` is left
+ * unset — the page did not ask, and recording a guess would be worse than
+ * recording nothing. `country` falls to CustomerAddress's own "Bangladesh"
+ * default.
+ *
+ * See openspec/changes/add-landing-page-destination-picker, design.md
+ * Decision 3.
  */
 const placeLandingPageOrder = async (
     actor: ICheckoutActor,

@@ -91,3 +91,141 @@ export const MAX_USAGE_IDEAS = 16;
  * number.
  */
 export const MAX_ORDER_QUANTITY = 100;
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHICH SECTIONS A CAMPAIGN PAGE IS BUILT FROM.
+ *
+ * `LANDING_SECTION_KEYS` IS THE DEFAULT RENDER ORDER, not just a set of valid
+ * values. A page whose `sectionConfig` is null renders exactly this sequence,
+ * which is a faithful transcription of the JSX sequence LandingPageView.tsx
+ * rendered before the column existed. Reorder this tuple and every campaign
+ * that has never been through the section editor silently restyles — the same
+ * hazard StoreSetting's HERO_VARIANT_OPTIONS documents for position 0.
+ *
+ * See openspec/changes/add-landing-page-section-builder, design.md D1/D4.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export const LANDING_SECTION_KEYS = [
+    /*
+     * The gallery, headline, price and order form, as one block.
+     *
+     * NOT DISABLEABLE and not reorderable out of first position — see
+     * LANDING_REQUIRED_SECTION_KEYS below. It is the page's reason to exist.
+     */
+    "HERO",
+    /** The countdown and the scarcity meter — both answer "why now". */
+    "OFFER",
+    /** The benefit cards. */
+    "HIGHLIGHTS",
+    /** The numbered "why we are different" grid. */
+    "WHY_US",
+    /** The merchant's own rich-text body. */
+    "BODY",
+    /** "What would I do with this" — the tile grid. */
+    "USAGE_IDEAS",
+    /** Customer quotes. */
+    "QUOTES",
+    /** The FAQ accordion. */
+    "FAQS",
+    /*
+     * A call-to-action strip: one button back to the order form, one to call.
+     *
+     * THE SECOND KEY THAT MAY REPEAT, and in the default order it appears
+     * THREE times — after the highlights, after the usage ideas, and after the
+     * FAQ. That repetition is the point: the moment a shopper is convinced is
+     * not predictable, and a single button at the bottom asks them to remember
+     * they were convinced and scroll to act on it.
+     */
+    "CTA",
+    /*
+     * A section the merchant wrote themselves: heading, body and layout.
+     *
+     * THE OTHER KEY THAT MAY REPEAT, once per custom section, and the only one
+     * that carries its own content inside the entry rather than in a column.
+     */
+    "CUSTOM",
+] as const;
+
+export type LandingSectionKey = (typeof LANDING_SECTION_KEYS)[number];
+
+/**
+ * The DEFAULT ORDER, including the three call-to-action strips.
+ *
+ * Transcribed from LandingPageView.tsx as it rendered before this change. It is
+ * what a page with a null `sectionConfig` resolves to, so it is the definition
+ * of "unchanged" for every campaign that exists today — the single thing the
+ * verify script pins hardest.
+ */
+export const DEFAULT_LANDING_SECTION_ORDER: readonly LandingSectionKey[] = [
+    "HERO",
+    "OFFER",
+    "HIGHLIGHTS",
+    "CTA",
+    "WHY_US",
+    "BODY",
+    "USAGE_IDEAS",
+    "CTA",
+    "QUOTES",
+    "FAQS",
+    "CTA",
+] as const;
+
+/**
+ * The keys that may appear MORE THAN ONCE in a stored order.
+ *
+ * Named rather than written as a literal at each place that branches on it:
+ * every one of those is somewhere that treating repeats as a single section
+ * silently merges them. Anything matching entries must match on `key` + `id`
+ * for CUSTOM, or on POSITION for CTA — never on `key` alone.
+ *
+ * Exactly the arrangement StoreSetting's PROMO_SECTION_KEY documents for
+ * MID_BANNERS, and for the same reason.
+ */
+export const LANDING_REPEATABLE_SECTION_KEYS: readonly LandingSectionKey[] = [
+    "CTA",
+    "CUSTOM",
+] as const;
+
+/**
+ * The sections a page may never be without.
+ *
+ * Enforced in the service as well as hidden in the admin, because a warning is
+ * dismissed once and the blank page stays live while the ads run. A campaign
+ * with no hero and no order form is a paid click that can buy nothing.
+ */
+export const LANDING_REQUIRED_SECTION_KEYS: readonly LandingSectionKey[] = [
+    "HERO",
+] as const;
+
+/**
+ * More than this and the page is a website, not a campaign.
+ *
+ * Same reasoning as MAX_HIGHLIGHTS and MAX_FAQS above: a landing page is one
+ * scrollable document read in a single pass, and the bound also keeps a single
+ * Json column from growing without limit.
+ */
+export const MAX_CUSTOM_SECTIONS = 8;
+
+/** Bounds on one custom section's own copy. */
+export const MAX_CUSTOM_SECTION_HEADING = 160;
+export const MAX_CUSTOM_SECTION_BODY = 8000;
+
+/**
+ * How a custom section arranges its own content.
+ *
+ * ORDER IS LOAD-BEARING: position 0 is what a section gets when the merchant
+ * chooses nothing, and "PROSE" holds it because a heading over a paragraph is
+ * the arrangement that needs no further decision from them.
+ */
+export const LANDING_CUSTOM_SECTION_LAYOUTS = [
+    /** A heading with the body beneath it, at the page's reading measure. */
+    "PROSE",
+    /** The same content centred, for a short statement rather than an argument. */
+    "CENTERED",
+    /** On the accent wash, for a section that should read as a callout. */
+    "HIGHLIGHT",
+] as const;
+
+export type LandingCustomSectionLayout =
+    (typeof LANDING_CUSTOM_SECTION_LAYOUTS)[number];

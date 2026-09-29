@@ -10,7 +10,7 @@
 
 - [x] 2.1 Change `quoteLandingPageOrder` to take `deliveryOptionKey` instead of `zoneKey`, and price through `quoteCharges` with the shop's `checkoutConfig` rather than through `shippingOverride`. Verify the quote matches what the shop's checkout quotes for the same option.
 - [x] 2.2 Do the same in `placeLandingPageOrder`, dropping `shippingOverride` entirely on this path. Verify a campaign order is charged the option's stored price.
-- [ ] 2.3 Confirm the behaviour change this brings: campaign orders now receive the shop's free-shipping threshold and a coupon's shipping waiver, which they previously never did (design.md Decision 5). Verify by placing a campaign order above the threshold.
+- [x] 2.3 Confirm the behaviour change this brings: campaign orders now receive the shop's free-shipping threshold and a coupon's shipping waiver, which they previously never did (design.md Decision 5). Verify by placing a campaign order above the threshold.
 - [x] 2.4 Write the destination into `shippingAddress.state` where the zone label used to go, in the shape a shop order uses. Verify a campaign order and a shop order read identically.
 - [x] 2.5 Refuse an option key the shop does not have, and refuse a client-supplied delivery amount. Verify both, and that no order is created by either.
 - [x] 2.6 Update the landing order validation: `deliveryOptionKey` replaces `zoneKey`, and a destination is accepted. Verify a complete payload parses and the old shape is refused.
@@ -32,8 +32,8 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Extend `verify-landing-page-shapes.ts`: `deliveryZones` must be ABSENT from all three copies, and its absence must be asserted rather than merely unmentioned. Verify it fails if the field is reintroduced.
-- [ ] 5.2 Add `npx tsx scripts/verify-landing-destination.ts` covering the resolution path end to end — a served district prices from the shop's option, an unserved one refuses, an unknown option key is refused, and a client-supplied amount is not honoured. Creates `__verify_*` rows, cleans up in a `finally`. Verify it passes.
-- [ ] 5.3 Assert the two paths agree: the same destination and product quote the same delivery charge through the shop checkout and through a campaign. Verify by script.
-- [ ] 5.4 Update `seed-bangla-landing-page.ts` — no `deliveryZones`, and the page reviewable with the destination picker. Verify the seeded page renders the picker and derives a charge.
-- [ ] 5.5 Run both test suites, every landing verify script, and all three typechecks. Verify no regression.
+- [x] 5.1 Extend `verify-landing-page-shapes.ts`: `deliveryZones` must be ABSENT from all three copies, and its absence must be asserted rather than merely unmentioned. Verify it fails if the field is reintroduced.
+- [x] 5.2 Add `npx tsx scripts/verify-landing-destination.ts` covering the resolution path end to end — a served district prices from the shop's option, an unserved one refuses, an unknown option key is refused, and a client-supplied amount is not honoured. Creates `__verify_*` rows, cleans up in a `finally`. Verify it passes.
+- [x] 5.3 Assert the two paths agree: the same destination and product quote the same delivery charge through the shop checkout and through a campaign. Verify by script.
+- [x] 5.4 Update `seed-bangla-landing-page.ts` — no `deliveryZones`, and the page reviewable with the destination picker. Verify the seeded page renders the picker and derives a charge.
+- [x] 5.5 Run both test suites, every landing verify script, and all three typechecks. Verify no regression.

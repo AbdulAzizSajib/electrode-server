@@ -225,16 +225,22 @@ export const quoteDelivery = async (
 /**
  * A delivery charge decided somewhere other than by the store's own options.
  *
- * Exists for exactly one caller: a campaign landing page, which offers its own
- * delivery zones (`ঢাকার ভিতরে ৳60` / `ঢাকার বাইরে ৳120`) and states a charge
- * on the page before the shopper has typed an address. It cannot go through
- * `quoteDelivery` because those zones are the PAGE's, authored per campaign —
- * and because a landing page must work whether or not the merchant has
- * configured delivery for the rest of the shop.
+ * NO CALLER TODAY. It existed for exactly one — a campaign landing page, which
+ * offered its own delivery zones (`ঢাকার ভিতরে ৳60` / `ঢাকার বাইরে ৳120`) and
+ * stated a charge before the shopper had typed an address. That is gone: a
+ * campaign is priced by the shop's own delivery options now, through
+ * `quoteDelivery` like every other order, because two price lists for one shop
+ * meant the same customer at the same address paid one figure through the
+ * catalogue and another through an ad. See
+ * openspec/changes/add-landing-page-destination-picker, design.md Decision 5.
  *
- * `amount` is read from the page's stored zone, never from the request body.
- * `label` travels with it only so the resulting order can say which area was
- * chosen.
+ * Kept rather than deleted because the mechanism is sound and the change that
+ * emptied it was scoped to that one path. **Do not reintroduce it as a way for
+ * a page to author its own delivery price** — that is the thing that was
+ * removed, and it bypasses both waivers by construction.
+ *
+ * `amount` must never be read from a request body. `label` travels with it only
+ * so the resulting order can say which area was chosen.
  */
 export interface IShippingOverride {
     amount: number;
@@ -245,9 +251,10 @@ export interface IChargeQuoteInput {
     lines: IPricingLine[];
     discountAmount: number;
     /**
-     * Which delivery option the shopper chose. Required on the normal path —
-     * the shopper picks it, nothing infers it — and unused when
-     * `shippingOverride` is set, since a landing page prices its own zones.
+     * Which delivery option the shopper chose. Required on every live path —
+     * the catalogue's checkout and a campaign landing page both name one, and
+     * nothing infers it. Unused only when `shippingOverride` is set, which no
+     * caller does any more.
      */
     deliveryOptionKey?: string;
     /** From an applied coupon. Waives delivery, never collection. */
@@ -291,21 +298,15 @@ export interface IChargeQuote {
  * collection fee nobody waived.
  *
  * An overridden delivery charge (see IShippingOverride) short-circuits before
- * any of that. Tax is still charged by each product's own rule — an override is
- * a statement about delivery, not about tax — but NEITHER waiver applies:
+ * any of that, and NEITHER waiver applies to it. That branch has no caller
+ * today — a campaign landing page was the only one, and it is priced by the
+ * shop's own options now, waivers included. The branch and its reasoning are
+ * kept because they describe what an override would still mean if one were ever
+ * reintroduced: a charge somebody else already quoted to the shopper, which a
+ * shop-wide threshold has no business zeroing.
  *
- *   - the shop's order-value threshold, because the landing page printed
- *     "ডেলিভারি চার্জ ৳60" beside the order button and the shopper agreed to
- *     that number. Zeroing it because an unrelated shop-wide threshold happened
- *     to be crossed would make the page a liar in the shopper's favour and the
- *     merchant's expense, on an order the merchant never quoted that way.
- *   - a coupon's free-shipping flag, which is moot here (a landing page has no
- *     coupon box) and is closed explicitly so it stays moot.
- *
- * `quoteDelivery` is not called at all on this path — not called and its result
- * discarded. It throws when the shop has no delivery options, and a landing page
- * must work whether or not the merchant has configured delivery for the rest of
- * the shop.
+ * `quoteDelivery` is not called at all on that path — not called and its result
+ * discarded, because it throws when the shop has no delivery options.
  */
 export const quoteCharges = async (input: IChargeQuoteInput): Promise<IChargeQuote> => {
     const subtotal = roundMoney(input.lines.reduce((sum, line) => sum + line.lineTotal, 0));

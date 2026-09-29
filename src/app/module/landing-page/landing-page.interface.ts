@@ -1,4 +1,8 @@
 import { LandingPageStatus } from "../../../generated/prisma/client";
+import type {
+    LandingCustomSectionLayout,
+    LandingSectionKey,
+} from "./landing-page.constant";
 import type { IAdvanceSplit } from "../order/order.pricing";
 import type { IAdvanceClaimPayload } from "../order/order.interface";
 
@@ -174,6 +178,37 @@ export interface ILandingPageOrderForm {
     notice?: string;
 }
 
+/**
+ * One entry in a landing page's section order.
+ *
+ * ORDER IS THE DATA: an entry's position in the array IS where that section
+ * renders. See LandingPage.prisma and landing-page.validation.ts.
+ *
+ * The four optional fields belong to `CUSTOM` alone. A built-in section carries
+ * none of them - its content lives in its own column - and the validation
+ * refuses them on any other key rather than ignoring them.
+ */
+export interface ILandingSectionConfigEntry {
+    key: LandingSectionKey;
+    /**
+     * False hides the section WITHOUT touching its content.
+     *
+     * That distinction is the point: emptying a section and disabling one are
+     * different acts, and only the second is reversible for free.
+     */
+    enabled: boolean;
+    /**
+     * A CUSTOM section's identity, stable across saves.
+     *
+     * Position is NOT an identity - matching on it would reattach a merchant's
+     * heading and body to a different section the first time they dragged one.
+     */
+    id?: string;
+    heading?: string;
+    /** Merchant-authored HTML, sanitised where it meets the browser. */
+    body?: string;
+    layout?: LandingCustomSectionLayout;
+}
 export interface ICreateLandingPagePayload {
     title: string;
     /** Omitted means "derive it from the title" (landing-page.service.ts). */
@@ -216,6 +251,18 @@ export interface ICreateLandingPagePayload {
      */
     requiresAdvancePayment?: boolean;
     theme?: ILandingPageTheme;
+    /**
+     * Which sections this page renders, and in what order.
+     *
+     * ABSENT means "leave unchanged" on update and "never configured" on
+     * create - and the second is what the storefront resolves to the default
+     * order, so a page that never reaches the section editor renders exactly as
+     * it did before this field existed.
+     *
+     * An EMPTY ARRAY is a different value and is rejected: a page with no HERO
+     * cannot be stored. See landing-page.validation.ts.
+     */
+    sectionConfig?: ILandingSectionConfigEntry[];
 
     successHeading?: string;
     successMessage?: string;

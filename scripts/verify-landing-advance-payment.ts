@@ -187,10 +187,25 @@ const main = async () => {
             Boolean(quote.advanceOptions?.DELIVERY_CHARGE && quote.advanceOptions?.FULL),
             `delivery-charge ${quote.advanceOptions?.DELIVERY_CHARGE?.advanceAmount}, full ${quote.advanceOptions?.FULL?.advanceAmount}`,
         );
+        /*
+         * DERIVED FROM THE QUOTE, not a hardcoded figure.
+         *
+         * This used to assert a literal 60 — the price the campaign authored on
+         * its own `deliveryZones`. A campaign authors no delivery prices any
+         * more (see openspec/changes/add-landing-page-destination-picker): the
+         * charge is whatever the SHOP's delivery option stores, which a merchant
+         * can change in Checkout Setting without touching a campaign. A literal
+         * here would fail on any shop but the one it was written against, and
+         * would say "the advance is wrong" when the real answer is "the shop
+         * charges a different rate now".
+         *
+         * The property that actually matters survives either way: the advance a
+         * shopper is asked for IS the delivery charge, whatever that charge is.
+         */
         check(
-            "quote: the delivery-charge choice is the zone's price",
-            quote.advanceOptions.DELIVERY_CHARGE.advanceAmount === 60,
-            `sends ${quote.advanceOptions.DELIVERY_CHARGE.advanceAmount}, expected the 60 zone charge`,
+            "quote: the delivery-charge choice is the SHOP option's price",
+            quote.advanceOptions.DELIVERY_CHARGE.advanceAmount === quote.shippingAmount,
+            `sends ${quote.advanceOptions.DELIVERY_CHARGE.advanceAmount}, delivery costs ${quote.shippingAmount}`,
         );
         for (const choice of ["DELIVERY_CHARGE", "FULL"] as const) {
             const split = quote.advanceOptions[choice];
@@ -239,8 +254,8 @@ const main = async () => {
         );
         check(
             "order: the amount is the SERVER's figure, not the client's",
-            Number(payment?.amount) === 60,
-            `charged ${Number(payment?.amount)}, expected the 60 the quote stated`,
+            Number(payment?.amount) === quote.shippingAmount,
+            `charged ${Number(payment?.amount)}, expected the ${quote.shippingAmount} the quote stated`,
         );
         check(
             "order: the account the shopper chose is recorded",

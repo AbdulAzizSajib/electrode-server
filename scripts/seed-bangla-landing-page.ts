@@ -347,11 +347,20 @@ const main = async () => {
             border: "#eadfd0",
         },
 
-        /* ---------------- Delivery zones ----------------
-         * The selected zone's price is CHARGED — a landing page order bypasses
-         * the shop's free-shipping threshold and any coupon shipping waiver,
-         * because the page stated this charge and that is what the shopper
-         * agreed to. See LandingPage.prisma.
+        /* ---------------- Delivery ----------------
+         * NOT AUTHORED HERE, and there is nothing to seed. A campaign used to
+         * carry its own `deliveryZones`; it does not any more. The shopper
+         * chooses a district and area on the page, the storefront resolves that
+         * to one of the SHOP's delivery options, and the order is charged that
+         * option's stored price — the same figure the catalogue would charge
+         * the same address.
+         *
+         * Which means the seeded page is only reviewable end to end if
+         * Checkout Setting → Delivery has options configured. With none, the
+         * picker resolves to nothing and drops the shopper to an empty card
+         * list. That is the shop being unconfigured, not the page being broken.
+         *
+         * See openspec/changes/add-landing-page-destination-picker.
          */
 
         /* ---------------- Order form ----------------

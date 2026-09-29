@@ -22,6 +22,7 @@ import { prisma } from "../src/app/lib/prisma";
 import { CampaignService } from "../src/app/module/campaign/campaign.service";
 import { LandingPageService } from "../src/app/module/landing-page/landing-page.service";
 import { ProductService } from "../src/app/module/product/product.service";
+import { StoreSettingService } from "../src/app/module/store-setting/store-setting.service";
 
 let failures = 0;
 
@@ -180,8 +181,12 @@ const main = async () => {
          * placement 409s when that differs from what it charges. The quote once
          * priced bare `offerPrice` while the page and the order applied the
          * campaign — so every campaign page's orders failed for exactly as long
-         * as the campaign ran. Zero-priced zone and no tax rule, so the subtotal
-         * IS the unit price times the quantity.
+         * as the campaign ran. No tax rule on the probe product, so the
+         * SUBTOTAL is the unit price times the quantity, which is what is
+         * compared below. Delivery is deliberately left out of that
+         * comparison: a campaign is priced by the shop's own delivery
+         * options now, so its charge is whatever the merchant configured
+         * and has nothing to do with whether the discount reached the line.
          * ------------------------------------------------------------------ */
         await prisma.landingPage.create({
             data: {
@@ -195,22 +200,45 @@ const main = async () => {
             },
         });
 
+        /*
+         * A REAL option key, read from the shop.
+         *
+         * This passed a literal "zone" until
+         * `add-landing-page-destination-picker`: a campaign authored its own
+         * zones, so any key it named was its own business. A campaign is
+         * priced by the SHOP's delivery options now, and `quoteDelivery`
+         * refuses a key the merchant does not have — as it should, since the
+         * alternative is charging for an option nobody configured.
+         */
+        const checkoutConfig = await StoreSettingService.getCheckoutConfig();
+        const anyOption = checkoutConfig.delivery.options.find((o) => o.kind === "DELIVERY");
+
+        if (!anyOption) {
+            console.log(
+                "This store has no delivery option configured, so a campaign quote cannot be priced. Skipping the landing-quote check.",
+            );
+        }
+
         const snapshot = await LandingPageService.buildProductSnapshot(plain.id);
-        const landingQuote = await LandingPageService.quoteLandingPageOrder(`${PREFIX}page`, {
-            quantity: 2,
-            deliveryOptionKey: "zone",
-        });
+        const landingQuote = anyOption
+            ? await LandingPageService.quoteLandingPageOrder(`${PREFIX}page`, {
+                  quantity: 2,
+                  deliveryOptionKey: anyOption.key,
+              })
+            : null;
 
         check(
             "landing page shows the discounted price",
             near(snapshot.unitPrice, 800),
             `page unit price ${snapshot.unitPrice}, expected 800`,
         );
-        check(
-            "landing quote EQUALS what the order charges",
-            chargedPrice !== undefined && near(landingQuote.subtotal, chargedPrice * 2),
-            `quoted ${landingQuote.subtotal} for 2 vs charged ${chargedPrice !== undefined ? chargedPrice * 2 : "(none)"}`,
-        );
+        if (landingQuote) {
+            check(
+                "landing quote EQUALS what the order charges",
+                chargedPrice !== undefined && near(landingQuote.subtotal, chargedPrice * 2),
+                `quoted ${landingQuote.subtotal} for 2 vs charged ${chargedPrice !== undefined ? chargedPrice * 2 : "(none)"}`,
+            );
+        }
 
         /* ------------------------------------------------------------------ *
          * 4. Variants are discounted off their OWN price.

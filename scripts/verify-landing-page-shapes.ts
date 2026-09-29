@@ -254,11 +254,35 @@ check(
         : (zonesRejected.error.issues[0]?.message ?? ""),
 );
 
-for (const [name, path] of mirrors) {
-    const source = readOrNull(path) ?? "";
+/*
+ * ALL FOUR COPIES, by name — the backend's own interface, constants and
+ * validation alongside the two frontend mirrors. The Zod check above proves
+ * the API REFUSES the field; these prove nobody is still carrying a type, a
+ * default or a resolver for it, which is how a removed field quietly grows a
+ * second life.
+ *
+ * Any mention at all fails, including one inside a comment saying the field is
+ * gone. There is exactly one such comment, in LandingPage.prisma, and that
+ * file is deliberately not on this list.
+ */
+const zoneCarriers: [string, string][] = [
+    ...mirrors,
+    ["backend interface", "server/src/app/module/landing-page/landing-page.interface.ts"],
+    ["backend constants", "server/src/app/module/landing-page/landing-page.constant.ts"],
+    ["backend validation", "server/src/app/module/landing-page/landing-page.validation.ts"],
+];
+
+for (const [name, path] of zoneCarriers) {
+    const source = readOrNull(path);
+
+    if (source === null) {
+        check(`${name}: file is readable`, false, `could not read ${path}`);
+        continue;
+    }
+
     check(
         `${name}: carries no deliveryZones`,
-        !/deliveryZones/.test(source),
+        !/deliveryZones|DEFAULT_DELIVERY_ZONES|resolveDeliveryZone/.test(source),
         `the shop's delivery options are the single price list`,
     );
 }
@@ -329,5 +353,3 @@ check(
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
-
-// MARKER

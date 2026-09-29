@@ -192,6 +192,42 @@ model LandingPage {
   /// shop's chrome. Null renders the page in the shop's own theme.
   theme Json?
 
+  /// WHICH SECTIONS THIS PAGE IS BUILT FROM, AND IN WHAT ORDER.
+  ///
+  /// An ordered array; ORDER IS THE DATA. It is never sorted, normalised or
+  /// re-grouped on the way to or from the API — the position of an entry in
+  /// this array IS where that section renders. Same contract as
+  /// StoreSetting.homeConfig, for the same reason.
+  ///
+  /// sectionConfig: [{ key, enabled,
+  ///                   id?, heading?, body?, layout? }]
+  ///   `key`      one of LANDING_SECTION_KEYS, or "CUSTOM".
+  ///   `enabled`  false hides the section WITHOUT touching its content, which
+  ///              is the whole point: emptying a section and disabling one are
+  ///              different acts, and only the second is reversible for free.
+  ///   The remaining four are CUSTOM-only and carry that section's own
+  ///   content, because a custom section has no column of its own to live in.
+  ///   `body` is merchant-authored HTML, sanitised where it meets the browser
+  ///   exactly as bodyHtml is.
+  ///
+  /// `CUSTOM` IS THE ONE KEY THAT MAY REPEAT, once per custom section — the
+  /// same hazard StoreSetting.homeConfig documents for MID_BANNERS. Anything
+  /// matching entries here must match on `key` + `id`, NEVER on `key` alone,
+  /// which would collapse every custom section into one.
+  ///
+  /// NULL MEANS "NEVER CONFIGURED", and that is load-bearing. It is what the
+  /// storefront's default-order fallback keys off, so a page that has never
+  /// been through the section editor renders exactly as it did before this
+  /// column existed. An empty array is NOT the same value: it means the
+  /// merchant configured this page to show nothing. Do not backfill this
+  /// column to `[]` — it would convert every existing campaign from "as it
+  /// always was" into "deliberately blank".
+  ///
+  /// Zod-validated on write; Postgres does not constrain a Json column, so
+  /// landing-page.validation.ts is the only gate.
+  /// See openspec/changes/add-landing-page-section-builder, design.md D1/D3.
+  sectionConfig Json?
+
   /// The Json column that decides what an order must carry. It holds
   /// invariants Postgres cannot express, and is gated only by
   /// landing-page.validation.ts.

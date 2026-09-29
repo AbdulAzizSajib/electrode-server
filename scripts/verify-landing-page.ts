@@ -4,23 +4,22 @@
  * Covers the places where a wrong value costs real money or leaves the
  * storefront broken, rather than merely looking wrong:
  *
- *  - the delivery-zone override, which decides what a shopper is CHARGED for
- *    delivery and which must not be waived by rules the campaign page never
- *    mentioned;
- *  - the proof that the override did not leak into the normal checkout, whose
- *    delivery must still be priced by matching a ShippingPlace;
+ *  - the delivery charge, which is the SHOP's own option price and must be
+ *    waived by the shop's rules exactly as a catalogue order's is. This
+ *    reversed with `add-landing-page-destination-picker`: a campaign used to
+ *    author its own zones and bypass both waivers, and sections 1 and 2 below
+ *    assert the opposite of what they once did;
  *  - the landing page's own required-field rule, which must be independent of
  *    the shop-wide checkout config in one direction and unable to drop the
  *    phone or address in the other;
- *  - the Zod invariants Postgres cannot express — at least one delivery zone,
- *    distinct zone keys, a digits-only pixel id, and the absence of any way to
- *    spell "hide the phone field";
+ *  - the Zod invariants Postgres cannot express — a digits-only pixel id, and
+ *    the absence of any way to spell "hide the phone field" or to author a
+ *    delivery price;
  *  - the site-mode rule, which is what stops a merchant pointing their home
  *    page at a draft or at nothing.
  *
- * Pure functions only — no database, no network. `quoteCharges` touches neither
- * when every line is untaxed and delivery is overridden, which is exactly the
- * shape a landing page order has. Run with:
+ * Pure functions only — no database, no network beyond the settings read
+ * `quoteDelivery` needs. Run with:
  *   npx tsx scripts/verify-landing-page.ts
  */
 import { LandingPageStatus, SiteMode } from "../src/generated/prisma/client";
