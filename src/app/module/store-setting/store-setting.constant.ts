@@ -170,6 +170,30 @@ export const DEFAULT_NEWSLETTER = {
 };
 
 /**
+ * The floating chat bubble as a store that has never configured it has it: OFF.
+ *
+ * Off is the only safe default, for the same reason advance payment below is.
+ * This constant is reached by two roads — a column never written, and a
+ * storefront whose settings read failed altogether — and a bubble that appeared
+ * on every page because a deploy happened would be indistinguishable from the
+ * shop being taken over by something the merchant did not install.
+ *
+ * `whatsappNumber` is deliberately ABSENT rather than seeded with the store's
+ * demo contact number. Blank means "use `contactPhone`", which is resolved on
+ * read, so seeding a literal here would freeze today's number into the default
+ * and break that link for every store that never touches the field.
+ *
+ * `greeting` is absent for a different reason: the storefront supplies its own
+ * wording when this is unset, so an empty string here would be a merchant
+ * choosing to show no label, which is a different thing and must stay
+ * expressible.
+ */
+export const DEFAULT_CHAT_WIDGET = {
+    enabled: false,
+    channel: "whatsapp" as const,
+};
+
+/**
  * Advance payment as a store that has never configured it has it: OFF, with no
  * accounts to send money to.
  *
@@ -913,6 +937,7 @@ export const STOREFRONT_SEED_DEFAULTS = {
     middleBarLinks: DEFAULT_MIDDLE_BAR_LINKS,
     newsletter: DEFAULT_NEWSLETTER,
     perks: DEFAULT_PERKS,
+    chatWidget: DEFAULT_CHAT_WIDGET,
 };
 
 /**
@@ -1013,6 +1038,14 @@ export const DEFAULT_PUBLIC_SETTINGS = {
      * and a shopper cannot tell that apart from an outage.
      */
     perks: DEFAULT_PERKS,
+    /*
+     * Disabled, which is the answer on both roads to this constant: a column
+     * never written, and a settings read that failed. A storefront that cannot
+     * reach its backend must render NO bubble rather than one pointing at the
+     * default's number — a chat link that opens a conversation with nobody is
+     * worse than no chat link, because the shopper waits for a reply.
+     */
+    chatWidget: DEFAULT_CHAT_WIDGET,
     checkoutConfig: DEFAULT_CHECKOUT_CONFIG,
     catalogConfig: DEFAULT_CATALOG_CONFIG,
     /*

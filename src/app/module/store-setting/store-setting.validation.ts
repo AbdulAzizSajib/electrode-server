@@ -1,5 +1,5 @@
 import z from "zod";
-import { isValidPhone } from "../../utils/phone";
+import { isValidPhone, normalizePhone } from "../../utils/phone";
 import { parseGoogleFontEmbed } from "./google-font";
 import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS, PROMO_SECTION_KEY } from "./store-setting.constant";
 
@@ -500,6 +500,97 @@ const shopPixelIdSchema = z
     .max(20)
     .refine((value) => value === "" || /^\d{5,20}$/.test(value), {
         message: "Facebook Pixel ID must be digits only",
+    });
+
+/**
+ * The storefront's floating chat bubble.
+ *
+ * Postgres constrains no Json column, so this schema is the ONLY gate on the
+ * block's shape — and on the one rule that matters here: an ENABLED widget must
+ * have somewhere to go.
+ *
+ * THE DESTINATION RULE IS CONDITIONAL ON BOTH `enabled` AND `channel`, and both
+ * halves of that are deliberate:
+ *
+ *  - Conditional on `channel`, because the block keeps the other channel's
+ *    destination rather than clearing it. A merchant comparing the two should
+ *    not have to retype the one they come back to.
+ *  - Conditional on `enabled`, because a merchant configures a widget over more
+ *    than one save. Refusing a half-filled DISABLED block would mean the only
+ *    way to start is to finish, and nothing is at risk while it is off — a
+ *    disabled widget renders nothing at all.
+ *
+ * What this schema CANNOT catch is the other order: a valid widget saved first
+ * and `contactPhone` cleared afterwards, from a different editor on a different
+ * page. That is why `resolveChatWidget` in store-setting.service.ts re-checks
+ * on read and serves such a widget disabled. This rule and that one are two
+ * layers of the same guarantee, not a duplicate — neither covers the other's
+ * case. See design.md Decision 5 in
+ * openspec/changes/add-footer-credit-and-chat-widget.
+ */
+export const chatWidgetSchema = z
+    .object({
+        enabled: z.boolean(),
+        channel: z.enum(["whatsapp", "messenger"]),
+
+        /*
+         * Normalised to E.164 on the way in, through the same `normalizePhone`
+         * guest checkout uses, so a number typed with spaces or dashes cannot
+         * reach storage. `wa.me` takes the digits as a URL path segment and
+         * simply fails to open a conversation when they carry separators —
+         * silently, which is the failure this transform removes.
+         *
+         * An EMPTY STRING is accepted and is meaningful: it is how a merchant
+         * says "use the store's contact phone". It is not the same as the key
+         * being absent, and neither is rewritten on read.
+         */
+        whatsappNumber: z
+            .string()
+            .max(30)
+            .refine((value) => value.trim() === "" || isValidPhone(value), {
+                message: "Enter a valid Bangladeshi mobile number, or leave blank to use the store contact phone",
+            })
+            .transform((value) => (value.trim() === "" ? "" : (normalizePhone(value) ?? value)))
+            .optional(),
+
+        /*
+         * A Messenger username, not a URL and not a numeric page id: `m.me`
+         * takes the handle as its path. Stripping a leading `@` because that is
+         * how a merchant reads their own handle off their page.
+         */
+        messengerUsername: z
+            .string()
+            .max(100)
+            .transform((value) => value.trim().replace(/^@/, ""))
+            .refine((value) => value === "" || /^[A-Za-z0-9.]+$/.test(value), {
+                message: "Enter the Messenger username only — letters, numbers and dots",
+            })
+            .optional(),
+
+        greeting: z.string().max(60).optional(),
+    })
+    .strict()
+    .superRefine((widget, ctx) => {
+        if (!widget.enabled) return;
+
+        if (widget.channel === "whatsapp") {
+            /*
+             * Blank is NOT rejected here: blank means "fall back to
+             * contactPhone", and whether that resolves is a question this
+             * schema cannot answer — it has no database read. The service
+             * checks it transactionally on save and again on read, which is
+             * where a cross-field invariant needing a row belongs.
+             */
+            return;
+        }
+
+        if (!widget.messengerUsername || widget.messengerUsername.trim() === "") {
+            ctx.addIssue({
+                code: "custom",
+                message: "A Messenger username is required to enable the widget on this channel",
+                path: ["messengerUsername"],
+            });
+        }
     });
 
 /**
@@ -1183,13 +1274,37 @@ export const updateStoreSettingZodSchema = z.object({
      * it. See add-currency-format-and-home-content-cms design.md, Decision 6.
      */
     freeShippingThreshold: z.number().nonnegative().nullable().optional(),
-    contactEmail: z.email("Contact email must be valid").optional(),
+    /*
+     * `.nullable()` for the same reason `faviconUrl` below is: under a partial
+     * upsert an omitted key means "leave unchanged", and `z.email()` refuses the
+     * empty string — so without null a merchant could change their contact email
+     * forever and never take it down. The admin sends `null` when the box is
+     * cleared. NULL means "no public email", which the storefront's footer and
+     * announcement bar both already collapse for rather than render empty.
+     */
+    contactEmail: z.email("Contact email must be valid").nullable().optional(),
     contactPhone: z.string().max(30).optional(),
     address: z.string().max(500).optional(),
 
     // Branding
-    logoUrl: z.url("Logo URL must be valid").max(500).optional(),
-    footerLogoUrl: z.url("Footer logo URL must be valid").max(500).optional(),
+    /*
+     * `.nullable()`, for the reason spelled out on `faviconUrl` below — these two
+     * carried exactly the bug that comment describes until now: `z.url()` refuses
+     * `''` and an omitted key preserves what is stored, so a merchant could
+     * REPLACE a logo forever and never REMOVE one. The Clear button emptied the
+     * box, the save succeeded, and the artwork came back on the next read.
+     *
+     * NULL means "no artwork on this slot", which is exactly what the columns
+     * already meant — both are `String?` and were from the start, so nothing had
+     * to change in the database. Only this layer was refusing to say it.
+     *
+     * A null slot does NOT mean a blank brand: `headerBrandMode`/`footerBrandMode`
+     * decide what renders, and a slot set to LOGO with no URL falls back to the
+     * wordmark. See the `storefront-branding` spec, "A brand slot never renders
+     * empty".
+     */
+    logoUrl: z.url("Logo URL must be valid").max(500).nullable().optional(),
+    footerLogoUrl: z.url("Footer logo URL must be valid").max(500).nullable().optional(),
     /*
      * The browser-tab icon.
      *
@@ -1205,11 +1320,9 @@ export const updateStoreSettingZodSchema = z.object({
      * column: no icon chosen, so the storefront falls back to the one it ships
      * with.
      *
-     * `logoUrl` and `footerLogoUrl` have this bug TODAY and are deliberately
-     * left alone here — their Clear buttons in the admin empty the field and
-     * then omit the key, so the artwork is never actually removed. Fixing them
-     * is a change of its own; see openspec/changes/add-favicon-and-newsletter-section,
-     * tasks.md section 7.
+     * `logoUrl`, `footerLogoUrl` and `contactEmail` had this same bug and now
+     * carry the same `.nullable()` fix — see their comments above. This field
+     * was simply the first to need it.
      *
      * Shape only. Nothing here fetches the URL to check it is an image, is
      * square, or resolves at all — this server does not fetch merchant-supplied
@@ -1255,6 +1368,17 @@ export const updateStoreSettingZodSchema = z.object({
         .optional(),
 
     // SEO
+    /*
+     * `.nullable()` on the same rule as the logo URLs above: `z.url()` refuses
+     * `''`, so without null there is no way to say "this shop has no canonical
+     * origin any more" — the SEO screen could only ever replace it.
+     *
+     * NULL is meaningful rather than merely absent. The storefront resolves
+     * `metadataBase` from this, and a null origin leaves canonical links and
+     * social previews RELATIVE, which is the documented safe direction: an
+     * absolute URL resolved against the wrong host points them at someone
+     * else's site. See DEFAULT_PUBLIC_SETTINGS.siteUrl.
+     */
     siteUrl: z
         .url("Site URL must be a valid address")
         .max(500)
@@ -1262,6 +1386,7 @@ export const updateStoreSettingZodSchema = z.object({
             (value) => value.startsWith("http://") || value.startsWith("https://"),
             "Site URL must start with http:// or https://",
         )
+        .nullable()
         .optional(),
     metaTitle: z.string().max(200).optional(),
     metaDescription: z.string().max(500).optional(),
@@ -1291,6 +1416,19 @@ export const updateStoreSettingZodSchema = z.object({
      * ordered list, because the array's own order is the data.
      */
     perks: perksSchema.optional(),
+
+    /*
+     * `.optional()` alone, like the blobs above: omitted leaves the column
+     * untouched, which is what keeps Footer links' key set disjoint from the
+     * other six settings editors sharing this endpoint. A present value
+     * REPLACES the whole block — the editor sends the complete widget, not a
+     * slice, so switching channels cannot leave half of the previous one behind.
+     *
+     * There is no `.nullable()` here because there is no third state: "the
+     * merchant wants no bubble" is `enabled: false`, which keeps their
+     * configuration on file for when they turn it back on.
+     */
+    chatWidget: chatWidgetSchema.optional(),
 
     // Checkout and theme (Json columns). Optional like everything else here, so
     // the two new admin pages stay as non-clobbering as the existing three

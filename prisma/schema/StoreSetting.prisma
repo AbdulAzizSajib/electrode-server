@@ -470,5 +470,34 @@ model StoreSetting {
   /// Decision 7.
   integrationConfig Json?
 
+  /// The storefront's floating chat bubble, as
+  /// `{ enabled, channel, whatsappNumber?, messengerUsername?, greeting? }`.
+  ///
+  /// PUBLICLY SERVED and holding NO CREDENTIAL, by the rule `integrationConfig`
+  /// above states: a phone number and a Messenger handle are already printed on
+  /// the site, so they belong on this row. Nothing that must stay secret may be
+  /// added here — that goes in `IntegrationCredential`. The storefront reads
+  /// this through `GET /settings/public`, which serves the whole row.
+  ///
+  /// `channel` selects which destination is required. A BLANK `whatsappNumber`
+  /// RESOLVES TO `contactPhone` ON READ — the fallback lives in
+  /// `resolveChatWidget` in store-setting.service.ts and is applied to the admin
+  /// and public reads alike, so the stored blank is never rewritten and a
+  /// merchant who later changes their contact phone gets the new number
+  /// automatically. A widget whose destination resolves to nothing is SERVED
+  /// disabled rather than stored disabled, so clearing a contact phone degrades
+  /// to "no bubble" instead of floating a dead link on every page.
+  ///
+  /// Postgres does not constrain a Json column, so — as with every other Json
+  /// column on this model — `chatWidgetSchema` in store-setting.validation.ts is
+  /// the ONLY gate. No code path may persist an unvalidated value here.
+  ///
+  /// Nullable with no backfill: null resolves to DEFAULT_CHAT_WIDGET, which is
+  /// disabled, so the additive migration puts no bubble on any existing store.
+  ///
+  /// See openspec/changes/add-footer-credit-and-chat-widget, design.md
+  /// Decisions 4 and 5.
+  chatWidget Json?
+
   updatedAt DateTime @updatedAt
 }

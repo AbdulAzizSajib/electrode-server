@@ -5,7 +5,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { StoreSettingService } from "./store-setting.service";
 
 const getStoreSetting = catchAsync(async (req: Request, res: Response) => {
-    const result = await StoreSettingService.getStoreSetting();
+    const result = await StoreSettingService.getAdminStoreSetting();
 
     sendResponse(res, {
         httpStatusCode: status.OK,

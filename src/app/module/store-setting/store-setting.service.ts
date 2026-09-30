@@ -17,6 +17,7 @@ import {
 } from "../../utils/revalidateStorefront";
 import {
     DEFAULT_ADVANCE_PAYMENT,
+    DEFAULT_CHAT_WIDGET,
     DEFAULT_CHECKOUT_CONFIG,
     DEFAULT_HOME_CONFIG,
     DEFAULT_PUBLIC_SETTINGS,
@@ -30,6 +31,7 @@ import {
     SINGLETON_ID,
 } from "./store-setting.constant";
 import {
+    IChatWidget,
     ICheckoutConfig,
     ICurrencyFormat,
     ISeoConfig,
@@ -43,6 +45,7 @@ import {
 } from "./store-setting.site-mode";
 import { checkoutConfigSchema } from "./store-setting.validation";
 import { currencyFormatOf, DEFAULT_CURRENCY_FORMAT } from "../../utils/formatMoney";
+import { normalizePhone } from "../../utils/phone";
 
 /**
  * Get-or-create on the fixed singleton id — there is no way, through this
@@ -67,6 +70,101 @@ const getStoreSetting = async () => {
         }
         throw error;
     }
+};
+
+/**
+ * The chat widget as it is SERVED, which is not always as it is stored.
+ *
+ * Two read rules, applied here once so that no consumer implements either:
+ *
+ *  1. A BLANK `whatsappNumber` resolves to the store's `contactPhone`. Blank is
+ *     a meaningful stored value — "use the store's number" — and it stays blank
+ *     in the row, so a merchant who later changes their contact phone gets the
+ *     new one without touching this editor. The alternative is every consumer
+ *     writing `whatsappNumber || contactPhone` for itself: the storefront
+ *     widget, the admin preview, and whatever is added next. Three copies of one
+ *     rule is three chances for the admin to show a different number from the
+ *     one the storefront dials, which is the class of bug the announcement bar's
+ *     `source` binding already exists to prevent. See design.md Decision 4.
+ *
+ *  2. A widget whose destination resolves to NOTHING is served `enabled: false`.
+ *     `chatWidgetSchema` refuses to enable a Messenger widget with no username,
+ *     but it cannot catch the other order — a valid WhatsApp widget saved first
+ *     and `contactPhone` cleared afterwards, from a different editor on a
+ *     different page. Without this, that sequence floats a `wa.me/` link with no
+ *     number on every page of the shop, and a shopper who taps it waits for a
+ *     reply that was never requested. Degrading to "no bubble" is the truthful
+ *     failure. See design.md Decision 5.
+ *
+ * NOTHING IS WRITTEN BACK. Clearing a contact phone must not destroy the
+ * widget's configuration, because restoring the phone would not bring it back —
+ * deriving on read makes that recovery automatic.
+ *
+ * `contactPhone` is free text (`max(30)`, no normalisation — it is a display
+ * string that may legitimately be a landline), so it is normalised HERE before
+ * being handed over as a WhatsApp destination. A number that is not a valid BD
+ * mobile yields no destination at all, which then trips rule 2 above: better no
+ * bubble than one built from a landline.
+ *
+ * See openspec/changes/add-footer-credit-and-chat-widget.
+ */
+const resolveChatWidget = (
+    stored: Prisma.JsonValue | null | undefined,
+    contactPhone: string | null | undefined,
+): IChatWidget => {
+    const widget = {
+        ...DEFAULT_CHAT_WIDGET,
+        ...((stored as object | null) ?? {}),
+    } as IChatWidget;
+
+    /*
+     * BOTH candidates go through `normalizePhone`, not just the fallback.
+     *
+     * `chatWidgetSchema` normalises on write, but it only runs where
+     * `validateRequest` does — the HTTP route. A service call made directly
+     * (a verify script, a seed, a future internal caller) reaches the column
+     * without it, and a row hand-edited in the database never saw it at all.
+     * Normalising here means the SERVED number is canonical no matter how it
+     * was stored, so the storefront's `wa.me` link cannot be built from a value
+     * carrying separators — which fails silently, opening WhatsApp to nothing.
+     */
+    const explicit = widget.whatsappNumber?.trim();
+    const resolvedNumber = explicit
+        ? (normalizePhone(explicit) ?? explicit)
+        : (normalizePhone(contactPhone ?? "") ?? undefined);
+
+    const hasDestination =
+        widget.channel === "whatsapp"
+            ? Boolean(resolvedNumber)
+            : Boolean(widget.messengerUsername && widget.messengerUsername.trim() !== "");
+
+    return {
+        ...widget,
+        whatsappNumber: resolvedNumber,
+        enabled: widget.enabled && hasDestination,
+    };
+};
+
+/**
+ * The singleton as the ADMIN PANEL reads it: the stored row, with `chatWidget`
+ * resolved exactly as the public read resolves it.
+ *
+ * Separate from `getStoreSetting` above on purpose. That one is the raw row and
+ * has three INTERNAL callers — order placement, the checkout quote, and the
+ * landing page service — which need what is stored, not what is presented.
+ * Resolving in place there would leak a presentation rule into order
+ * processing, where a widget served disabled because a phone was cleared has no
+ * meaning at all.
+ *
+ * The admin needs the resolved value for one reason: its footer editor shows
+ * the merchant which number the bubble will actually dial. Serving the raw
+ * blank there would show an empty field beside a working widget, which is the
+ * drift rule 1 in `resolveChatWidget` exists to prevent — so both HTTP reads,
+ * admin and public, go through the same resolver and cannot disagree.
+ */
+const getAdminStoreSetting = async () => {
+    const row = await getStoreSetting();
+    return { ...row, chatWidget: resolveChatWidget(row.chatWidget, row.contactPhone) };
 };
 
 /**
@@ -524,6 +622,19 @@ const getPublicStoreSetting = async () => {
         mainNav: merge(stored?.mainNav, DEFAULT_PUBLIC_SETTINGS.mainNav),
         footerColumns: merge(stored?.footerColumns, DEFAULT_PUBLIC_SETTINGS.footerColumns),
         socialLinks: merge(stored?.socialLinks, DEFAULT_PUBLIC_SETTINGS.socialLinks),
+        /*
+         * Opted in ONE LINE AT A TIME like everything else in this projection —
+         * this stays an allow-list, and the widget is public only because the
+         * storefront cannot render a bubble it cannot read, before any session
+         * exists. Nothing secret is in the block; the rule that keeps it that
+         * way is on the column itself in StoreSetting.prisma.
+         *
+         * Not a `merge`: this needs the resolver, because a blank
+         * `whatsappNumber` means "use contactPhone" and a widget with no
+         * reachable destination must be served disabled. `merge` substitutes
+         * only on null and would serve both of those states as stored.
+         */
+        chatWidget: resolveChatWidget(stored?.chatWidget, stored?.contactPhone),
         announcementBar: merge(stored?.announcementBar, DEFAULT_PUBLIC_SETTINGS.announcementBar),
         /*
          * `merge` substitutes only on null/undefined, which is what this field
@@ -1072,6 +1183,7 @@ const updateStoreSetting = async (userId: string, payload: IUpdateStoreSettingPa
 
 export const StoreSettingService = {
     getStoreSetting,
+    getAdminStoreSetting,
     getPublicStoreSetting,
     getCheckoutConfig,
     checkoutConfigOf,

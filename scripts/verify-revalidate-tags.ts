@@ -36,7 +36,11 @@ import path from "node:path";
 
 const SERVER_ROOT = process.cwd();
 const BACKEND_TAGS_FILE = path.join(SERVER_ROOT, "src", "app", "utils", "revalidateStorefront.ts");
-const STOREFRONT_ROOT = path.join(SERVER_ROOT, "..", "frontend");
+// `nextjs`, not `frontend`: the storefront workspace was renamed and this path
+// was not carried over, so every check below silently reported "route not
+// found" instead of comparing the two tag sets — the exact drift this script
+// exists to catch was itself undetectable.
+const STOREFRONT_ROOT = path.join(SERVER_ROOT, "..", "nextjs");
 const REVALIDATE_ROUTE = path.join(STOREFRONT_ROOT, "src", "app", "api", "revalidate", "route.ts");
 const SERVICES_DIR = path.join(STOREFRONT_ROOT, "src", "services");
 const MODULE_DIR = path.join(SERVER_ROOT, "src", "app", "module");

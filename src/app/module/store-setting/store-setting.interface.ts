@@ -43,6 +43,38 @@ export interface ISocialLink {
     url: string;
 }
 
+/**
+ * Which service the storefront's floating chat bubble opens a conversation in.
+ *
+ * One at a time, not a set. Two bubbles is a decision pushed onto the visitor,
+ * and the merchant already knows which app they actually answer.
+ */
+export type IChatWidgetChannel = "whatsapp" | "messenger";
+
+/**
+ * The storefront's floating chat bubble.
+ *
+ * `channel` selects which destination is required — the other is ignored, but
+ * kept, so a merchant switching channels to compare does not have to retype the
+ * one they came back to.
+ *
+ * `whatsappNumber` is OPTIONAL in the stored sense and RESOLVED in the served
+ * one: blank means "use `contactPhone`", and every read applies that fallback
+ * before the value leaves the service. A consumer therefore never implements
+ * the fallback itself — see `resolveChatWidget` in store-setting.service.ts,
+ * and design.md Decision 4 in
+ * openspec/changes/add-footer-credit-and-chat-widget.
+ */
+export interface IChatWidget {
+    enabled: boolean;
+    channel: IChatWidgetChannel;
+    /** Stored as `+<digits>`; separators are normalised away on write. */
+    whatsappNumber?: string;
+    messengerUsername?: string;
+    /** The short label beside the bubble, e.g. "Chat With Us". */
+    greeting?: string;
+}
+
 /** See store-setting.validation.ts on what `source` binds a link to. */
 export type IAnnouncementLinkSource = "contactPhone" | "contactEmail";
 
@@ -312,17 +344,23 @@ export interface IUpdateStoreSettingPayload {
      * delivery free.
      */
     freeShippingThreshold?: number | null;
-    contactEmail?: string;
+    /**
+     * Nullable because `z.email()` refuses `''`, so null is the only way to say
+     * "remove the public email" under a partial upsert.
+     */
+    contactEmail?: string | null;
     contactPhone?: string;
     address?: string;
 
-    logoUrl?: string;
-    footerLogoUrl?: string;
     /**
-     * The browser-tab icon's address. Omitted means "leave unchanged"; `null`
-     * means "remove it", which is why this one is nullable where the two logo
-     * URLs above are not — see the note in store-setting.validation.ts.
+     * Omitted means "leave unchanged"; `null` means "remove the artwork". Both
+     * are nullable for the same reason `faviconUrl` below is — `z.url()` refuses
+     * the empty string, so without null a slot could be replaced but never
+     * cleared. See the note in store-setting.validation.ts.
      */
+    logoUrl?: string | null;
+    footerLogoUrl?: string | null;
+    /** The browser-tab icon's address. Nullable on the same rule as the two above. */
     faviconUrl?: string | null;
     siteNameAccent?: string;
     aboutText?: string;
@@ -341,7 +379,8 @@ export interface IUpdateStoreSettingPayload {
     headerLogoHeight?: number;
     footerLogoHeight?: number;
 
-    siteUrl?: string;
+    /** Nullable to clear: `z.url()` rejects `''`, so null is the only "remove it". */
+    siteUrl?: string | null;
     metaTitle?: string;
     metaDescription?: string;
 
@@ -357,6 +396,13 @@ export interface IUpdateStoreSettingPayload {
      * the whole list, because the array's order is the data.
      */
     perks?: IPerk[];
+
+    /**
+     * The storefront's floating chat bubble. Optional like the blobs above —
+     * omitting it leaves the column untouched — but a PRESENT value replaces
+     * the whole block, so a caller sends the full widget, not a slice of one.
+     */
+    chatWidget?: IChatWidget;
 
     checkoutConfig?: ICheckoutConfig;
     /**
