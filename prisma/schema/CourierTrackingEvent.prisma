@@ -27,7 +27,7 @@ model CourierTrackingEvent {
   status String?
 
   /// The human-readable line — "Package arrived at the sorting center".
-  trackingMessage String?
+  trackingMessage String? @db.Text
 
   /// Reported alongside a delivery-status change. Recorded rather than acted on:
   /// what the courier says it collected is worth keeping beside what the order

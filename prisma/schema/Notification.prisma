@@ -7,10 +7,10 @@ model Notification {
   type     NotificationType
   priority NotificationPriority @default(MEDIUM)
 
-  title   String
-  message String
+  title   String @db.VarChar(512)
+  message String @db.Text
 
-  link String?
+  link String? @db.VarChar(512)
 
   isRead Boolean   @default(false)
   readAt DateTime?

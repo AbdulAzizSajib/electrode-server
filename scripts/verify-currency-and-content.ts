@@ -152,10 +152,20 @@ const main = async () => {
     }
 
     {
-        const columns = await prisma.$queryRaw<{ column_name: string }[]>`
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'StoreSetting' AND column_name = 'defaultTaxRatePercent'
+        // COUNT rather than selecting the name, because information_schema
+        // returns its columns upper-cased in MySQL (COLUMN_NAME, not
+        // column_name) and a row shape that depends on the server's case
+        // handling is a trap. The count answers the question on its own.
+        //
+        // table_schema = DATABASE() matters on shared hosting: without it
+        // this would match a same-named table in somebody else's schema.
+        const [{ found }] = await prisma.$queryRaw<{ found: number | bigint }[]>`
+            SELECT COUNT(*) AS found FROM information_schema.COLUMNS
+            WHERE table_schema = DATABASE()
+              AND table_name = 'StoreSetting'
+              AND column_name = 'defaultTaxRatePercent'
         `;
+        const columns = { length: Number(found) };
         check(
             "the shop-wide fallback rate column is gone",
             columns.length === 0,

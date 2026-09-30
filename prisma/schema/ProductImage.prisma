@@ -17,8 +17,8 @@ model ProductImage {
   variantId String?
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
-  url     String
-  altText String?
+  url     String @db.VarChar(512)
+  altText String? @db.VarChar(512)
 
   sortOrder Int     @default(0)
   isPrimary Boolean @default(false)

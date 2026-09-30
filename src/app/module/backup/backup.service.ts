@@ -36,7 +36,7 @@ import { clientKeyOf, getTableOrder } from "./backup.tables";
  * The shape of this module is set by two constraints, both documented in
  * add-database-backup-restore design.md:
  *
- *   - There is no `pg_dump` on the host (cPanel shared hosting) and the
+ *   - There is no `mysqldump` on the host (cPanel shared hosting) and the
  *     codebase spawns no child processes, so the backup is produced by the
  *     application through Prisma (Decision 1).
  *   - A restore must be atomic, so it is one interactive transaction — and
@@ -86,7 +86,7 @@ const prunePendingRestores = () => {
 const getSchemaVersion = async (): Promise<string> => {
     const rows = await prisma.$queryRaw<{ migration_name: string }[]>`
         SELECT migration_name
-        FROM "_prisma_migrations"
+        FROM _prisma_migrations
         WHERE finished_at IS NOT NULL
         ORDER BY finished_at DESC
         LIMIT 1
@@ -402,7 +402,7 @@ const confirmRestore = async (userId: string, token: string): Promise<RestoreSum
                 /*
                  * The only transaction in this codebase with an explicit
                  * timeout — the other 27 use Prisma's 5s default. A restore
-                 * deletes and rewrites ~56 tables over a pooled Neon
+                 * deletes and rewrites ~56 tables over a pooled MySQL
                  * connection and cannot finish in five seconds, so the default
                  * would abort every restore partway (and roll it back, safely,
                  * but always). See design Decision 3.

@@ -1,13 +1,13 @@
 model Supplier {
   id String @id @default(uuid(7))
 
-  name        String
-  companyName String?
+  name        String @db.VarChar(255)
+  companyName String? @db.VarChar(512)
 
   email String?
   phone String?
 
-  address String?
+  address String? @db.VarChar(512)
   city    String?
   country String  @default("Bangladesh")
 

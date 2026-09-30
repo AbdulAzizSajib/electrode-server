@@ -263,14 +263,14 @@ const createPurchaseOrder = async (userId: string, payload: ICreatePurchaseOrder
  */
 const findPurchaseOrderIdsWithBalance = async () => {
     const rows = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT po."id"
-        FROM "PurchaseOrder" po
+        SELECT po.id
+        FROM PurchaseOrder po
         LEFT JOIN (
-            SELECT "purchaseOrderId", SUM("amount") AS paid
-            FROM "SupplierPayment"
-            GROUP BY "purchaseOrderId"
-        ) sp ON sp."purchaseOrderId" = po."id"
-        WHERE po."totalAmount" - COALESCE(sp.paid, 0) > 0
+            SELECT purchaseOrderId, SUM(amount) AS paid
+            FROM SupplierPayment
+            GROUP BY purchaseOrderId
+        ) sp ON sp.purchaseOrderId = po.id
+        WHERE po.totalAmount - COALESCE(sp.paid, 0) > 0
     `;
 
     return rows.map((row) => row.id);
@@ -698,7 +698,7 @@ const receivePurchaseOrder = async (
                 data: { receivedQuantity: { increment: receipt.quantity } },
             });
 
-            // Not a compound-unique upsert: Postgres treats NULL as distinct
+            // Not a compound-unique upsert: MySQL treats NULL as distinct
             // in unique indexes, so `variantId: null` can't be used in the
             // `where` of `Stock`'s `@@unique([warehouseId, productId,
             // variantId])` (same gotcha CartItem.prisma documents) — an

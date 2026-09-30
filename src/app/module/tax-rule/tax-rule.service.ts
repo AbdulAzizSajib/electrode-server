@@ -15,7 +15,7 @@ import { ICreateTaxRulePayload, IUpdateTaxRulePayload } from "./tax-rule.interfa
 const ensureNameIsFree = async (name: string, excludeId?: string) => {
     const clash = await prisma.taxRule.findFirst({
         where: {
-            name: { equals: name.trim(), mode: "insensitive" },
+            name: { equals: name.trim()},
             ...(excludeId ? { id: { not: excludeId } } : {}),
         },
         select: { name: true },

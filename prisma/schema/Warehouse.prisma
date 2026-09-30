@@ -1,10 +1,10 @@
 model Warehouse {
   id String @id @default(uuid(7))
 
-  name String
+  name String @db.VarChar(255)
   code String @unique
 
-  address String?
+  address String? @db.VarChar(512)
   city    String?
   country String  @default("Bangladesh")
 

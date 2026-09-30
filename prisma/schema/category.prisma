@@ -1,11 +1,11 @@
 model Category {
   id String @id @default(uuid(7))
 
-  name        String
+  name        String @db.VarChar(255)
   slug        String  @unique
-  description String?
-  image       String?
-  banner      String?
+  description String? @db.Text
+  image       String? @db.VarChar(512)
+  banner      String? @db.VarChar(512)
 
   status Boolean @default(true)
 
@@ -19,8 +19,8 @@ model Category {
   /// additive to each Product's primary `categoryId`/`category`).
   productCategories ProductCategory[]
 
-  seoTitle       String?
-  seoDescription String?
+  seoTitle       String? @db.VarChar(512)
+  seoDescription String? @db.Text
 
   sortOrder Int @default(0)
 

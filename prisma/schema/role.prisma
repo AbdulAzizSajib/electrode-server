@@ -1,7 +1,7 @@
 model Role {
   id          String  @id @default(uuid(7))
   name        String  @unique
-  description String?
+  description String? @db.Text
 
   users       User[]
   permissions RolePermission[]

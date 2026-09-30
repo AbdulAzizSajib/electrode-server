@@ -1,7 +1,7 @@
 model User {
   id                 String     @id
   name               String
-  email              String     @unique
+  email              String     @unique @db.VarChar(255)
   emailVerified      Boolean    @default(false)
   roleId             String     @default("customer")
   role               Role       @relation(fields: [roleId], references: [id])
@@ -12,7 +12,7 @@ model User {
   needPasswordChange Boolean    @default(false)
   isDeleted          Boolean    @default(false)
   deletedAt          DateTime?
-  image              String?
+  image              String? @db.VarChar(512)
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   sessions           Session[]
@@ -47,7 +47,7 @@ model Session {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   ipAddress String?
-  userAgent String?
+  userAgent String? @db.Text
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -62,12 +62,12 @@ model Account {
   providerId            String
   userId                String
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessToken           String?
-  refreshToken          String?
-  idToken               String?
+  accessToken           String? @db.Text
+  refreshToken          String? @db.Text
+  idToken               String? @db.Text
   accessTokenExpiresAt  DateTime?
   refreshTokenExpiresAt DateTime?
-  scope                 String?
+  scope                 String? @db.Text
   password              String?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -79,7 +79,7 @@ model Account {
 model Verification {
   id         String   @id
   identifier String
-  value      String
+  value      String @db.Text
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

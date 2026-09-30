@@ -69,21 +69,28 @@ const reconcileDenormalizedStock = async (
 
 /**
  * `reconcileDenormalizedStock` for many lines at once: the same rule — each
- * mirror becomes its ledger aggregate — in ONE statement however many lines
- * there are.
+ * mirror becomes its ledger aggregate — in at most TWO statements however many
+ * lines there are.
  *
  * Checkout used to reconcile line by line, two to four statements per distinct
  * line. Inside a transaction every one of those queues on the transaction's
  * single connection and is its own round trip to the database, while the Stock
  * rows checkout just decremented stay locked — a two-line cart spent six
- * statements here alone. The variant update rides in a data-modifying CTE,
- * which Postgres runs to completion whether or not the outer query reads it, so
- * a basket with no variants simply updates no variant rows.
+ * statements here alone.
+ *
+ * Two statements rather than one because MariaDB has no data-modifying CTE.
+ * Under PostgreSQL the variant update rode inside `WITH ... AS (UPDATE ...)`,
+ * which ran to completion whether or not the outer query read it. Splitting
+ * them costs nothing that matters: both run inside the caller's transaction,
+ * so they still commit or roll back together, and a basket with no variants
+ * skips the variant statement outright instead of updating no rows.
  *
  * Mirrors the per-line version exactly: a variant's total is filtered by its
  * product as well as its id, and the product total spans every row the product
  * holds, variants included. `updatedAt` is written explicitly because raw SQL
- * bypasses Prisma's `@updatedAt`, which the per-line `update` set implicitly.
+ * bypasses Prisma's `@updatedAt`, which the per-line `update` set implicitly;
+ * `NOW(3)` rather than `NOW()` because the column is DATETIME(3) and a bare
+ * `NOW()` would truncate every mirror write to the whole second.
  */
 const reconcileDenormalizedStockForLines = async (
     tx: Prisma.TransactionClient,
@@ -96,22 +103,27 @@ const reconcileDenormalizedStockForLines = async (
 
     if (productIds.length === 0) return;
 
-    await tx.$executeRaw`
-        WITH variant_mirrors AS (
-            UPDATE "ProductVariant" AS v
-            SET "stockQuantity" = COALESCE((
-                    SELECT SUM(s.quantity) FROM "Stock" AS s
-                    WHERE s."productId" = v."productId" AND s."variantId" = v.id
+    // Skipped entirely when the basket holds no variants. An empty IN () list
+    // is a syntax error in MySQL, so this guard is load-bearing, not cosmetic.
+    if (variantIds.length > 0) {
+        await tx.$executeRaw`
+            UPDATE ProductVariant v
+            SET v.stockQuantity = COALESCE((
+                    SELECT SUM(s.quantity) FROM Stock s
+                    WHERE s.productId = v.productId AND s.variantId = v.id
                 ), 0),
-                "updatedAt" = NOW()
-            WHERE v.id = ANY(${variantIds}::text[])
-        )
-        UPDATE "Product" AS p
-        SET "stockQuantity" = COALESCE((
-                SELECT SUM(s.quantity) FROM "Stock" AS s WHERE s."productId" = p.id
+                v.updatedAt = NOW(3)
+            WHERE v.id IN (${Prisma.join(variantIds)})
+        `;
+    }
+
+    await tx.$executeRaw`
+        UPDATE Product p
+        SET p.stockQuantity = COALESCE((
+                SELECT SUM(s.quantity) FROM Stock s WHERE s.productId = p.id
             ), 0),
-            "updatedAt" = NOW()
-        WHERE p.id = ANY(${productIds}::text[])
+            p.updatedAt = NOW(3)
+        WHERE p.id IN (${Prisma.join(productIds)})
     `;
 };
 
@@ -339,7 +351,7 @@ const reassignStockVariant = async (
         });
 
         // Same find-or-create as purchase-order receiving, and for the same
-        // reason: Postgres treats NULL as distinct in a unique index, so the
+        // reason: MySQL treats NULL as distinct in a unique index, so the
         // compound unique cannot be used in an upsert `where` here.
         const destination = await tx.stock.findFirst({
             where: {

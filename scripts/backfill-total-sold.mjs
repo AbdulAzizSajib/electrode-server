@@ -20,7 +20,7 @@
  * `node scripts/backfill-total-sold.mjs` cannot resolve the import.
  */
 import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 
 /**
@@ -36,7 +36,7 @@ const PAID_PAYMENT_STATUSES = ["PAID"];
 const dryRun = process.argv.includes("--dry-run");
 
 const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+    adapter: new PrismaMariaDb(process.env.DATABASE_URL),
 });
 
 const main = async () => {

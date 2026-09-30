@@ -9,8 +9,8 @@ model ReturnRequest {
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  reason      String
-  description String?
+  reason      String @db.Text
+  description String? @db.Text
 
   status ReturnStatus @default(REQUESTED)
 

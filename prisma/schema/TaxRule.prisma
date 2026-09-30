@@ -10,7 +10,7 @@
 model TaxRule {
   id String @id @default(uuid(7))
 
-  name String @unique
+  name String @unique @db.VarChar(255)
 
   type ChargeType @default(PERCENT)
 

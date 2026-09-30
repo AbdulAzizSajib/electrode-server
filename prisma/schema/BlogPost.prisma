@@ -12,7 +12,7 @@
 model BlogPost {
   id String @id @default(uuid(7))
 
-  title String
+  title String @db.VarChar(512)
 
   /// The storefront serves a post at `/blogs/<slug>`, a namespace of its own —
   /// so unlike Page.slug this is NOT checked against RESERVED_SLUGS, which
@@ -35,20 +35,20 @@ model BlogPost {
   body String @db.Text
 
   /// Which of the three URL columns below is meaningful. The invariant tying
-  /// them together lives in blog-post.validation.ts, since Postgres cannot
+  /// them together lives in blog-post.validation.ts, since MySQL cannot
   /// express "exactly these columns are set, given that one".
   mediaType BlogMediaType @default(NONE)
 
   /// Set when mediaType is IMAGE.
-  imageUrl String?
+  imageUrl String? @db.VarChar(512)
 
   /// Both set when mediaType is VIDEO. The thumbnail is never null for a video
   /// post: POST /uploads/video derives a frame when the merchant supplies no
   /// poster, so a listing always has a still to render rather than a black
   /// rectangle. Listings show the thumbnail; only the post's own page plays the
   /// video.
-  videoUrl          String?
-  videoThumbnailUrl String?
+  videoUrl          String? @db.VarChar(512)
+  videoThumbnailUrl String? @db.VarChar(512)
 
   /// The date printed on the card, and the sort key for "most recent". Authored
   /// by the merchant and defaulted to now — NOT a timestamp of when `status`
@@ -58,8 +58,8 @@ model BlogPost {
 
   /// Both optional. The storefront falls back to `title` and `excerpt`
   /// respectively, so a post is never published without usable metadata.
-  metaTitle       String?
-  metaDescription String?
+  metaTitle       String? @db.VarChar(512)
+  metaDescription String? @db.Text
 
   status BlogPostStatus @default(DRAFT)
 

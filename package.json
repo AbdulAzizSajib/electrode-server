@@ -1,7 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "Gadgets Ecommerce Backend - Node.js, Express, PostgreSQL, Prisma",
+  "description": "Ecommerce Backend - Node.js, Express, MySQL/MariaDB, Prisma",
   "main": "dist/app/server.js",
   "scripts": {
     "start": "node dist/app/server.js",
@@ -17,13 +17,12 @@
     "pull": "prisma db pull",
     "backfill:total-sold": "tsx scripts/backfill-total-sold.mjs",
     "db:latency": "node scripts/db-latency.mjs",
-    "db:copy": "node scripts/migrate-region.mjs",
     "seed:demo-landing-page": "tsx scripts/seed-demo-landing-page.ts"
   },
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@prisma/adapter-pg": "7.3.0",
+    "@prisma/adapter-mariadb": "7.3.0",
     "@prisma/client": "7.3.0",
     "better-auth": "^1.4.18",
     "cloudinary": "^2.9.0",
@@ -34,9 +33,9 @@
     "express": "^5.2.1",
     "http-status": "^2.1.0",
     "jsonwebtoken": "^9.0.3",
+    "mariadb": "3.4.5",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
-    "pg": "^8.18.0",
     "qs": "^6.14.1",
     "zod": "^4.3.6"
   },
@@ -51,7 +50,6 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^25.2.0",
     "@types/nodemailer": "^7.0.9",
-    "@types/pg": "^8.16.0",
     "@types/qs": "^6.14.0",
     "@types/uuid": "^11.0.0",
     "eslint": "^9.39.2",

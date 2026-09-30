@@ -312,7 +312,7 @@ const createLandingPage = async (
             ...normaliseClearableText(payload),
             slug,
             /*
-             * Seeded here rather than defaulted in Postgres so the Bangla
+             * Seeded here rather than defaulted in MySQL so the Bangla
              * defaults live in one readable place beside the rest of the
              * module's content, and so a merchant editing them later is editing
              * ordinary stored content rather than fighting a column default.

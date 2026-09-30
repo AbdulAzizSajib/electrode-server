@@ -35,7 +35,7 @@ const generateGuestToken = () => crypto.randomBytes(24).toString("hex");
  * An upsert with an empty `update` cannot become a native
  * `INSERT … ON CONFLICT`, so Prisma emulates it: BEGIN, three SELECTs, COMMIT —
  * five round trips to find a cart that almost always already exists. Every
- * database call here crosses to Neon in ap-southeast-1, so on a logged-in cart
+ * database call here used to cross to Neon in ap-southeast-1, so on a logged-in cart
  * request that emulation alone cost more than the rest of the operation.
  *
  * `find` runs first and is the whole cost in the common case. When two first
@@ -312,7 +312,7 @@ const addItem = async (
     const quantityToAdd = payload.quantity ?? 1;
 
     // find-or-increment: an explicit lookup, not a blind insert relying on
-    // the DB unique constraint — Postgres treats NULL as distinct in unique
+    // the DB unique constraint — MySQL treats NULL as distinct in unique
     // indexes, so two rows with the same cartId+productId and variantId
     // NULL would NOT collide there (see CartItem.prisma).
     const existingItem = matchingItem?.cartId === cartId ? matchingItem : null;

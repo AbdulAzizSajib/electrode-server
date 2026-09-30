@@ -43,7 +43,7 @@ const ensureValuesAreDistinct = (values: IAttributeValueInput[]) => {
 const ensureNameIsFree = async (name: string, excludeId?: string) => {
     const clash = await prisma.attribute.findFirst({
         where: {
-            name: { equals: name.trim(), mode: "insensitive" },
+            name: { equals: name.trim()},
             ...(excludeId ? { id: { not: excludeId } } : {}),
         },
         select: { id: true, name: true },
@@ -265,7 +265,7 @@ const ensureLabelIsFree = async (attributeId: string, label: string, excludeId?:
     const clash = await prisma.attributeValue.findFirst({
         where: {
             attributeId,
-            label: { equals: label.trim(), mode: "insensitive" },
+            label: { equals: label.trim()},
             ...(excludeId ? { id: { not: excludeId } } : {}),
         },
         select: { label: true },

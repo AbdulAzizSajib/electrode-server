@@ -7,13 +7,13 @@ model Banner {
   // ---- IMAGE type er jonno ----
   /// Required for an IMAGE banner (enforced in banner.validation.ts). Nullable
   /// because a DYNAMIC banner can render over a bgColor with no artwork at all.
-  image       String?
-  mobileImage String?
+  image       String? @db.VarChar(512)
+  mobileImage String? @db.VarChar(512)
 
   // ---- DYNAMIC type er jonno (type = DYNAMIC hole use hobe) ----
-  title       String?
-  subtitle    String?
-  description String?
+  title       String? @db.VarChar(512)
+  subtitle    String? @db.VarChar(512)
+  description String? @db.Text
 
   /// Only meaningful when `productId` is null. A product-linked banner always
   /// serves the linked Product's live offerPrice/sellingPrice, so these columns
@@ -27,7 +27,7 @@ model Banner {
   textColor  String?
 
   // ---- Link / target ----
-  link      String? // fallback manual link
+  link      String? // fallback manual link @db.VarChar(512)
   productId String?
   product   Product? @relation(fields: [productId], references: [id])
 
@@ -39,7 +39,7 @@ model Banner {
   /// permitted and would then need a uniqueness constraint to forbid it again.
   ///
   /// ONLY A `MID` BANNER MAY BE ASSIGNED — enforced in banner.service.ts, not
-  /// here, since Postgres cannot express "this column may only be set when that
+  /// here, since MySQL cannot express "this column may only be set when that
   /// column holds a particular value". The hero placements are owned by the
   /// Home Slider manager with its own capacity rules (hero-slots.ts); letting a
   /// group claim one would mean the same record edited from two surfaces under

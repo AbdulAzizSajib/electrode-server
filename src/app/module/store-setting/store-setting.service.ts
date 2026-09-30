@@ -1094,7 +1094,7 @@ const resolveThemeFonts = async (
             const family = String((value as { family: unknown }).family);
 
             const font = await tx.font.findFirst({
-                where: { family: { equals: family, mode: "insensitive" } },
+                where: { family: { equals: family} },
             });
 
             if (!font) {

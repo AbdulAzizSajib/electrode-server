@@ -9,7 +9,7 @@ model ReturnItem {
 
   quantity Int
 
-  reason String?
+  reason String? @db.Text
 
   createdAt DateTime @default(now())
 

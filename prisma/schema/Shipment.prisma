@@ -48,7 +48,7 @@ model Shipment {
   /// Stored rather than recomputed on read. Reconciling a dispatch whose
   /// outcome was never confirmed means asking "what did we send", and a value
   /// derived at read time cannot answer that if the derivation ever changes.
-  courierInvoice String?
+  courierInvoice String? @db.VarChar(512)
 
   /// The courier's `delivery_status` verbatim.
   ///
@@ -95,6 +95,6 @@ model Shipment {
 /// matters (one consignment, one order, per courier) and makes webhook lookup
 /// match on both fields. With one provider registered this is a no-op.
 ///
-/// Postgres treats NULLs as distinct, so hand-entered shipments — which all
+/// MySQL treats NULLs as distinct, so hand-entered shipments — which all
 /// carry a null `consignmentId` — remain unconstrained by this, exactly as they
 /// were under the old single-column unique.

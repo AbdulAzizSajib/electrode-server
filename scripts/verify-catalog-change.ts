@@ -75,11 +75,11 @@ const main = async () => {
 
         // Every variant selection points at a live AttributeValue — a dangling
         // one is exactly what would make a product unrenderable.
-        const danglingSelections = await prisma.$queryRaw<{ count: bigint }[]>`
-            SELECT COUNT(*)::bigint AS count
-            FROM "ProductVariantOptionValue" pvov
-            LEFT JOIN "AttributeValue" av ON av."id" = pvov."valueId"
-            WHERE av."id" IS NULL
+        const danglingSelections = await prisma.$queryRaw<{ count: number | bigint }[]>`
+            SELECT COUNT(*) AS count
+            FROM ProductVariantOptionValue pvov
+            LEFT JOIN AttributeValue av ON av.id = pvov.valueId
+            WHERE av.id IS NULL
         `;
         check(
             "9.4 no variant selection points at a value that no longer exists",

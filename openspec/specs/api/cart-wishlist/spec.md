@@ -22,7 +22,7 @@ The login and registration endpoints SHALL merge an active guest cart into the c
 - **THEN** the guest cart's items are merged into their customer cart (quantities combined on matching product/variant, per `commerce/cart` spec), and the guest cart stops being reachable by its former token
 
 ### Requirement: CartItem quantity changes never produce duplicate rows
-Adding a product/variant already in the cart SHALL increment the existing `CartItem`, never insert a second row — closing the gap flagged in `docs/database-erd.html`'s Known Gaps (Postgres NULL-distinctness on `variantId`).
+Adding a product/variant already in the cart SHALL increment the existing `CartItem`, never insert a second row — closing the gap flagged in `docs/database-erd.html`'s Known Gaps (MySQL NULL-distinctness on `variantId`).
 
 #### Scenario: Re-adding a simple (non-variant) product already in the cart
 - **WHEN** a shopper adds a product with no variant that is already in their cart

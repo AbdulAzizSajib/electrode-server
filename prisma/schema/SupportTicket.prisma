@@ -6,8 +6,8 @@ model SupportTicket {
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  subject     String
-  description String
+  subject     String @db.VarChar(512)
+  description String @db.Text
 
   status   TicketStatus   @default(OPEN)
   priority TicketPriority @default(MEDIUM)

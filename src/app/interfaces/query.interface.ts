@@ -50,7 +50,6 @@ export interface PrismaStringFilter{
     contains ?: string;
     startsWith ?: string;
     endsWith ?: string;
-    mode ?: 'insensitive' | 'default';
     equals ?: string;
     in ?: string[];
     notIn ?: string[];

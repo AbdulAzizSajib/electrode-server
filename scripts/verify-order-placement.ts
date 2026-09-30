@@ -5,7 +5,7 @@
  * `verify-checkout-totals.ts` covers the pricing arithmetic and
  * `verify-manual-order.ts` the staff path. Nothing covered the ordinary one: a
  * guest with a cart pressing "Place order". That path is also the longest
- * request in the API, and every Prisma call in it crosses to Neon in
+ * request in the API, and every Prisma call in it used to cross to Neon in
  * ap-southeast-1, so its latency is roughly (sequential round trips × distance
  * to the database). This script pins the behaviour a round-trip reduction must
  * not change, then prints the count so a regression in either shows up here.
@@ -27,34 +27,28 @@
  * Run with: npx tsx scripts/verify-order-placement.ts
  */
 import crypto from "crypto";
-import pg from "pg";
+import { install, resetClock, tableOf } from "./mariadb-query-tap";
 
 /* ---------------------------------------------------------------------- *
  * Round-trip counting at the driver, below Prisma, so BEGIN/COMMIT and
- * every nested-include query count. `pg`'s pool calls `client.query` with a
- * callback, so the callback form is wrapped as well as the promise form.
+ * every nested-include query count. See mariadb-query-tap.ts for why the
+ * driver is tapped at createPool rather than at a prototype.
+ *
+ * Installed at module scope so it is in place before the dynamic import of
+ * `../src/app/lib/prisma` in main() builds the pool.
  * ---------------------------------------------------------------------- */
 let starts: number[] = [];
 let statements: { at: number; sql: string }[] = [];
-let clock = 0;
-const originalQuery = pg.Client.prototype.query as (...args: unknown[]) => unknown;
-(pg.Client.prototype as unknown as { query: (...args: unknown[]) => unknown }).query = function (
-    this: pg.Client,
-    ...args: unknown[]
-) {
-    const at = performance.now() - clock;
+install(({ at, sql }) => {
     starts.push(at);
-    const first = args[0] as string | { text?: string } | undefined;
-    statements.push({ at, sql: typeof first === "string" ? first : (first?.text ?? "") });
-    return originalQuery.apply(this, args);
-};
+    statements.push({ at, sql });
+});
 
 /** With TRACE=1, the placement's statements are printed in order, by table. */
 const printTrace = () => {
     for (const { at, sql } of statements) {
         const flat = sql.replace(/\s+/g, " ");
-        const table = flat.match(/(?:FROM|INTO|UPDATE) "(?:public"\.")?(\w+)"/i)?.[1] ?? "";
-        console.log(`  +${String(Math.round(at)).padStart(5)}ms  ${flat.split(" ")[0]} ${table}`);
+        console.log(`  +${String(Math.round(at)).padStart(5)}ms  ${flat.split(" ")[0]} ${tableOf(flat)}`);
     }
 };
 
@@ -74,9 +68,13 @@ const sequentialRounds = (at: number[]) => {
 const measure = async <T>(fn: () => Promise<T>) => {
     starts = [];
     statements = [];
-    clock = performance.now();
+    // The tap owns the clock that `at` is measured against, so it is reset
+    // there rather than here - the two must agree or `during` below filters
+    // against the wrong origin.
+    resetClock();
+    const startedAt = performance.now();
     const result = await fn();
-    const ms = performance.now() - clock;
+    const ms = performance.now() - startedAt;
     const during = starts.filter((start) => start <= ms);
     return { result, ms: Math.round(ms), queries: during.length, rounds: sequentialRounds(during) };
 };

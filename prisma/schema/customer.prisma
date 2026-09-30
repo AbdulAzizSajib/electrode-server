@@ -19,7 +19,7 @@ model Customer {
   /// same number must never occupy two rows or the merge silently fails.
   /// Still nullable: customers created from a User account may have none.
   phone  String? @unique
-  avatar String?
+  avatar String? @db.VarChar(512)
 
   status CustomerStatus @default(ACTIVE)
 

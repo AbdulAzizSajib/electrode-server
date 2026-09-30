@@ -26,7 +26,7 @@ import {
 /**
  * THE ONLY GATE on LandingPage's Json columns.
  *
- * Postgres cannot constrain a jsonb column's shape, so every invariant those
+ * MySQL cannot constrain a JSON column's shape, so every invariant those
  * columns carry lives here and nowhere else. Every write must go through these
  * schemas and no code path may persist an unvalidated value — the same contract
  * store-setting.validation.ts holds for StoreSetting's Json columns, stated for
@@ -385,7 +385,7 @@ const facebookPixelIdSchema = z
  * `.strict()` on the entry, for what it costs and buys. An unrecognised field
  * fails the whole save rather than being silently dropped - which means the
  * admin cannot start sending a new field before this schema declares it. That
- * is the correct trade for a column Postgres does not check: a stripped field
+ * is the correct trade for a column MySQL does not check: a stripped field
  * is one the caller believes it stored.
  *
  * The CUSTOM-only fields are declared on the one entry shape rather than in a

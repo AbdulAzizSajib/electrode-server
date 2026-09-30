@@ -1,24 +1,26 @@
 /**
- * Search-as-you-type: that it finds exactly what it always found, and that it
- * can use the trigram indexes to find it.
+ * Search-as-you-type: that it finds what the spec says it finds, and nothing
+ * more.
  *
- * `searchProducts` was rewritten so its WHERE clause is index-servable. The old
- * predicates — `lower(col) LIKE '%' || lower(term) || '%'`, ORed across Product
- * and a joined Brand — could not use any index, so every keystroke scanned the
- * whole catalog even with pg_trgm indexes present. The rewrite must not change
- * a single result, so the central assertion here is not "results look right"
- * but "results are IDENTICAL to the old query": same products, same order, for
- * every kind of term — exact, prefix, substring, SKU, brand, description,
- * misspelled, mixed case, LIKE metacharacters and Bangla.
+ * ── What changed, and why this script was rewritten ───────────────────────
  *
- * The old query is frozen below as the reference. It is deliberately a copy,
- * not an import: it is the behaviour being preserved, and it must not move
- * when the implementation does.
+ * Under PostgreSQL this file asserted two things that no longer exist. First,
+ * that a rewritten query returned results IDENTICAL to a frozen copy of its
+ * predecessor — a useful assertion while the change was meant to preserve
+ * behaviour exactly, and a meaningless one now that dropping trigram matching
+ * has deliberately changed it. Second, that the query could use four
+ * `gin_trgm_ops` indexes, checked by running it under EXPLAIN with
+ * `enable_seqscan` and `enable_indexscan` off. Both the indexes and those
+ * planner switches are PostgreSQL-only, and MariaDB has no equivalent of
+ * either, so that half is gone rather than translated: there is no index left
+ * to prove the use of, and the scan is now an accepted cost (see
+ * `searchProducts` in product.service.ts).
  *
- * The index check runs the implementation's own SQL (captured as it executes)
- * under EXPLAIN with sequential scans disabled. On a catalog this small the
- * planner prefers a scan whatever indexes exist, so disabling it is how to ask
- * "CAN this query use the indexes?" rather than "does it at this size?".
+ * What replaces them is an assertion against the contract itself — the
+ * scenarios in `openspec/specs/api/catalog/spec.md`, "Product search matches on
+ * literal substrings, not approximate spelling". That is a stronger thing to
+ * check than equality with an older implementation, because it is what the
+ * endpoint actually promises.
  *
  * Creates `__vsearch_`-prefixed products and a brand, deletes them in the
  * finally. Run with: npx tsx scripts/verify-product-search.ts
@@ -36,74 +38,8 @@ const check = (label: string, ok: boolean, detail: string) => {
 
 const MARKER = "__vsearch_";
 
-const w = (value: number) => Prisma.raw(`${value}::numeric`);
-
-/** The search query as it stood before the index-servable rewrite. Frozen. */
-const referenceSearch = async (term: string): Promise<string[]> => {
-    const trimmed = term.trim();
-    if (trimmed.length === 0) return [];
-
-    const rows = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT
-            p.id,
-            GREATEST(
-                CASE
-                    WHEN lower(p.name) = lower(${trimmed}) THEN ${w(1.0)}
-                    WHEN lower(p.name) LIKE lower(${trimmed}) || '%' THEN ${w(0.9)}
-                    WHEN lower(p.name) LIKE '%' || lower(${trimmed}) || '%' THEN ${w(0.8)}
-                    ELSE 0::numeric
-                END,
-                CASE WHEN lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${w(0.75)} ELSE 0::numeric END,
-                CASE WHEN lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${w(0.7)} ELSE 0::numeric END,
-                CASE WHEN lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${w(0.5)} ELSE 0::numeric END,
-                similarity(p.name, ${trimmed})::numeric * ${w(0.4)},
-                similarity(COALESCE(b.name, ''), ${trimmed})::numeric * ${w(0.35)}
-            ) AS score,
-            p.name
-        FROM "Product" p
-        LEFT JOIN "Brand" b ON b.id = p."brandId"
-        WHERE p.status = ${ProductStatus.ACTIVE}::"ProductStatus"
-          AND (
-                lower(p.name) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
-             OR lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
-             OR p.name % ${trimmed}
-             OR COALESCE(b.name, '') % ${trimmed}
-          )
-        ORDER BY score DESC, p.name ASC
-        LIMIT ${SEARCH_RESULT_CAP}
-    `;
-
-    return rows.map((row) => row.id);
-};
-
-const TERMS = [
-    "earbuds",
-    "EARBUDS",
-    `${MARKER}wireless earbuds pro`,
-    `${MARKER}earb`,
-    "vs-eb",
-    "VS_CASE",
-    "acme",
-    "Acme Audio",
-    "noise cancel",
-    "earbds",
-    "speakr",
-    "চার্জার",
-    "দ্রুত",
-    "100%",
-    "under_score",
-    "_",
-    "%",
-    "mAh",
-    "bank",
-    "a",
-    "zzz-no-such-thing",
-];
+/** Slugs are the stable handle on the probe rows; ids are generated per run. */
+const idsOf = async (term: string) => (await ProductService.searchProducts(term)).map((r) => r.id);
 
 const main = async () => {
     const category = await prisma.category.findFirst({ select: { id: true } });
@@ -128,120 +64,193 @@ const main = async () => {
                 },
             });
 
-        const [, , , , , hiddenProduct] = await Promise.all([
-            product("earbuds-pro", {
-                name: `${MARKER}Wireless Earbuds Pro`,
-                sku: "VS-EB-100",
-                brandId: brand.id,
-                description: "Noise cancelling earbuds with long battery life",
-            }),
-            product("earbuds-lite", {
-                name: `${MARKER}Earbuds Lite`,
-                sku: "VS-EB-050",
-                description: "Budget earbuds",
-            }),
-            product("speaker", {
-                name: `${MARKER}Bluetooth Speaker`,
-                sku: "VS-SPK-01",
-                brandId: brand.id,
-                description: "Portable speaker, 20W",
-                shortDescription: "Loud and small",
-            }),
-            product("charger-bn", {
-                name: `${MARKER}চার্জার ফাস্ট`,
-                sku: "VS-CHG-BN",
-                description: "দ্রুত চার্জিং",
-            }),
-            product("case", {
-                name: `${MARKER}100% Cotton Case`,
-                sku: "VS_CASE_1",
-                description: "case with an under_score",
-            }),
-            product("inactive", {
-                name: `${MARKER}Hidden Earbuds`,
-                sku: "VS-EB-999",
-                status: ProductStatus.DRAFT,
-            }),
-            product("bank", {
-                name: `${MARKER}Power Bank 10000mAh`,
-                brandId: brand.id,
-            }),
-        ]);
-
-        /* ---------------- identical results, term by term ---------------- */
-        for (const term of TERMS) {
-            const [reference, actual] = await Promise.all([
-                referenceSearch(term),
-                ProductService.searchProducts(term).then((rows) => rows.map((row) => row.id)),
+        const [earbudsPro, , speaker, chargerBn, cottonCase, hiddenProduct, powerBank] =
+            await Promise.all([
+                product("earbuds-pro", {
+                    name: `${MARKER}Wireless Earbuds Pro`,
+                    sku: "VS-EB-100",
+                    brandId: brand.id,
+                    description: "Noise cancelling earbuds with long battery life",
+                }),
+                product("earbuds-lite", {
+                    name: `${MARKER}Earbuds Lite`,
+                    sku: "VS-EB-050",
+                    description: "Budget earbuds",
+                }),
+                product("speaker", {
+                    name: `${MARKER}Bluetooth Speaker`,
+                    sku: "VS-SPK-01",
+                    brandId: brand.id,
+                    description: "Portable speaker, 20W",
+                    shortDescription: "Loud and small",
+                }),
+                product("charger-bn", {
+                    name: `${MARKER}চার্জার ফাস্ট`,
+                    sku: "VS-CHG-BN",
+                    description: "দ্রুত চার্জিং",
+                }),
+                product("case", {
+                    name: `${MARKER}100% Cotton Case`,
+                    sku: "VS_CASE_1",
+                    description: "case with an under_score",
+                }),
+                product("inactive", {
+                    name: `${MARKER}Hidden Earbuds`,
+                    sku: "VS-EB-999",
+                    status: ProductStatus.DRAFT,
+                }),
+                product("bank", {
+                    name: `${MARKER}Power Bank 10000mAh`,
+                    brandId: brand.id,
+                }),
             ]);
-            const same =
-                reference.length === actual.length && reference.every((id, i) => id === actual[i]);
-            check(`"${term}" returns what it always did`, same, `${actual.length} result(s)${same ? "" : `, reference had ${reference.length}`}`);
-        }
 
-        // Other probes may match on the shared prefix; what matters is that the
-        // DRAFT product, an exact name match, is not among them.
-        const hidden = await ProductService.searchProducts(`${MARKER}Hidden Earbuds`);
+        /* ---- Scenario: correctly spelled partial word matches ---- */
+        const partial = await idsOf("Earbuds");
         check(
-            "a non-ACTIVE product is never suggested",
-            !hidden.some((row) => row.id === hiddenProduct.id),
-            `${hidden.length} result(s), draft ${hidden.some((row) => row.id === hiddenProduct.id) ? "present" : "absent"}`,
+            "a substring of the name matches",
+            partial.includes(earbudsPro.id),
+            `${partial.length} result(s), earbuds-pro ${partial.includes(earbudsPro.id) ? "found" : "MISSING"}`,
         );
 
-        /* ---------------- the query can use the indexes ---------------- */
+        /* ---- Scenario: case is ignored ---- */
+        // Both directions, because a collation that folded only one way would
+        // still pass a single-cased probe.
+        const upper = await idsOf("EARBUDS");
+        const lower = await idsOf("earbuds");
+        const sameSet =
+            upper.length === lower.length && upper.every((id, i) => id === lower[i]);
+        check(
+            "case is folded by the collation, both directions",
+            sameSet && upper.length > 0,
+            `EARBUDS -> ${upper.length}, earbuds -> ${lower.length}`,
+        );
+
+        const brandUpper = await idsOf("ACME");
+        check(
+            "a brand name matches regardless of case",
+            brandUpper.includes(speaker.id),
+            `${brandUpper.length} result(s) for ACME`,
+        );
+
+        /* ---- Scenario: Bangla term matches a Bangla name ---- */
+        // This is also the charset assertion: if the column were latin1 the
+        // stored text would be mojibake and this would find nothing.
+        const bangla = await idsOf("চার্জার");
+        check(
+            "a Bangla term matches a Bangla product name",
+            bangla.includes(chargerBn.id),
+            `${bangla.length} result(s) for চার্জার`,
+        );
+
+        const banglaDescription = await idsOf("দ্রুত");
+        check(
+            "a Bangla term matches a Bangla description",
+            banglaDescription.includes(chargerBn.id),
+            `${banglaDescription.length} result(s) for দ্রুত`,
+        );
+
+        /* ---- Scenario: a misspelling returns nothing ---- */
+        // The behaviour change this whole migration accepted: pg_trgm used to
+        // rescue these. Asserted rather than merely noted, so that a future
+        // change that silently reintroduces fuzzy matching is caught here.
+        for (const typo of ["earbds", "speakr", "zzz-no-such-thing"]) {
+            const rows = await idsOf(typo);
+            check(
+                `"${typo}" matches nothing — fuzzy search is gone by design`,
+                rows.length === 0,
+                `${rows.length} result(s)`,
+            );
+        }
+
+        /* ---- Scenario: only active products are searchable ---- */
+        const hidden = await idsOf(`${MARKER}Hidden Earbuds`);
+        check(
+            "a non-ACTIVE product is never suggested",
+            !hidden.includes(hiddenProduct.id),
+            `${hidden.length} result(s), draft ${hidden.includes(hiddenProduct.id) ? "PRESENT" : "absent"}`,
+        );
+
+        /* ---- Scenario: an empty term is not a search ---- */
+        for (const empty of ["", "   "]) {
+            const rows = await idsOf(empty);
+            check(
+                `"${empty}" short-circuits to no results`,
+                rows.length === 0,
+                `${rows.length} result(s)`,
+            );
+        }
+
+        /* ---- LIKE metacharacters are matched literally ---- */
         /*
-         * Captured by wrapping `$queryRaw` for one call, then put back EXACTLY
-         * as it was — an own property removed rather than overwritten. A
-         * leftover own property bound to the base client is inherited by the
-         * transaction client below, which then runs its queries OUTSIDE the
-         * transaction, where `SET LOCAL` does not apply.
+         * A shopper typing `%` means the character, not "anything". Before the
+         * MySQL port the term went into the pattern unescaped, so `%` matched
+         * the entire catalogue; `escapeLikeWildcards` is what closes that, and
+         * these two probes are the only thing standing between it and a
+         * regression.
          */
-        let captured: Prisma.Sql | null = null;
-        const client = prisma as unknown as Record<string, unknown>;
-        const hadOwn = Object.prototype.hasOwnProperty.call(client, "$queryRaw");
-        const original = client.$queryRaw as (...args: unknown[]) => unknown;
-        client.$queryRaw = (strings: unknown, ...values: unknown[]) => {
-            captured = Prisma.sql(strings as TemplateStringsArray, ...values);
-            return original.call(prisma, strings, ...values);
-        };
-        try {
-            await ProductService.searchProducts("earbuds");
-        } finally {
-            if (hadOwn) client.$queryRaw = original;
-            else delete client.$queryRaw;
-        }
+        const percent = await idsOf("100%");
+        check(
+            "a literal % matches only the product containing it",
+            percent.includes(cottonCase.id) && !percent.includes(speaker.id),
+            `${percent.length} result(s) for 100%`,
+        );
 
-        if (!captured) {
-            check("the search SQL was captured for EXPLAIN", false, "no $queryRaw call observed");
-        } else {
-            const sql: Prisma.Sql = captured;
-            /*
-             * Both plain scans off, bitmap scans left on. With only
-             * `enable_seqscan` off the planner walks the primary-key index end
-             * to end and filters — a full scan under another name — so the
-             * question "can it use the trigram indexes?" needs that door
-             * closed too.
-             */
-            const plan = await prisma.$transaction(async (tx) => {
-                await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
-                await tx.$executeRawUnsafe("SET LOCAL enable_indexscan = off");
-                const rows = await tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(
-                    `EXPLAIN ${sql.text}`,
-                    ...sql.values,
-                );
-                return rows.map((row) => row["QUERY PLAN"]).join("\n");
-            });
+        const bareWildcard = await idsOf("%");
+        check(
+            "a bare % is not a wildcard",
+            bareWildcard.length === 0 || bareWildcard.every((id) => id === cottonCase.id),
+            `${bareWildcard.length} result(s) for %`,
+        );
 
-            for (const index of [
-                "Product_name_trgm_idx",
-                "Product_sku_trgm_idx",
-                "Product_description_trgm_idx",
-                "Brand_name_trgm_idx",
-            ]) {
-                check(`search can use ${index}`, plan.includes(index), plan.includes(index) ? "in the plan" : "absent from the plan");
-            }
-            if (process.env.PLAN) console.log(plan);
-        }
+        const underscore = await idsOf("under_score");
+        check(
+            "a literal _ matches only the product containing it",
+            underscore.includes(cottonCase.id),
+            `${underscore.length} result(s) for under_score`,
+        );
+
+        /* ---- Scenario: ranking, strongest match first ---- */
+        // An exact name beats a mere substring. Probed with two products that
+        // both contain "Earbuds" where only one is named exactly that.
+        const ranked = await ProductService.searchProducts(`${MARKER}Earbuds Lite`);
+        check(
+            "an exact name match ranks first",
+            ranked.length > 0 && ranked[0].slug === `${MARKER}earbuds-lite`,
+            ranked.length > 0 ? `first is ${ranked[0].slug}` : "no results",
+        );
+
+        // SKU and brand are matchable at all, which the scoring tiers imply.
+        const bySku = await idsOf("VS-SPK-01");
+        check("a SKU matches", bySku.includes(speaker.id), `${bySku.length} result(s)`);
+
+        const byDescription = await idsOf("Noise cancelling");
+        check(
+            "a description matches",
+            byDescription.includes(earbudsPro.id),
+            `${byDescription.length} result(s)`,
+        );
+
+        /* ---- Determinism: the same term twice gives the same order ---- */
+        const first = await idsOf("earbuds");
+        const second = await idsOf("earbuds");
+        check(
+            "repeated identical requests return the same order",
+            first.length === second.length && first.every((id, i) => id === second[i]),
+            `${first.length} result(s), ${first.every((id, i) => id === second[i]) ? "stable" : "REORDERED"}`,
+        );
+
+        /* ---- The cap is enforced server-side ---- */
+        const capped = await ProductService.searchProducts(MARKER, 999);
+        check(
+            "the result cap is enforced whatever the client asks for",
+            capped.length <= SEARCH_RESULT_CAP,
+            `${capped.length} result(s), cap ${SEARCH_RESULT_CAP}`,
+        );
+
+        // Referenced so an unused-binding lint cannot quietly drop a fixture
+        // that the assertions above depend on existing.
+        void powerBank;
     } finally {
         await prisma.product.deleteMany({ where: { slug: { startsWith: MARKER } } });
         await prisma.brand.deleteMany({ where: { slug: { startsWith: MARKER } } });

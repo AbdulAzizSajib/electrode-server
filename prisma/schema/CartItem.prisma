@@ -15,14 +15,15 @@ model CartItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// NOTE: PostgreSQL treats NULL as distinct from NULL in unique
+  /// NOTE: MySQL treats NULL as distinct from NULL in unique
   /// constraints, so this does NOT prevent two rows for the same
   /// cartId+productId when variantId is null (simple, non-variant
   /// products). "At most one line item per product/variant combination"
-  /// (see specs/commerce/cart/spec.md) must additionally be enforced by
-  /// the application layer (e.g. find-or-increment instead of blind
-  /// insert) until/unless a NULLS NOT DISTINCT index is added via a raw
-  /// migration edit.
+  /// (see specs/commerce/cart/spec.md) must therefore be enforced by the
+  /// application layer (e.g. find-or-increment instead of blind insert).
+  /// Permanently, not provisionally: Postgres could have closed this with
+  /// a NULLS NOT DISTINCT index, but MySQL has no equivalent, so the
+  /// application is the only place the rule can live.
   @@unique([cartId, productId, variantId])
   @@index([cartId])
   @@index([productId])

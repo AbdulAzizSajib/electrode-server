@@ -683,7 +683,7 @@ check(
     check(
         "a non-boolean flag is rejected",
         !catalogConfigSchema.safeParse({ ...DEFAULT_CATALOG_CONFIG, showCompare: "yes" }).success,
-        "Postgres cannot constrain a JSON column, so Zod is the only gate",
+        "MySQL cannot constrain a JSON column, so Zod is the only gate",
     );
 
     check(
@@ -754,7 +754,7 @@ check(
     );
 
     /*
-     * Postgres cannot express this range — the columns are plain Int — so this
+     * MySQL cannot express this range — the columns are plain Int — so this
      * schema is the ONLY thing standing between a merchant and a header row
      * built for a logo twice its height. Same arrangement as currencyDecimals.
      */

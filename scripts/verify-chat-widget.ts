@@ -38,7 +38,7 @@ const check = (label: string, ok: boolean, detail: string) => {
 /**
  * Compares a stored Json block by VALUE, not by serialisation.
  *
- * `jsonb` does not preserve object key order, so a block written as
+ * MySQL does not preserve a JSON object's key order, so a block written as
  * `{enabled, channel}` can read back as `{channel, enabled}` and a
  * `JSON.stringify` comparison would fail on a row that is byte-for-byte
  * correct. Sorting the keys first is what makes "the stored block was not

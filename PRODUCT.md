@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-[Existing codebase: Express 5 + TypeScript (ESM), Prisma 7 + PostgreSQL (Neon) via a PrismaPg driver adapter, better-auth (session) + app-issued JWT access tokens, zod validation, multer memory-storage uploads to Cloudinary, nodemailer (SMTP) transactional email, node-cron jobs, EJS email templates; deployed to Vercel as a single serverless function (`api.ts`, no local listen). Dev port 5000.]
+[Existing codebase: Express 5 + TypeScript (ESM), Prisma 7 + MySQL/MariaDB via a PrismaMariaDb driver adapter, better-auth (session) + app-issued JWT access tokens, zod validation, multer memory-storage uploads to Cloudinary, nodemailer (SMTP) transactional email, node-cron jobs, EJS email templates; deployed to cPanel shared hosting under Passenger (`server.ts`). Dev port 5000.]
 
 ## Users
 

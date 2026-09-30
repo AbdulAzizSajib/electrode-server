@@ -13,7 +13,7 @@
 /// Rules list was not reading every tax their shop charged.
 ///
 /// The Json columns below carry the storefront's header/footer presentation
-/// content. Postgres does not constrain their shape, so the Zod schemas in
+/// content. MySQL does not constrain their shape, so the Zod schemas in
 /// store-setting.validation.ts are the ONLY gate - every write must go
 /// through them and no code path may persist an unvalidated value. Reads
 /// are correspondingly trusted, and merge over DEFAULT_PUBLIC_SETTINGS so a
@@ -21,7 +21,7 @@
 model StoreSetting {
   id String @id @default("singleton")
 
-  storeName String @default("Ecom")
+  storeName String @default("Ecom") @db.VarChar(512)
 
   currency       String @default("BDT")
   currencySymbol String @default("৳")
@@ -35,7 +35,7 @@ model StoreSetting {
   /// total, and the admin panel says so beside the field. Setting it above 2
   /// shows trailing zeros that carry no stored precision.
   ///
-  /// Bounded 0–4 in store-setting.validation.ts, which Postgres cannot express:
+  /// Bounded 0–4 in store-setting.validation.ts, which MySQL cannot express:
   /// 0 covers currencies with no minor unit, 3 covers those with three, and 4
   /// is headroom. The defaults reproduce the storefront's pre-configuration
   /// rendering exactly, so the additive migration changes nothing on its own.
@@ -58,7 +58,7 @@ model StoreSetting {
 
   contactEmail String?
   contactPhone String?
-  address      String?
+  address      String? @db.VarChar(512)
 
   /// Branding. `siteNameAccent` is the second, accent-coloured half of the
   /// wordmark (the storefront renders `storeName` + `siteNameAccent`).
@@ -75,11 +75,11 @@ model StoreSetting {
   /// URL" are deliberately different: clearing the footer's artwork must
   /// restore that fallback rather than pin a copy, which is also why
   /// DEFAULT_PUBLIC_SETTINGS.footerLogoUrl is null and not a copy of logoUrl.
-  logoUrl        String?
-  footerLogoUrl  String?
+  logoUrl        String? @db.VarChar(512)
+  footerLogoUrl  String? @db.VarChar(512)
   siteNameAccent String?
-  aboutText      String?
-  copyrightText  String?
+  aboutText      String? @db.Text
+  copyrightText  String? @db.VarChar(512)
 
   /// The browser-tab icon — the mark shown in a tab, a bookmark and a search
   /// result. An ADDRESS, like the two logos above and unlike anything this
@@ -103,7 +103,7 @@ model StoreSetting {
   ///
   /// See openspec/changes/add-favicon-and-newsletter-section, design.md
   /// Decisions 1 and 2.
-  faviconUrl String?
+  faviconUrl String? @db.VarChar(512)
 
   /// Whether each brand slot shows the wordmark or its logo image.
   ///
@@ -130,7 +130,7 @@ model StoreSetting {
   /// own proportions, so artwork of any aspect ratio renders undistorted and
   /// never needs re-cutting.
   ///
-  /// Bounded 24-96 in store-setting.validation.ts, which Postgres cannot
+  /// Bounded 24-96 in store-setting.validation.ts, which MySQL cannot
   /// express — so Zod is the ONLY gate, exactly as with `currencyDecimals`. 24
   /// is roughly where a logo stops being legible beside the header's text
   /// controls; 96 is past the header row's natural height, so anything larger
@@ -152,9 +152,9 @@ model StoreSetting {
   /// `siteUrl` already resolves the storefront's `metadataBase`, and moving
   /// them would be a data migration for no user-visible gain. The admin edits
   /// all of them from one screen (SEO → General) either way.
-  siteUrl         String?
-  metaTitle       String?
-  metaDescription String?
+  siteUrl         String? @db.VarChar(512)
+  metaTitle       String? @db.VarChar(512)
+  metaDescription String? @db.Text
 
   /// Everything else the SEO menu owns, Zod-validated on write exactly like
   /// the blobs below — `seoConfigSchema` in store-setting.validation.ts is the
@@ -252,7 +252,7 @@ model StoreSetting {
 
   /// Zod-validated on write exactly like the presentation columns above - the
   /// schemas in store-setting.validation.ts are the ONLY gate on their shape,
-  /// and both carry invariants Postgres cannot express.
+  /// and both carry invariants MySQL cannot express.
   ///
   /// checkoutConfig: { fields: { <fieldKey>: { show, required } }, showCouponBox,
   ///                   showOrderNote, allowGuestCheckout, notice,
@@ -462,7 +462,7 @@ model StoreSetting {
   /// admin: it is a Meta debug-panel code, not a credential, and whoever is
   /// debugging has to be able to read it back.
   ///
-  /// Postgres does not constrain a Json column, so — as with every other Json
+  /// MySQL does not constrain a Json column, so — as with every other Json
   /// column on this model — the Zod schema in `store-setting.validation.ts` is
   /// the ONLY gate. No code path may persist an unvalidated value here.
   ///
@@ -488,7 +488,7 @@ model StoreSetting {
   /// disabled rather than stored disabled, so clearing a contact phone degrades
   /// to "no bubble" instead of floating a dead link on every page.
   ///
-  /// Postgres does not constrain a Json column, so — as with every other Json
+  /// MySQL does not constrain a Json column, so — as with every other Json
   /// column on this model — `chatWidgetSchema` in store-setting.validation.ts is
   /// the ONLY gate. No code path may persist an unvalidated value here.
   ///

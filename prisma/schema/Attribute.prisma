@@ -16,7 +16,7 @@ model Attribute {
   /// The merchant's own label. Deliberately unconstrained beyond length: the
   /// storefront renders whatever is here, so a new kind of attribute needs no
   /// code change in any repo.
-  name String @unique
+  name String @unique @db.VarChar(255)
 
   /// Authored order, for presenting attributes in a stable sequence.
   position Int @default(0)
@@ -56,7 +56,7 @@ model AttributeValue {
   attribute   Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
 
   /// What the shopper reads — "Red", "XL", "2 pound".
-  label String
+  label String @db.VarChar(255)
 
   /// Authored order. This is why values are rows rather than a JSON array on
   /// the attribute: S -> M -> XL is not derivable from the labels, and a JSON
@@ -66,7 +66,7 @@ model AttributeValue {
   /// CSS colour for a SWATCH attribute, ignored otherwise. The label still
   /// travels with it — a swatch must name itself for a shopper who cannot
   /// distinguish the colour.
-  swatch String?
+  swatch String? @db.VarChar(512)
 
   variants ProductVariantOptionValue[]
 

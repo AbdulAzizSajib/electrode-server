@@ -121,7 +121,7 @@ const createFont = async (userId: string | undefined, payload: ICreateFontPayloa
      * simultaneous adds — this check is the message, not the guarantee.
      */
     const existing = await prisma.font.findFirst({
-        where: { family: { equals: parsed.family, mode: "insensitive" } },
+        where: { family: { equals: parsed.family} },
     });
 
     if (existing) {
@@ -203,7 +203,7 @@ const updateFont = async (
     const clash = await prisma.font.findFirst({
         where: {
             id: { not: id },
-            family: { equals: parsed.family, mode: "insensitive" },
+            family: { equals: parsed.family},
         },
     });
 

@@ -40,12 +40,12 @@ model Font {
   /// card twice in the picker. The service rejects duplicates
   /// case-insensitively before insert; this constraint is the backstop that
   /// makes the check non-racy rather than the primary gate.
-  family String @unique
+  family String @unique @db.VarChar(255)
 
   /// The rebuilt fonts.googleapis.com stylesheet URL. Not unique: two families
   /// never share one, but two rows differing only in requested weights would,
   /// and that is a legitimate edit rather than a duplicate.
-  url String
+  url String @db.VarChar(512)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

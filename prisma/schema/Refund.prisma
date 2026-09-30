@@ -9,7 +9,7 @@ model Refund {
 
   amount Decimal @db.Decimal(12, 2)
 
-  reason String?
+  reason String? @db.Text
 
   status RefundStatus @default(PENDING)
 

@@ -14,15 +14,15 @@ model Testimonial {
 
   quote String @db.Text
 
-  authorName String
+  authorName String @db.VarChar(512)
   /// The line under the name — "Verified Buyer", "CEO, Acme". Free text
   /// because it is a caption, not a role the system knows anything about.
-  authorRole String
+  authorRole String @db.VarChar(512)
 
   /// Optional. The storefront renders the author's initials when this is null,
   /// so a card without a photo is still a finished-looking card of the same
   /// footprint rather than a gap or a generic silhouette.
-  photoUrl String?
+  photoUrl String? @db.VarChar(512)
 
   /// Whole stars, 1-5, bounded in testimonial.validation.ts. Replaces a
   /// hardcoded 5 in the storefront's Testimonials.tsx — a section where every

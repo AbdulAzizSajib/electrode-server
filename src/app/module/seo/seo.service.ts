@@ -63,10 +63,12 @@ const getSeoOverview = async (query: ISeoOverviewQuery) => {
     const limit = Math.max(1, Math.min(100, query.limit ?? 20));
     const search = query.search?.trim();
 
-    // `mode: "insensitive"` rather than the pg_trgm indexes product search uses:
-    // this searches five tables on two columns each, and the admin types a few
-    // characters into a screen that is not a hot path.
-    const contains = search ? { contains: search, mode: "insensitive" as const } : undefined;
+    // A plain `contains`, which under the tables' utf8mb4_unicode_ci collation is
+    // already case-insensitive - MySQL decides case-folding by collation, so there
+    // is no per-query mode to ask for. It scans: five tables on two columns each,
+    // with a leading wildcard no index can serve. Acceptable because the admin
+    // types a few characters into a screen that is not a hot path.
+    const contains = search ? { contains: search } : undefined;
     const wanted = query.contentType ? [query.contentType] : [...SEO_CONTENT_TYPES];
     const wants = (type: SeoContentType) => wanted.includes(type);
 

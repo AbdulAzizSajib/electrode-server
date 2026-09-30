@@ -24,7 +24,7 @@ const findOrCreateTag = async (tx: Prisma.TransactionClient, rawName: string) =>
     }
 
     const existing = await tx.tag.findFirst({
-        where: { name: { equals: name, mode: "insensitive" } },
+        where: { name: { equals: name} },
         select: { id: true },
     });
 
@@ -73,7 +73,7 @@ const searchTags = async (term: string) => {
     if (!trimmed) return [];
 
     return prisma.tag.findMany({
-        where: { name: { contains: trimmed, mode: "insensitive" } },
+        where: { name: { contains: trimmed} },
         orderBy: { name: "asc" },
         take: SUGGESTION_LIMIT,
     });

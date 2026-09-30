@@ -30,7 +30,7 @@
 /// do not price a package anywhere but through that resolver. See
 /// openspec/changes/add-conversion-landing-page-sections, design.md Decision 1.
 ///
-/// The Json columns below carry every repeating content list. Postgres does not
+/// The Json columns below carry every repeating content list. MySQL does not
 /// constrain their shape, so the Zod schemas in landing-page.validation.ts are
 /// the ONLY gate — every write must go through them and no code path may
 /// persist an unvalidated value. This is the same contract StoreSetting's Json
@@ -40,11 +40,11 @@ model LandingPage {
 
   /// The merchant's own name for the campaign, shown in the admin list only.
   /// Never rendered on the storefront — `headline` is what a shopper reads.
-  title String
+  title String @db.VarChar(512)
 
   /// Served at `/offer/<slug>` in BOTH site modes. Constrained to
   /// `^[a-z0-9]+(?:-[a-z0-9]+)*$` in landing-page.validation.ts rather than
-  /// here, because Postgres cannot express it. Unlike Page.slug this is not a
+  /// here, because MySQL cannot express it. Unlike Page.slug this is not a
   /// top-level segment, so it has no reserved-slug list to collide with.
   slug String @unique
 
@@ -59,8 +59,8 @@ model LandingPage {
   /// Hero. Only `headline` is required — a page with nothing above the fold is
   /// not a landing page. The other two are omitted from the render when unset
   /// rather than reserved as empty space.
-  headline    String
-  subheadline String?
+  headline    String @db.VarChar(512)
+  subheadline String? @db.VarChar(512)
   badgeText   String?
 
   /// Semantic HTML from the admin's Tiptap editor. Stored as authored and NOT
@@ -223,13 +223,13 @@ model LandingPage {
   /// column to `[]` — it would convert every existing campaign from "as it
   /// always was" into "deliberately blank".
   ///
-  /// Zod-validated on write; Postgres does not constrain a Json column, so
+  /// Zod-validated on write; MySQL does not constrain a Json column, so
   /// landing-page.validation.ts is the only gate.
   /// See openspec/changes/add-landing-page-section-builder, design.md D1/D3.
   sectionConfig Json?
 
   /// The Json column that decides what an order must carry. It holds
-  /// invariants Postgres cannot express, and is gated only by
+  /// invariants MySQL cannot express, and is gated only by
   /// landing-page.validation.ts.
   ///
   /// THERE IS NO `deliveryZones` HERE ANY MORE, and there must not be one
@@ -270,15 +270,15 @@ model LandingPage {
   /// Shown in place after a successful order, without navigating away from the
   /// campaign. Both optional — a page with neither falls back to a default
   /// confirmation carrying the order number.
-  successHeading String?
-  successMessage String?
+  successHeading String? @db.VarChar(512)
+  successMessage String? @db.Text
 
   /// SEO. `metaTitle` falls back to `headline` and `metaDescription` to a
   /// truncated excerpt of the page's own content, so a published campaign never
   /// has empty metadata.
-  metaTitle       String?
-  metaDescription String?
-  ogImageUrl      String?
+  metaTitle       String? @db.VarChar(512)
+  metaDescription String? @db.Text
+  ogImageUrl      String? @db.VarChar(512)
 
   /// A Facebook Pixel id, digits only (`^\d{5,20}$`, enforced in
   /// landing-page.validation.ts). Stored as an ID, never as markup: the

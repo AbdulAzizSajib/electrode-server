@@ -7,11 +7,11 @@
 model Page {
   id String @id @default(uuid(7))
 
-  title String
+  title String @db.VarChar(512)
 
   /// The storefront serves a page at the root, `/<slug>`, so this doubles as a
   /// top-level URL segment. Two constraints follow from that and are enforced
-  /// in page.validation.ts rather than here, because Postgres cannot express
+  /// in page.validation.ts rather than here, because MySQL cannot express
   /// either: the slug matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and it may not be
   /// one of RESERVED_SLUGS (page.constant.ts) — a storefront route would
   /// silently win the match and the merchant's page would 404 with no clue why.
@@ -28,8 +28,8 @@ model Page {
   /// Both optional. The storefront falls back to `title` and to a truncated
   /// plain-text excerpt of `body` respectively, so a page is never published
   /// without usable metadata.
-  metaTitle       String?
-  metaDescription String?
+  metaTitle       String? @db.VarChar(512)
+  metaDescription String? @db.Text
 
   status PageStatus @default(DRAFT)
 

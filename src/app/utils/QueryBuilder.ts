@@ -49,7 +49,6 @@ TInclude = Record<string, unknown>
 
                         const stringFilter : PrismaStringFilter = {
                             contains : searchTerm,
-                            mode : 'insensitive' as const,
                         }
 
                         return {
@@ -62,7 +61,6 @@ TInclude = Record<string, unknown>
 
                         const stringFilter : PrismaStringFilter = {
                             contains : searchTerm,
-                            mode : 'insensitive' as const,
                         }
 
                         return {
@@ -80,7 +78,6 @@ TInclude = Record<string, unknown>
                 // direct field
                 const stringFilter: PrismaStringFilter = {
                     contains: searchTerm,
-                    mode: 'insensitive' as const,
                 }
 
                 return {

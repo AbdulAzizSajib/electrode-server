@@ -12,7 +12,7 @@
  *  - the landing page's own required-field rule, which must be independent of
  *    the shop-wide checkout config in one direction and unable to drop the
  *    phone or address in the other;
- *  - the Zod invariants Postgres cannot express — a digits-only pixel id, and
+ *  - the Zod invariants MySQL cannot express — a digits-only pixel id, and
  *    the absence of any way to spell "hide the phone field" or to author a
  *    delivery price;
  *  - the site-mode rule, which is what stops a merchant pointing their home
@@ -247,7 +247,7 @@ const main = async () => {
         "takes only (orderForm, submitted) — no settings argument exists",
     );
 
-    console.log("\n--- 5. Invariants Postgres cannot express ---\n");
+    console.log("\n--- 5. Invariants MySQL cannot express ---\n");
 
     const validPage = {
         title: "শীতের অফার",

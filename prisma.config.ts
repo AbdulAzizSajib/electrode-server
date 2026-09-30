@@ -4,33 +4,21 @@ import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 export default defineConfig({
-  schema: "prisma/schema",
-  migrations: {
-    path: "prisma/migrations",
-  },
-  datasource: {
-    /*
-     * Migrations connect through DIRECT_DATABASE_URL when it is set, falling
-     * back to the runtime URL otherwise.
-     *
-     * This exists because the two clients do not agree. The app connects with
-     * the `pg` driver adapter, which negotiates `channel_binding=require`
-     * happily. Prisma's own migration engine cannot, and fails the connection
-     * outright as `P1001: Can't reach database server` — a message that reads
-     * like the host is down when in fact it answers on the port and accepts
-     * `pg` connections normally. That misdiagnosis is the whole cost of not
-     * having this split.
-     *
-     * DIRECT_DATABASE_URL is therefore the same database, same credentials,
-     * with `channel_binding` removed and `sslmode=require` retained — the
-     * connection stays encrypted. The runtime URL is deliberately left alone,
-     * so the app keeps the stronger binding.
-     *
-     * The name follows Prisma's `directUrl` convention, which normally points
-     * past a connection pooler; here the pooler host is the only one this Neon
-     * project resolves, so it points at the same host. Keep the fallback:
-     * environments whose URL has no `channel_binding` need no second variable.
-     */
-    url: process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL,
-  },
+    schema: "prisma/schema",
+    migrations: {
+        path: "prisma/migrations",
+    },
+    datasource: {
+        /*
+         * One URL for both the app and the migration engine.
+         *
+         * This used to be split: migrations ran through a DIRECT_DATABASE_URL
+         * because Neon's `channel_binding=require` was something the `pg`
+         * driver adapter could negotiate and Prisma's migration engine could
+         * not. MySQL on the same host as the app has no such parameter — and
+         * no TLS handshake to disagree about — so the split has nothing left
+         * to work around.
+         */
+        url: process.env.DATABASE_URL,
+    },
 });

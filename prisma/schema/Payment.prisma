@@ -37,7 +37,7 @@ model Payment {
   /// review. See openspec/changes/add-advance-payment-checkout.
   ///
   /// These are TYPED COLUMNS rather than keys inside `gatewayResponse`, which
-  /// is unused and would have held them without a migration. Postgres does not
+  /// is unused and would have held them without a migration. MySQL does not
   /// constrain a Json column, so the values deciding whether an order may ship
   /// would live outside the type system, and no query could answer "every
   /// claim from this sender number" - which is exactly the question asked when
@@ -80,7 +80,7 @@ model Payment {
 
   /// Why a claim was rejected. Required by the service on rejection - a
   /// rejection nobody can be told the grounds for is not actionable.
-  rejectionReason String?
+  rejectionReason String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

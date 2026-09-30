@@ -10,7 +10,8 @@
  * regularly fails on a shared plan, so the tree ships prebuilt instead.
  *
  * Shipping a Windows-built tree is only safe because Prisma 7 runs through the
- * PrismaPg driver adapter — pure JavaScript, no platform-specific query engine.
+ * PrismaMariaDb driver adapter — pure JavaScript, no platform-specific query
+ * engine.
  * Verified: no `.node` binary exists anywhere under @prisma. If a native
  * dependency is ever added (sharp, bcrypt, better-sqlite3), this script stops
  * being portable and the tree must be installed on the host or on Linux.

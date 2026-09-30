@@ -57,7 +57,7 @@ const bulkCreateBrands = async (userId: string, names: string[]): Promise<IBulkC
         }
 
         const existing = await prisma.brand.findFirst({
-            where: { name: { equals: name, mode: "insensitive" } },
+            where: { name: { equals: name} },
             select: { id: true },
         });
         if (existing) {

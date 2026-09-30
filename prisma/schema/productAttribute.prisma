@@ -5,7 +5,7 @@ model ProductAttribute {
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   name  String
-  value String
+  value String @db.VarChar(512)
 
   createdAt DateTime @default(now())
 

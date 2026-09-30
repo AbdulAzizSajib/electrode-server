@@ -264,11 +264,18 @@ const main = async () => {
                 : (seeded.error.issues[0]?.message ?? ""),
         );
 
-        const columns = (await prisma.$queryRaw`
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'LandingPage'
-              AND (column_name ILIKE '%taken%' OR column_name ILIKE '%soldcount%' OR column_name ILIKE '%baseline%')
-        `) as unknown[];
+        // LIKE, not ILIKE: information_schema collations are case-insensitive
+        // in MySQL, so a plain LIKE already matches whatever case the column
+        // was declared in. COUNT rather than the names, because MySQL returns
+        // information_schema columns upper-cased and the count is the whole
+        // question. table_schema = DATABASE() scopes it to this shop's schema.
+        const [{ found }] = await prisma.$queryRaw<{ found: number | bigint }[]>`
+            SELECT COUNT(*) AS found FROM information_schema.COLUMNS
+            WHERE table_schema = DATABASE()
+              AND table_name = 'LandingPage'
+              AND (column_name LIKE '%taken%' OR column_name LIKE '%soldcount%' OR column_name LIKE '%baseline%')
+        `;
+        const columns = { length: Number(found) };
         check(
             "scarcity: no column exists that could hold a seeded count",
             columns.length === 0,

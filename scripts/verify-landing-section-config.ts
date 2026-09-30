@@ -9,7 +9,7 @@
  * would fail loudly when it happened. So: null stays null, and an update that
  * omits the key leaves what is there alone.
  *
- * The rest pins the validation. `sectionConfig` is a Json column, so Postgres
+ * The rest pins the validation. `sectionConfig` is a Json column, so MySQL
  * constrains none of its shape and `sectionConfigSchema` is the only gate. Each
  * rejection below is a way a malformed order could otherwise reach the column
  * and be read back as truth by the storefront.
@@ -56,8 +56,10 @@ const refuses = (label: string, value: unknown) => {
  * Compares two stored orders the way the contract actually defines them.
  *
  * THE ARRAY ORDER IS THE DATA and is compared strictly. The KEY ORDER INSIDE
- * each entry is not: the column is `jsonb`, and Postgres does not preserve the
- * order keys were written in within an object — it stores them in its own.
+ * each entry is not: the column is JSON, and MySQL does not preserve the order
+ * keys were written in within an object — it normalises them into its own.
+ * (PostgreSQL's `jsonb` did the same thing, so this comparison needed no
+ * change when the engine did.)
  * A raw JSON.stringify comparison therefore fails on a value that round-tripped
  * perfectly, which says nothing about the code and hides the one difference
  * that would matter.

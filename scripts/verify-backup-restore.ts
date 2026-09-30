@@ -16,7 +16,7 @@
  * To run the destructive half, point it at a scratch database with the same
  * migrations applied:
  *
- *   BACKUP_VERIFY_DATABASE_URL="postgresql://.../scratch" \
+ *   BACKUP_VERIFY_DATABASE_URL="mysql://user:pass@localhost:3306/scratch" \
  *   BACKUP_VERIFY_DESTRUCTIVE=yes \
  *   npx tsx scripts/verify-backup-restore.ts
  *
@@ -25,7 +25,7 @@
  *   npx tsx scripts/verify-backup-restore.ts
  */
 import { gzipSync } from "node:zlib";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import "dotenv/config";
 import { PrismaClient, Prisma } from "../src/generated/prisma/client";
 import { prisma as livePrisma } from "../src/app/lib/prisma";
@@ -267,7 +267,7 @@ const main = async () => {
     } else if (destructiveUrl === process.env.DATABASE_URL) {
         check("destructive target is not the configured DATABASE_URL", false, "refusing to restore over the live database");
     } else {
-        const scratch = new PrismaClient({ adapter: new PrismaPg({ connectionString: destructiveUrl }) });
+        const scratch = new PrismaClient({ adapter: new PrismaMariaDb(destructiveUrl) });
 
         try {
             // A marker row that exists only after the backup is taken, so its

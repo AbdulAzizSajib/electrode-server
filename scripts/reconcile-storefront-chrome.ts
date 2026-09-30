@@ -97,8 +97,8 @@ async function main() {
     // Announcement links: replaced only if all three still match the old seed
     // exactly. A merchant who has added, removed or retargeted a row keeps it.
     //
-    // Compared field by field rather than by JSON.stringify: Postgres returns a
-    // jsonb object's keys in its own order, so a raw string comparison reported
+    // Compared field by field rather than by JSON.stringify: MySQL normalises a
+    // JSON object's keys into its own order, so a raw string comparison reported
     // "edited by a human" for rows that were byte-identical in meaning.
     const bar = row.announcementBar as { enabled?: boolean; text?: string; links?: unknown[] } | null;
     const storedLinks = (bar?.links ?? []) as { icon?: string; label?: string; href?: string }[];

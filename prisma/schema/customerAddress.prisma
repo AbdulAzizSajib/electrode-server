@@ -6,11 +6,11 @@ model CustomerAddress {
 
   type AddressType @default(SHIPPING)
 
-  fullName String
+  fullName String @db.VarChar(512)
   phone    String
 
-  addressLine1 String
-  addressLine2 String?
+  addressLine1 String @db.VarChar(512)
+  addressLine2 String? @db.VarChar(512)
 
   city       String
   state      String?

@@ -54,7 +54,7 @@ const baseBlogPostSchema = z.object({
 /**
  * Ties the URL columns to `mediaType`.
  *
- * This is the invariant Postgres cannot express, and it is the one that makes
+ * This is the invariant MySQL cannot express, and it is the one that makes
  * "a post carries either an image or a video, never both" true of the DATA
  * rather than merely of the form that usually writes it. Without it a row can
  * hold both URLs and nothing defines which the storefront should show.

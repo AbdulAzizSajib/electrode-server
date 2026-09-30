@@ -6,14 +6,14 @@ model AuditLog {
 
   action AuditAction
 
-  entity   String
-  entityId String?
+  entity   String @db.VarChar(255)
+  entityId String? @db.VarChar(255)
 
   oldData Json?
   newData Json?
 
   ipAddress String?
-  userAgent String?
+  userAgent String? @db.Text
 
   createdAt DateTime @default(now())
 

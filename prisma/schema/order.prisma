@@ -4,7 +4,7 @@ model Order {
   orderNumber String @unique
 
   // Client-supplied per-checkout-attempt key. Nullable so orders placed
-  // without one (older clients, direct API callers) still insert — Postgres
+  // without one (older clients, direct API callers) still insert — MySQL
   // treats NULLs as distinct in a unique index, so any number of them
   // coexist. Ownership is re-checked on the replay path rather than being
   // encoded here as a compound unique; see order.service.ts.
@@ -36,7 +36,7 @@ model Order {
   /// which are priced by the page's own zones and never enter this path.
   deliveryMethod      DeliveryMethod?
   deliveryOptionKey   String?
-  deliveryOptionLabel String?
+  deliveryOptionLabel String? @db.VarChar(512)
 
   totalAmount Decimal @db.Decimal(12, 2)
 
@@ -54,7 +54,7 @@ model Order {
   /// Free text on purpose. A fixed reason taxonomy invented before anyone has
   /// used the feature would be wrong; if reasons cluster, that is the evidence
   /// for one later.
-  discountReason String?
+  discountReason String? @db.Text
 
   /// How the CUSTOMER reached the shop. See the `OrderChannel` enum for why
   /// campaign attribution is NOT expressed here.
@@ -78,7 +78,7 @@ model Order {
   createdByUserId String?
   createdBy       User?   @relation("OrdersCreatedByStaff", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
-  notes String?
+  notes String? @db.Text
 
   /// Recorded at checkout rather than derived from `customer.userId`: a guest
   /// checking out with a phone that belongs to a registered customer resolves
@@ -113,7 +113,7 @@ model Order {
   /// design.md, Decision 4.
   landingPageId    String?
   landingPage      LandingPage? @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
-  landingPageTitle String?
+  landingPageTitle String? @db.VarChar(512)
 
   /// WHICH TIER of a multi-package campaign this order was for.
   ///
@@ -130,7 +130,7 @@ model Order {
   /// total and never know which tier the money came from, which is precisely
   /// the thing that decides what they advertise next.
   landingPackageKey   String?
-  landingPackageLabel String?
+  landingPackageLabel String? @db.VarChar(512)
   landingPackagePrice Decimal? @db.Decimal(12, 2)
 
   shippingAddressId String?

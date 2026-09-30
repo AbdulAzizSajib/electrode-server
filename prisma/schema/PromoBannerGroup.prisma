@@ -14,7 +14,7 @@
 /// Banner membership is a relation. A banner id inside a JSON array has no
 /// foreign key, so deleting a banner would leave a dangling id that every
 /// reader has to defend against forever — and this repo's own rule is that a
-/// Json column is unconstrained by Postgres, leaving the Zod schema as the only
+/// Json column is unconstrained by MySQL, leaving the Zod schema as the only
 /// gate. A real column with `onDelete: SetNull` makes the detach behaviour the
 /// database's job rather than seven call sites'.
 ///
@@ -41,7 +41,7 @@ model PromoBannerGroup {
   /// can tell which row is which; the storefront does NOT render it. A
   /// group-level heading above the strip is deliberately out of scope, see the
   /// change's design.md Open Questions.
-  name String
+  name String @db.VarChar(512)
 
   /// How many tiles the strip renders across. Resolved on read rather than
   /// trusted — an unrecognised value reads back as THREE — mirroring

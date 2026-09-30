@@ -1,8 +1,8 @@
 model Campaign {
   id String @id @default(uuid(7))
 
-  name        String
-  description String?
+  name        String @db.VarChar(512)
+  description String? @db.Text
 
   status CampaignStatus @default(DRAFT)
 

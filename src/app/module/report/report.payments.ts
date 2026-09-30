@@ -27,7 +27,7 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
  * direction chosen from a two-value allow-list.
  */
 
-/** Settled statuses as bound parameters, compared against `status::text` to avoid enum-parameter typing. */
+/** Settled statuses as bound parameters, compared straight against the ENUM column. */
 const settledList = Prisma.join(SETTLED_PAYMENT_STATUSES.map((value) => Prisma.sql`${value}`));
 
 const moneyInSelect = (query: PaymentReportQuery, range: IResolvedRange) => {
@@ -37,70 +37,76 @@ const moneyInSelect = (query: PaymentReportQuery, range: IResolvedRange) => {
         // everything by createdAt would put a February-recorded, March-settled
         // payment in February; dating only by paidAt would drop every
         // uncollected COD payment, which is the row a merchant is hunting for.
-        Prisma.sql`COALESCE(p."paidAt", p."createdAt") >= ${range.start}`,
-        Prisma.sql`COALESCE(p."paidAt", p."createdAt") <= ${range.end}`,
+        Prisma.sql`COALESCE(p.paidAt, p.createdAt) >= ${range.start}`,
+        Prisma.sql`COALESCE(p.paidAt, p.createdAt) <= ${range.end}`,
     ];
 
-    if (query.method) conditions.push(Prisma.sql`p."method"::text = ${query.method}`);
-    if (query.status) conditions.push(Prisma.sql`p."status"::text = ${query.status}`);
-    if (query.customerId) conditions.push(Prisma.sql`o."customerId" = ${query.customerId}`);
+    if (query.method) conditions.push(Prisma.sql`p.method = ${query.method}`);
+    if (query.status) conditions.push(Prisma.sql`p.status = ${query.status}`);
+    if (query.customerId) conditions.push(Prisma.sql`o.customerId = ${query.customerId}`);
 
     return Prisma.sql`
         SELECT
-            p."id"                                       AS "id",
-            'IN'::text                                   AS "direction",
-            COALESCE(p."paidAt", p."createdAt")          AS "effectiveDate",
-            (p."status"::text IN (${settledList}))       AS "isSettled",
-            p."amount"                                   AS "amount",
-            p."method"::text                             AS "method",
-            p."status"::text                             AS "status",
-            c."id"                                       AS "counterpartyId",
-            NULLIF(TRIM(COALESCE(c."firstName", '') || ' ' || COALESCE(c."lastName", '')), '') AS "counterpartyName",
-            COALESCE(o."isGuestOrder", false)            AS "isGuest",
-            o."id"                                       AS "documentId",
-            o."orderNumber"                              AS "documentNumber",
-            p."transactionId"                            AS "reference"
-        FROM "Payment" p
+            p.id                                         AS id,
+            'IN'                                         AS direction,
+            COALESCE(p.paidAt, p.createdAt)              AS effectiveDate,
+            (p.status IN (${settledList}))               AS isSettled,
+            p.amount                                     AS amount,
+            p.method                                     AS method,
+            p.status                                     AS status,
+            c.id                                         AS counterpartyId,
+            NULLIF(TRIM(CONCAT(COALESCE(c.firstName, ''), ' ', COALESCE(c.lastName, ''))), '') AS counterpartyName,
+            COALESCE(o.isGuestOrder, FALSE)              AS isGuest,
+            o.id                                         AS documentId,
+            o.orderNumber                                AS documentNumber,
+            p.transactionId                              AS reference
+        FROM Payment p
         -- LEFT, not INNER: a payment whose document has gone is still money
         -- that moved, and the spec requires the row to survive with the
         -- missing document stated.
-        LEFT JOIN "Order" o    ON o."id" = p."orderId"
-        LEFT JOIN "Customer" c ON c."id" = o."customerId"
+        --
+        -- The Order table is backtick-quoted because ORDER is a reserved word
+        -- in MySQL. The backticks are escaped because this is a JS template
+        -- literal, where an unescaped one would end the string; every other
+        -- identifier in this file is safe unquoted, which is why only this
+        -- one carries them.
+        LEFT JOIN \`Order\` o  ON o.id = p.orderId
+        LEFT JOIN Customer c   ON c.id = o.customerId
         WHERE ${Prisma.join(conditions, " AND ")}
     `;
 };
 
 const moneyOutSelect = (query: PaymentReportQuery, range: IResolvedRange) => {
     const conditions: Prisma.Sql[] = [
-        Prisma.sql`sp."paidAt" >= ${range.start}`,
-        Prisma.sql`sp."paidAt" <= ${range.end}`,
+        Prisma.sql`sp.paidAt >= ${range.start}`,
+        Prisma.sql`sp.paidAt <= ${range.end}`,
     ];
 
-    if (query.method) conditions.push(Prisma.sql`sp."method"::text = ${query.method}`);
-    if (query.supplierId) conditions.push(Prisma.sql`sp."supplierId" = ${query.supplierId}`);
+    if (query.method) conditions.push(Prisma.sql`sp.method = ${query.method}`);
+    if (query.supplierId) conditions.push(Prisma.sql`sp.supplierId = ${query.supplierId}`);
     // A supplier payment has no lifecycle — it is recorded because it happened
     // — so it is only ever PAID. A status filter for anything else excludes
     // the whole side rather than matching nothing row by row.
-    if (query.status && query.status !== "PAID") conditions.push(Prisma.sql`false`);
+    if (query.status && query.status !== "PAID") conditions.push(Prisma.sql`FALSE`);
 
     return Prisma.sql`
         SELECT
-            sp."id"                                      AS "id",
-            'OUT'::text                                  AS "direction",
-            sp."paidAt"                                  AS "effectiveDate",
-            true                                         AS "isSettled",
-            sp."amount"                                  AS "amount",
-            sp."method"::text                            AS "method",
-            'PAID'::text                                 AS "status",
-            s."id"                                       AS "counterpartyId",
-            COALESCE(NULLIF(s."companyName", ''), s."name") AS "counterpartyName",
-            false                                        AS "isGuest",
-            po."id"                                      AS "documentId",
-            po."purchaseNumber"                          AS "documentNumber",
-            sp."reference"                               AS "reference"
-        FROM "SupplierPayment" sp
-        LEFT JOIN "Supplier" s       ON s."id" = sp."supplierId"
-        LEFT JOIN "PurchaseOrder" po ON po."id" = sp."purchaseOrderId"
+            sp.id                                        AS id,
+            'OUT'                                        AS direction,
+            sp.paidAt                                    AS effectiveDate,
+            TRUE                                         AS isSettled,
+            sp.amount                                    AS amount,
+            sp.method                                    AS method,
+            'PAID'                                       AS status,
+            s.id                                         AS counterpartyId,
+            COALESCE(NULLIF(s.companyName, ''), s.name)  AS counterpartyName,
+            FALSE                                        AS isGuest,
+            po.id                                        AS documentId,
+            po.purchaseNumber                            AS documentNumber,
+            sp.reference                                 AS reference
+        FROM SupplierPayment sp
+        LEFT JOIN Supplier s       ON s.id = sp.supplierId
+        LEFT JOIN PurchaseOrder po ON po.id = sp.purchaseOrderId
         WHERE ${Prisma.join(conditions, " AND ")}
     `;
 };
@@ -131,17 +137,28 @@ const unionSql = (query: PaymentReportQuery, range: IResolvedRange) => {
  * service: a schema change that breaks a column fails loudly here rather than
  * producing wrong rows downstream (design.md — Risks).
  */
+/**
+ * MySQL has no boolean type: a comparison in a SELECT list comes back as
+ * TINYINT 1/0, and a BOOLEAN column as 1/0 too. No driver option changes
+ * that, so the boolean columns are decoded here rather than asserted to be
+ * something they never are. Anything else in this schema stays strict on
+ * purpose — the point of parsing is that a schema change fails loudly.
+ */
+const sqlBoolean = z
+    .union([z.boolean(), z.number(), z.bigint()])
+    .transform((value) => Boolean(Number(value)));
+
 const rawRowSchema = z.object({
     id: z.string(),
     direction: z.enum(["IN", "OUT"]),
     effectiveDate: z.date(),
-    isSettled: z.boolean(),
+    isSettled: sqlBoolean,
     amount: z.union([z.number(), z.instanceof(Prisma.Decimal), z.string()]),
     method: z.string(),
     status: z.string(),
     counterpartyId: z.string().nullable(),
     counterpartyName: z.string().nullable(),
-    isGuest: z.boolean(),
+    isGuest: sqlBoolean,
     documentId: z.string().nullable(),
     documentNumber: z.string().nullable(),
     reference: z.string().nullable(),
@@ -175,7 +192,7 @@ const fetchRows = async (
 
     const rows = await prisma.$queryRaw<unknown[]>`
         SELECT * FROM (${unionSql(query, range)}) AS movements
-        ORDER BY movements."effectiveDate" ${direction}, movements."id" ${direction}
+        ORDER BY movements.effectiveDate ${direction}, movements.id ${direction}
         LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -188,21 +205,28 @@ const fetchSummary = async (
 ): Promise<IPaymentReportSummary> => {
     const [totals] = await prisma.$queryRaw<
         Array<{
-            moneyIn: Prisma.Decimal | null;
-            moneyOut: Prisma.Decimal | null;
-            pending: Prisma.Decimal | null;
-            inCount: bigint;
-            outCount: bigint;
+            // DECIMAL arrives as a string from the MariaDB driver (its default;
+            // a float cannot hold money) - see lib/prisma.ts.
+            moneyIn: Prisma.Decimal | string | null;
+            moneyOut: Prisma.Decimal | string | null;
+            pending: Prisma.Decimal | string | null;
+            // COUNT(*) is BIGINT, which the driver hands back as a JS BigInt.
+            inCount: number | bigint;
+            outCount: number | bigint;
         }>
     >`
+        -- MySQL has no aggregate FILTER clause, so each filter moves inside the
+        -- aggregate as a CASE. Equivalent, not approximately so: SUM ignores
+        -- NULLs and COUNT ignores NULLs, so an unmatched row contributes
+        -- nothing either way, exactly as a failed FILTER predicate did.
         SELECT
             -- Settled rows only. An uncollected COD amount is stated as
             -- pending below and never added to money in.
-            COALESCE(SUM(m."amount") FILTER (WHERE m."direction" = 'IN'  AND m."isSettled"), 0) AS "moneyIn",
-            COALESCE(SUM(m."amount") FILTER (WHERE m."direction" = 'OUT'), 0)                   AS "moneyOut",
-            COALESCE(SUM(m."amount") FILTER (WHERE m."direction" = 'IN'  AND NOT m."isSettled"), 0) AS "pending",
-            COUNT(*) FILTER (WHERE m."direction" = 'IN')  AS "inCount",
-            COUNT(*) FILTER (WHERE m."direction" = 'OUT') AS "outCount"
+            COALESCE(SUM(CASE WHEN m.direction = 'IN'  AND m.isSettled     THEN m.amount END), 0) AS moneyIn,
+            COALESCE(SUM(CASE WHEN m.direction = 'OUT'                    THEN m.amount END), 0) AS moneyOut,
+            COALESCE(SUM(CASE WHEN m.direction = 'IN'  AND NOT m.isSettled THEN m.amount END), 0) AS pending,
+            COUNT(CASE WHEN m.direction = 'IN'  THEN 1 END)  AS inCount,
+            COUNT(CASE WHEN m.direction = 'OUT' THEN 1 END)  AS outCount
         FROM (${unionSql(query, range)}) AS m
     `;
 

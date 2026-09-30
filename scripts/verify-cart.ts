@@ -1,7 +1,7 @@
 /**
  * The cart's behaviour, and how many database round trips it costs.
  *
- * Every Prisma call from this API crosses to Neon in ap-southeast-1, so a cart
+ * Every Prisma call from this API used to cross to Neon in ap-southeast-1, so a cart
  * request's latency is roughly (round trips × distance to the database). This
  * script pins down the behaviour that the round-trip reductions in
  * cart.service.ts must not change, then prints the query count and wall time
@@ -23,22 +23,20 @@
  * Run with: npx tsx scripts/verify-cart.ts
  */
 import crypto from "crypto";
-import pg from "pg";
+import { install } from "./mariadb-query-tap";
 
 /*
- * Counts queries at the driver, below Prisma, so an emulated upsert's BEGIN and
- * COMMIT are counted like any other round trip. `pg`'s pool calls
- * `client.query` with a callback, not a promise, so both forms are wrapped.
+ * Counts queries at the driver, below Prisma, so an emulated upsert's BEGIN
+ * and COMMIT are counted like any other round trip. See mariadb-query-tap.ts
+ * for why the driver is tapped at createPool rather than at a prototype.
+ *
+ * Installed at module scope so it is in place before the dynamic import of
+ * `../src/app/lib/prisma` in main() builds the pool.
  */
 let queryCount = 0;
-const originalQuery = pg.Client.prototype.query as (...args: unknown[]) => unknown;
-(pg.Client.prototype as unknown as { query: (...args: unknown[]) => unknown }).query = function (
-    this: pg.Client,
-    ...args: unknown[]
-) {
+install(() => {
     queryCount += 1;
-    return originalQuery.apply(this, args);
-};
+});
 
 let failures = 0;
 

@@ -15,7 +15,7 @@ import { IMediaUsage, IStorageSize, IStorageUsage } from "./storage.interface";
  * it move.
  */
 
-/** Bytes → "15 MB". Binary units, matching what `pg_size_pretty` and Cloudinary both report. */
+/** Bytes → "15 MB". Binary units, matching what Cloudinary reports. */
 const formatBytes = (bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes < 0) return "—";
     if (bytes < 1024) return `${bytes} B`;
@@ -39,22 +39,32 @@ const toSize = (bytes: number): IStorageSize => ({ bytes, label: formatBytes(byt
 /**
  * Total on-disk size of the database, indexes included.
  *
- * `pg_database_size` rather than summing `pg_total_relation_size` per table:
- * the per-table sum omits the catalog and free space, so it reads lower than
- * what the host actually bills for. This is a raw query because Prisma has no
- * API for it at all.
+ * AN ESTIMATE, unlike the `pg_database_size` this replaces. MySQL has no
+ * equivalent function, so the figure is summed out of InnoDB's own statistics
+ * in `information_schema`. Those are sampled rather than exact and lag writes,
+ * so the number can differ from what the host bills for — and it omits free
+ * space held inside the tablespace. It is close enough to answer the only
+ * question the widget is asked ("am I near my quota?") and must not be used
+ * for anything that needs the real figure.
+ *
+ * Scoped to DATABASE(), so it reports this application's schema rather than
+ * every schema on a shared server - which is also all the grant allows.
  */
 const readDatabaseUsage = async () => {
-    const rows = await prisma.$queryRaw<{ bytes: bigint }[]>`
-        SELECT pg_database_size(current_database()) AS bytes
+    const rows = await prisma.$queryRaw<{ bytes: number | bigint | null }[]>`
+        SELECT COALESCE(SUM(data_length + index_length), 0) AS bytes
+        FROM information_schema.TABLES
+        WHERE table_schema = DATABASE()
     `;
 
     const bytes = rows[0]?.bytes;
     if (bytes === undefined) throw new Error("Database size query returned no rows");
 
-    // `bigint` from Postgres — Number is exact well past any plausible database
-    // size (2^53 bytes is ~9 petabytes), so the narrowing is safe here.
-    return { size: toSize(Number(bytes)), reachable: true as const };
+    // Number is exact well past any plausible database size (2^53 bytes is
+    // ~9 petabytes), so the narrowing is safe whether the driver hands back a
+    // number or a bigint. A schema with no tables sums to NULL, which COALESCE
+    // above has already turned into 0.
+    return { size: toSize(Number(bytes ?? 0)), reachable: true as const };
 };
 
 /**

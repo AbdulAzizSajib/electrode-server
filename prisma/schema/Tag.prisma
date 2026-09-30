@@ -11,7 +11,7 @@ model Tag {
 
   /// Stored as the merchant typed it; uniqueness is enforced case-insensitively
   /// by the service, so "Wireless" cannot be created beside "wireless".
-  name String @unique
+  name String @unique @db.VarChar(255)
 
   products ProductTag[]
 

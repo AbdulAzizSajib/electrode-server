@@ -11,7 +11,7 @@ export interface IDatabaseUsage {
     /**
      * Deliberately no `limit` or `percentUsed`.
      *
-     * The hosting provider's quota is not readable from inside Postgres, and a
+     * The hosting provider's quota is not readable from inside MySQL, and a
      * limit carried in an env var goes stale the moment a plan changes — which
      * is exactly when an accurate number matters. A wrong "23% used" is worse
      * than no percentage at all: it reassures instead of informing.

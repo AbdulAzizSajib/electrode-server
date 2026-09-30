@@ -8,12 +8,12 @@ model Review {
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   rating  Int
-  title   String?
-  comment String?
+  title   String? @db.VarChar(512)
+  comment String? @db.Text
 
   status ReviewStatus @default(PENDING)
 
-  adminReply String?
+  adminReply String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

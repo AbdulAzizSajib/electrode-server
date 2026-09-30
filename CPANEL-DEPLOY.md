@@ -1,7 +1,7 @@
 # cPanel (shared hosting) এ backend + database deploy
 
 Express 5 + Prisma 7 backend-টা cPanel-এর **Setup Node.js App** (Passenger, Node 22) দিয়ে,
-আর database cPanel-এর **PostgreSQL Databases** দিয়ে চালানোর নোট।
+আর database cPanel-এর **MySQL Databases** দিয়ে চালানোর নোট (host-এ MariaDB 10.11)।
 
 Build হয় নিজের PC-তে; সার্ভারে শুধু তৈরি হওয়া `dist/` + `node_modules` যায় — shared hosting-এ
 `tsc` আর `npm install` চালালে RAM/process limit-এ মাঝপথে kill হয়ে যায়।
@@ -10,12 +10,21 @@ Storefront-এর নোট আলাদা: [`nextjs/CPANEL-DEPLOY.md`](../next
 
 ---
 
-## ০. আগে এইটা পড়ুন — database migrate করা মানে data migrate করা নয়
+## ০. আগে এইটা পড়ুন — database engine বদলে গেছে, আর data যাচ্ছে না
 
-এই ডকুমেন্ট cPanel-এ **খালি নতুন database** দাঁড় করানোর নিয়ম বলে। Neon-এ এখন যা data আছে
-(product, order, customer) সেটা আপনাআপনি যাবে না — §3-এ আলাদা করে বলা আছে।
+Database এখন **PostgreSQL নয়, MySQL/MariaDB** — cPanel account-এ PostgreSQL নেই।
+পুরো data layer এর জন্য convert করা হয়েছে (`openspec/changes/switch-database-to-mysql/`)।
 
-**Neon account-টা অন্তত এক মাস বন্ধ করবেন না।** cPanel-এ কিছু ভাঙলে ফেরার জায়গা ওটাই।
+**নতুন database সম্পূর্ণ খালি শুরু হয়, আর seed করা হয় — restore করা হয় না।**
+Neon-এ থাকা product/order/customer কিছুই যাচ্ছে না; এটা সচেতন সিদ্ধান্ত, ভুলে বাদ পড়া নয়।
+দুই engine-এর dump format আলাদা, আর migration history নতুন করে শুরু হয়েছে, তাই পুরনো
+`pg_dump` বা পুরনো backup file এই database-এ কাজে লাগবে না।
+
+> Admin-এর backup/restore feature-ও পুরনো Postgres backup নেবে না: backup file-এ
+> `schemaVersion` হিসেবে সর্বশেষ migration-এর নাম থাকে, আর সেটা এখন আলাদা।
+
+**Neon account আর Vercel deployment অন্তত এক মাস বন্ধ করবেন না।** cPanel-এ কিছু ভাঙলে
+ফেরার জায়গা ওটাই — এই কাজের কোনো ধাপ Neon-এ লেখে না, তাই ফিরে যেতে কিছু undo করতে হবে না।
 
 ---
 
@@ -34,70 +43,73 @@ Code-এ **কিছু বদলায়নি** — CORS allowlist ([`src/app
 ### script দুটো জিনিস নিজে থেকে সামলায়
 
 - **`node_modules` কপি করে না, নতুন করে install করে।** এটা npm workspace — সব dependency
-  root-এ hoist হয়, `server/node_modules`-এ express/prisma/pg কিছুই নেই। কপি করলে archive
+  root-এ hoist হয়, `server/node_modules`-এ express/prisma/mariadb কিছুই নেই। কপি করলে archive
   unpack হয়, তারপর প্রথম request-এ মরে।
 - **`fix-imports.js` চলেছে কি না চেক করে।** না চললে `dist/`-এ extension ছাড়া import থাকে,
   Node-এর ESM loader সেটা নেয় না — build সফল দেখায়, boot-এ `ERR_MODULE_NOT_FOUND`।
 
-> Windows-এ build করা `node_modules` Linux-এ চলে কারণ Prisma 7 এখানে **PrismaPg driver adapter**
-> দিয়ে চলে — pure JavaScript, কোনো platform-specific query engine binary নেই (যাচাই করা হয়েছে)।
+> Windows-এ build করা `node_modules` Linux-এ চলে কারণ Prisma 7 এখানে **PrismaMariaDb driver
+> adapter** দিয়ে চলে — pure JavaScript, কোনো platform-specific query engine binary নেই।
 > ভবিষ্যতে `sharp` / `bcrypt`-এর মতো native package যোগ করলে এই সুবিধা শেষ, তখন Linux-এ (WSL)
 > build করতে হবে।
 
 ---
 
-## ২. cPanel-এ PostgreSQL database বানানো
+## ২. cPanel-এ MySQL database বানানো
 
-1. **cPanel → PostgreSQL Databases**
+1. **cPanel → MySQL Databases**
    - Database বানান, যেমন `cpuser_electrode`
    - User বানান + শক্ত password (বিশেষ অক্ষর `@ : / ?` এড়িয়ে চলুন — URL-এ encode করতে হয়)
    - User-টাকে database-এ **ALL PRIVILEGES** দিন
 
-2. **`pg_trgm` extension** — এটা ছাড়াও app চলবে, কিন্তু product search ধীর হয়ে যাবে।
-   cPanel Terminal-এ চেষ্টা করুন:
+2. **⚠️ Character set ঠিক করুন — migration চালানোর আগেই।**
+
+   cPanel Terminal-এ:
 
    ```bash
-   psql -U cpuser_dbuser -d cpuser_electrode -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+   mysql -u cpuser_dbuser -p cpuser_electrode -e "ALTER DATABASE cpuser_electrode CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
    ```
 
-   `permission denied to create extension` এলে hosting support-কে টিকিট করুন —
-   "please enable the pg_trgm extension on database cpuser_electrode"। বেশিরভাগ host করে দেয়।
+   **কেন এটা আগে:** Prisma-র migration প্রতিটা table-এ নিজে থেকেই
+   `utf8mb4 / utf8mb4_unicode_ci` বসায়, তাই app-এর নিজের table গুলো এমনিতেই নিরাপদ।
+   কিন্তু database-এর default তিনটা জিনিস নিয়ন্ত্রণ করে যেগুলো migration ছোঁয় না:
+   `_prisma_migrations` table, পরে হাতে বানানো যেকোনো table, আর session-এর default
+   charset — যেটা ঠিক করে raw query-র ভেতরের string literal কীভাবে column-এর সাথে
+   তুলনা হবে।
 
-   > **না পেলে কী হয়:** [`prisma/migrations/20260831000000_add_product_search_indexes/`](prisma/migrations/20260831000000_add_product_search_indexes/migration.sql)
-   > migration ব্যর্থ হবে। তখন ঐ migration-টা skip করতে হবে, আর `ProductService.searchProducts`
-   > sequential scan-এ নেমে আসবে — কয়েকশো product পর্যন্ত টের পাবেন না, হাজার ছাড়ালে search আটকে যাবে।
+   Server-এর default যদি `latin1` হয় (কিছু cPanel host-এ হয়), আর এই ধাপ বাদ পড়ে,
+   তাহলে কোনো error আসবে না — কিন্তু ঐ জায়গাগুলোয় বাংলা লেখা mojibake হয়ে বসবে।
+
+   `_ci` collation-টাও জরুরি: brand/tag/attribute/tax rule-এর **duplicate নাম ধরার
+   guard গুলো এখন collation-এর উপর নির্ভর করে**। আগে Prisma-কে `mode: "insensitive"`
+   বলা হতো; MySQL-এ ওরকম per-query option নেই। `_bin` বা `_cs` collation-এ ঐ guard গুলো
+   200 OK দিতেই থাকবে, শুধু "Samsung" আর "samsung" আলাদা ধরবে।
 
 3. **Connection string** — এই রূপে:
 
    ```
-   postgresql://cpuser_dbuser:PASSWORD@localhost:5432/cpuser_electrode
+   mysql://cpuser_dbuser:PASSWORD@localhost:3306/cpuser_electrode
    ```
 
-   App আর database একই সার্ভারে, তাই `localhost` — আর তাই **`sslmode` লাগে না**, Neon-এর মতো
-   `channel_binding`-ও না। মানে `DIRECT_DATABASE_URL`-এর দরকারও নেই (ওটা শুধু Neon-এর
-   channel_binding সমস্যার জন্য ছিল — [`prisma.config.ts`](prisma.config.ts) দেখুন)।
+   App আর database একই সার্ভারে, তাই `localhost` — আর তাই **`sslmode` লাগে না**, Neon-এর
+   মতো `channel_binding`-ও না। **`DIRECT_DATABASE_URL` আর নেই** — ওটা শুধু Neon-এর
+   channel_binding সমস্যার জন্য ছিল, এখন [`prisma.config.ts`](prisma.config.ts) সরাসরি
+   `DATABASE_URL` পড়ে।
+
+   > Host যদি connection সংখ্যা কম রাখে, URL-এ `?connection_limit=5` যোগ করুন।
+   > আসল সীমা কত সেটা host-ই বলতে পারে, তাই আগে থেকে বসানো নেই।
 
 ---
 
-## ৩. Neon থেকে data আনা (ঐচ্ছিক, কিন্তু সাধারণত দরকার)
+## ৩. Database ভরা — seed, restore নয়
 
-নিজের PC-তে, Neon থেকে dump নিন:
+§0-তে বলা হয়েছে: পুরনো data যাচ্ছে না। §5.6-এ `migrate deploy` চালানোর পর database-এ
+schema থাকবে কিন্তু কোনো সারি থাকবে না। প্রথম boot-এ [`utils/seed.ts`](src/app/utils/seed.ts)
+role আর super admin তৈরি করে (§7-এর শেষ অংশ দেখুন) — বাকি সব (store setting, category,
+product, banner) admin panel থেকে হাতে বসাতে হবে।
 
-```bash
-pg_dump "<Neon DATABASE_URL>" --no-owner --no-privileges --format=plain -f dump.sql
-```
-
-`dump.sql` cPanel-এ আপলোড করে Terminal-এ:
-
-```bash
-psql -U cpuser_dbuser -d cpuser_electrode -f ~/dump.sql
-```
-
-তারপর **§5-এর `migrate deploy` আর চালাবেন না** — dump-এ schema + `_prisma_migrations` টেবিল
-দুটোই আছে, Prisma নিজে থেকেই বুঝবে সব migration হয়ে গেছে।
-
-> `pg_dump`-এর version cPanel-এর PostgreSQL version-এর চেয়ে নতুন হলে restore-এ error আসতে পারে।
-> `psql -V` দিয়ে সার্ভারের version দেখে মিলিয়ে নিন।
+> পুরনো Neon data দেখার দরকার হলে Neon project-টা চালু আছে (§0)। ওখান থেকে দেখে দেখে
+> নতুন করে বসানো ছাড়া উপায় নেই — দুই engine-এর মধ্যে কোনো import path রাখা হয়নি।
 
 ---
 
@@ -156,7 +168,7 @@ mkdir -p tmp && touch tmp/restart.txt
    ```
    NODE_ENV=production
    PORT=5000
-   DATABASE_URL=postgresql://cpuser_dbuser:PASSWORD@localhost:5432/cpuser_electrode
+   DATABASE_URL=mysql://cpuser_dbuser:PASSWORD@localhost:3306/cpuser_electrode
    BETTER_AUTH_SECRET=...
    BETTER_AUTH_URL=https://api.yourdomain.com
    ACCESS_TOKEN_SECRET=...
@@ -190,12 +202,13 @@ mkdir -p tmp && touch tmp/restart.txt
    COURIER_SYNC_SECRET=...
    ```
 
-   > **`INTEGRATION_ENCRYPTION_KEY` Neon-এরটার সমান হতে হবে** যদি §3-এ data import করে থাকেন।
-   > আলাদা key দিলে merchant-এর courier credential আর decrypt হবে না, আর rotation tooling নেই।
+   > **`INTEGRATION_ENCRYPTION_KEY`** — database খালি শুরু হচ্ছে বলে এখানে নতুন key দেওয়া
+   > যায়। courier credential আবার নতুন করে বসাতে হবে, কারণ পুরনো কোনো row আসছে না।
 
    > `FRONTEND_URL` / `ADMIN_URL` শুধু redirect নয় — CORS allowlist-ও এখান থেকেই তৈরি হয়।
 
-6. **Database migration** (§3-এ dump restore করলে এই ধাপ বাদ)। cPanel Terminal-এ:
+6. **Database migration।** §2.2-এর `ALTER DATABASE` আগে চালানো হয়েছে কি না নিশ্চিত হয়ে
+   নিন — পরে চালালে ততক্ষণে তৈরি হয়ে যাওয়া `_prisma_migrations` ঠিক হবে না।
 
    ```bash
    source ~/nodevenv/backend/22/bin/activate
@@ -203,7 +216,17 @@ mkdir -p tmp && touch tmp/restart.txt
    npx prisma migrate deploy
    ```
 
-7. **Restart**: `touch ~/backend/tmp/restart.txt`
+7. **Charset যাচাই করুন — অন্য কিছু করার আগে।**
+
+   ```bash
+   npx tsx scripts/verify-mysql-charset.ts
+   ```
+
+   এটা database আর প্রতিটা table-এর charset/collation/engine পড়ে দেখে, আর একটা বাংলা
+   string server-এ পাঠিয়ে ফেরত এনে মিলিয়ে দেখে। এখানে FAIL এলে **এগোবেন না** — content
+   বসানোর পর ঠিক করা যাবে না।
+
+8. **Restart**: `touch ~/backend/tmp/restart.txt`
 
 ---
 
@@ -237,8 +260,17 @@ Backend-এর URL বদলাচ্ছে, তাই দুটোই **rebuild
 - **`Environment variable X is required`** — §5.5-এর কোনো একটা বাদ পড়েছে। Server ইচ্ছাকৃতভাবে
   boot করে না, যাতে অর্ধেক-configure করা deployment চুপচাপ না চলে।
 - **`ERR_MODULE_NOT_FOUND`** — archive `npm run build:cpanel` দিয়ে বানানো হয়নি।
-- **`P1001: Can't reach database server`** — `DATABASE_URL`-এ host `localhost` আছে কি না,
-  আর password-এ special character থাকলে URL-encode করা আছে কি না দেখুন।
+- **`P1001: Can't reach database server`** — `DATABASE_URL` `mysql://` দিয়ে শুরু হচ্ছে কি না,
+  host `localhost` আর port `3306` কি না, আর password-এ special character থাকলে URL-encode
+  করা আছে কি না দেখুন।
+- **`Data too long for column 'x'`** — ঐ column-টা `VARCHAR(191)` রয়ে গেছে যেখানে
+  `@db.Text` দরকার ছিল। [`string-field-audit.tsv`](openspec/changes/switch-database-to-mysql/string-field-audit.tsv)
+  দেখুন, schema-তে annotation যোগ করে নতুন migration বানান।
+- **একই নামের brand/tag দুবার তৈরি হচ্ছে** — collation `_ci` নয়। §2.2 আর
+  `verify-mysql-charset.ts` দেখুন।
+- **বাংলা লেখা `????` বা উল্টোপাল্টা দেখাচ্ছে** — §2.2-এর `ALTER DATABASE` বাদ পড়েছে।
+  ঐ data আর উদ্ধার হবে না; charset ঠিক করে আবার বসাতে হবে।
+- **`Too many connections`** — `DATABASE_URL`-এ `?connection_limit=5` যোগ করুন (§2.3)।
 - **Login হয় কিন্তু টেকে না** — HTTPS নেই (§5.2)।
 - **Admin/storefront-এ CORS error** — `FRONTEND_URL` / `ADMIN_URL` env-এ ঐ ডোমেইনটা নেই।
 - **প্রথম request ধীর** — অনেকক্ষণ কেউ না এলে Passenger app বন্ধ করে দেয়। স্বাভাবিক।

@@ -1,6 +1,6 @@
 # Server Agent Guide
 
-Express 5 + Prisma 7 + PostgreSQL API. Read the root [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md) for cross-app architecture and product rules.
+Express 5 + Prisma 7 + MySQL/MariaDB API. Read the root [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md) for cross-app architecture and product rules.
 
 ## Commands
 

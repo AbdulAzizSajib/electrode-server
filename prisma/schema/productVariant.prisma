@@ -8,7 +8,7 @@ model ProductVariant {
   /// is no longer what the variant *is*: `optionValues` below is the source of
   /// truth, and this is kept for the admin list, the cart line and order
   /// history, which want one readable string.
-  name String
+  name String @db.VarChar(512)
 
   sku String @unique
 
@@ -35,7 +35,7 @@ model ProductVariant {
   /// A value supplied directly is still honored for a variant with no linked
   /// images, so existing clients keep working.
   /// See link-product-images-to-variants design.md Decision 7.
-  image String?
+  image String? @db.VarChar(512)
 
   status Boolean @default(true)
 

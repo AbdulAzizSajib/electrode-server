@@ -955,10 +955,11 @@ export const SEARCH_RESULT_CAP = 8;
  * Relevance weights for product search, graded so ranking is explainable and
  * retunable without touching the endpoint's contract.
  *
- * The gap between the exact tiers (0.5–1.0) and the similarity tiers (≤0.4) is
- * load-bearing, not cosmetic: it is what guarantees an approximate match can
- * never outrank an exact one, satisfying the spec's "exact matches are
- * preferred" through arithmetic rather than through a second query.
+ * Every tier is an exact-match tier now. Under PostgreSQL there were two more
+ * below these — multipliers on pg_trgm's 0-1 similarity score — and the gap
+ * between the two groups was what guaranteed a fuzzy hit could never outrank a
+ * literal one. MariaDB has no trigram similarity, so the fuzzy tiers are gone
+ * rather than approximated, and the guarantee they needed is moot.
  */
 const SEARCH_WEIGHTS = {
     exactName: 1.0,
@@ -967,18 +968,14 @@ const SEARCH_WEIGHTS = {
     sku: 0.75,
     brand: 0.7,
     description: 0.5,
-    /** Multipliers on pg_trgm's 0–1 similarity, keeping fuzzy hits below every exact tier. */
-    nameSimilarity: 0.4,
-    brandSimilarity: 0.35,
 } as const;
 
 /**
- * Renders a weight as a typed SQL literal.
+ * Renders a weight as a SQL literal.
  *
- * These cannot be passed as query parameters: Postgres infers the type of an
- * untyped parameter from its context, and inside a `CASE` arm it settles on
- * `integer`, then rejects `0.9` outright ("invalid input syntax for type
- * integer"). Casting to `numeric` at the call site settles the type instead.
+ * These cannot be passed as query parameters: inside a `CASE` arm a bound
+ * parameter arrives untyped, and the comparison `GREATEST` then makes across
+ * the arms is not guaranteed to be numeric.
  *
  * Safe to inline because every value is a hard-coded number from the constant
  * above — never user input. `Number.isFinite` is a guard against a future edit
@@ -989,22 +986,46 @@ const weight = (value: number): Prisma.Sql => {
     if (!Number.isFinite(value)) {
         throw new Error(`Invalid search weight: ${value}`);
     }
-    return Prisma.raw(`${value}::numeric`);
+    return Prisma.raw(`${value}`);
 };
+
+/**
+ * Escapes the wildcards a shopper may type so they match literally.
+ *
+ * Without this, a search for `50%` matches every product, because `%` inside a
+ * LIKE pattern means "anything". The backslash case is listed first and the
+ * replacement runs in a single pass, so an escape character cannot be escaped
+ * twice. MySQL's default LIKE escape character is a backslash, which is what
+ * the emitted sequences rely on.
+ */
+const escapeLikeWildcards = (value: string): string =>
+    value.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 /**
  * Product suggestions for search-as-you-type.
  *
- * One database round trip by design. The listing endpoint spends ~1.5s on this
- * job (count + findMany with category/brand/image joins, then a separate
- * campaign-pricing query, all against a Singapore-hosted database where each
- * trip costs ~75ms); this returns the same answer in roughly one trip because
- * it makes exactly one, and carries back only what a dropdown renders.
+ * One database round trip by design: the listing endpoint does count + findMany
+ * with category/brand/image joins plus a separate campaign-pricing query, where
+ * this answers in a single statement carrying back only what a dropdown renders.
  *
- * Raw SQL because Prisma cannot express any of what makes this work: the
- * trigram operators, a computed relevance score, or ordering by that score.
- * Approximating it through the query builder would mean several queries plus
- * in-process sorting — precisely the sequential round trips being removed here.
+ * Raw SQL because Prisma cannot express a computed relevance score or an
+ * ordering by it. Approximating it through the query builder would mean several
+ * queries plus in-process sorting.
+ *
+ * WHAT MATCHES: the term as a literal substring of the product's name, SKU or
+ * description, or of its brand's name. Case is folded by the column collation
+ * (utf8mb4_unicode_ci), not by a lower() call, which is why no column here is
+ * wrapped in one — it would only hide the column from the optimiser for no gain.
+ *
+ * THIS IS A FULL SCAN, deliberately accepted rather than overlooked. A leading
+ * wildcard LIKE cannot use a B-tree, and MariaDB has no trigram index to fall
+ * back on the way gin_trgm_ops served this query under PostgreSQL. What makes
+ * it affordable is that the catalog belongs to a single retailer and the
+ * database now runs on the same machine as the app, so the scan costs a local
+ * read rather than a ~75ms network hop. If a catalog ever outgrows a scan, the
+ * answer is an external search index — not a FULLTEXT index, whose minimum
+ * token size and stopword list are server-level settings that shared hosting
+ * will not let us change.
  *
  * `term` is interpolated through Prisma's tagged template, which parameterises
  * rather than concatenates, so a search term cannot become SQL.
@@ -1022,6 +1043,12 @@ const searchProducts = async (term: string, limit?: number): Promise<ISearchedPr
 
     const w = SEARCH_WEIGHTS;
 
+    // Built here rather than with CONCAT in SQL so the wildcard escaping happens
+    // exactly once, in one place, on the way in.
+    const escaped = escapeLikeWildcards(trimmed);
+    const prefixPattern = `${escaped}%`;
+    const containsPattern = `%${escaped}%`;
+
     // `score` is selected because ORDER BY needs it, but it is an internal
     // ranking detail rather than part of the endpoint's contract — so it is
     // typed here and stripped before returning.
@@ -1033,68 +1060,46 @@ const searchProducts = async (term: string, limit?: number): Promise<ISearchedPr
             p.id,
             p.name,
             p.slug,
-            -- Quoted deliberately: unlike the old all-lowercase price column,
-            -- an unquoted camelCase name folds to offerprice and fails to resolve.
-            p."offerPrice"::text AS "offerPrice",
-            b.name AS "brandName",
+            -- Returned as text so the caller receives the exact decimal rather
+            -- than a float that has already lost the last paisa.
+            CAST(p.offerPrice AS CHAR) AS offerPrice,
+            b.name AS brandName,
             (
                 SELECT i.url
-                FROM "ProductImage" i
-                WHERE i."productId" = p.id
-                ORDER BY i."isPrimary" DESC, i."sortOrder" ASC
+                FROM ProductImage i
+                WHERE i.productId = p.id
+                ORDER BY i.isPrimary DESC, i.sortOrder ASC
                 LIMIT 1
             ) AS image,
             GREATEST(
                 CASE
-                    WHEN lower(p.name) = lower(${trimmed}) THEN ${weight(w.exactName)}
-                    WHEN lower(p.name) LIKE lower(${trimmed}) || '%' THEN ${weight(w.namePrefix)}
-                    WHEN lower(p.name) LIKE '%' || lower(${trimmed}) || '%' THEN ${weight(w.nameSubstring)}
-                    ELSE 0::numeric
+                    WHEN p.name = ${trimmed} THEN ${weight(w.exactName)}
+                    WHEN p.name LIKE ${prefixPattern} THEN ${weight(w.namePrefix)}
+                    WHEN p.name LIKE ${containsPattern} THEN ${weight(w.nameSubstring)}
+                    ELSE 0
                 END,
-                CASE WHEN lower(COALESCE(p.sku, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${weight(w.sku)} ELSE 0::numeric END,
-                CASE WHEN lower(COALESCE(b.name, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${weight(w.brand)} ELSE 0::numeric END,
-                CASE WHEN lower(COALESCE(p.description, '')) LIKE '%' || lower(${trimmed}) || '%'
-                     THEN ${weight(w.description)} ELSE 0::numeric END,
-                similarity(p.name, ${trimmed})::numeric * ${weight(w.nameSimilarity)},
-                similarity(COALESCE(b.name, ''), ${trimmed})::numeric * ${weight(w.brandSimilarity)}
+                CASE WHEN COALESCE(p.sku, '') LIKE ${containsPattern}
+                     THEN ${weight(w.sku)} ELSE 0 END,
+                CASE WHEN COALESCE(b.name, '') LIKE ${containsPattern}
+                     THEN ${weight(w.brand)} ELSE 0 END,
+                CASE WHEN COALESCE(p.description, '') LIKE ${containsPattern}
+                     THEN ${weight(w.description)} ELSE 0 END
             ) AS score
-        FROM "Product" p
-        LEFT JOIN "Brand" b ON b.id = p."brandId"
-        WHERE p.status = ${ProductStatus.ACTIVE}::"ProductStatus"
-          -- WHICH products match is decided by two index-servable arms, one
-          -- per table; HOW WELL they match is still scored above, on the
-          -- matches alone.
+        FROM Product p
+        LEFT JOIN Brand b ON b.id = p.brandId
+        WHERE p.status = ${ProductStatus.ACTIVE}
+          -- One OR across the join. Under PostgreSQL this was split into two
+          -- UNION'ed arms so each could be served by its own trigram index;
+          -- with no such index on either side the split bought nothing and
+          -- cost a subquery, so it is back to the plain form.
           --
-          -- This used to be one OR of lower(col) LIKE ... across Product and
-          -- the joined Brand. lower() hides the column from any index, and an
-          -- OR spanning two tables cannot be answered by indexes on either, so
-          -- every keystroke scanned the whole catalog. Each arm below matches
-          -- a raw column with ILIKE or the trigram % operator, which the
-          -- gin_trgm_ops indexes serve (see Product.prisma, Brand.prisma).
-          --
-          -- Equivalent, not approximately so: ILIKE is lower() LIKE lower(),
-          -- a NULL column matches nothing just as COALESCE(col, '') matched
-          -- nothing for a non-empty term, and a product with no brand is left
-          -- out of the brand arm just as '' failed both brand predicates.
-          -- scripts/verify-product-search.ts compares every result against
-          -- the old query.
-          AND p.id IN (
-                SELECT m.id
-                FROM "Product" m
-                WHERE m.name ILIKE '%' || ${trimmed} || '%'
-                   OR m.sku ILIKE '%' || ${trimmed} || '%'
-                   OR m.description ILIKE '%' || ${trimmed} || '%'
-                   -- Trigram fallback, in the same round trip as the exact
-                   -- match rather than a second query.
-                   OR m.name % ${trimmed}
-                UNION
-                SELECT m.id
-                FROM "Product" m
-                JOIN "Brand" mb ON mb.id = m."brandId"
-                WHERE mb.name ILIKE '%' || ${trimmed} || '%'
-                   OR mb.name % ${trimmed}
+          -- A NULL column matches nothing here, exactly as COALESCE(col, '')
+          -- matched nothing for a non-empty term in the scoring above.
+          AND (
+                p.name LIKE ${containsPattern}
+             OR p.sku LIKE ${containsPattern}
+             OR p.description LIKE ${containsPattern}
+             OR b.name LIKE ${containsPattern}
           )
         -- The name tiebreak is what makes repeated identical requests return
         -- the same order; score alone would not guarantee it.
@@ -1159,25 +1164,25 @@ const getRelatedProducts = async (slug: string, limit?: number) => {
     const maxPrice = basePrice * (1 + RELATED_PRICE_BAND);
 
     const scored = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT p."id"
-        FROM "Product" p
-        WHERE p."status" = 'ACTIVE'
-          AND p."id" <> ${source.id}
+        SELECT p.id
+        FROM Product p
+        WHERE p.status = 'ACTIVE'
+          AND p.id <> ${source.id}
         ORDER BY (
-            CASE WHEN ${source.categoryId}::text IS NOT NULL AND p."categoryId" = ${source.categoryId}
+            CASE WHEN ${source.categoryId} IS NOT NULL AND p.categoryId = ${source.categoryId}
                  THEN ${RELATED_SCORE_SAME_CATEGORY} ELSE 0 END
-          + CASE WHEN ${source.brandId}::text IS NOT NULL AND p."brandId" = ${source.brandId}
+          + CASE WHEN ${source.brandId} IS NOT NULL AND p.brandId = ${source.brandId}
                  THEN ${RELATED_SCORE_SAME_BRAND} ELSE 0 END
           + CASE WHEN EXISTS (
-                    SELECT 1 FROM "ProductCategory" pc
-                    JOIN "ProductCategory" spc ON spc."categoryId" = pc."categoryId"
-                    WHERE pc."productId" = p."id" AND spc."productId" = ${source.id}
+                    SELECT 1 FROM ProductCategory pc
+                    JOIN ProductCategory spc ON spc.categoryId = pc.categoryId
+                    WHERE pc.productId = p.id AND spc.productId = ${source.id}
                  ) THEN ${RELATED_SCORE_SHARED_CATEGORY} ELSE 0 END
-          + CASE WHEN p."offerPrice" BETWEEN ${minPrice} AND ${maxPrice}
+          + CASE WHEN p.offerPrice BETWEEN ${minPrice} AND ${maxPrice}
                  THEN ${RELATED_SCORE_PRICE_BAND} ELSE 0 END
         ) DESC,
-        p."isFeatured" DESC,
-        p."createdAt" DESC
+        p.isFeatured DESC,
+        p.createdAt DESC
         LIMIT ${take}
     `;
 
@@ -1736,7 +1741,7 @@ const updateProduct = async (userId: string, id: string, payload: IUpdateProduct
  * page with no product cannot price, cannot quote and cannot order, so the
  * campaign has to be dealt with first. That constraint fires either way — the
  * only question is whether the admin gets told which campaign to go delete, or
- * gets Postgres naming a foreign key it has never heard of.
+ * gets MySQL naming a foreign key it has never heard of.
  *
  * Guards the DELETE path only. Archiving leaves the row in place, so the FK is
  * never involved, and a campaign pointing at an archived product already

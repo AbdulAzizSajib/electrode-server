@@ -5,7 +5,7 @@ import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS, PROMO_SECTION_KEY } from "./s
 
 /**
  * These schemas are the ONLY thing standing between a malformed nav tree and
- * the database — Postgres does not constrain the shape of a Json column. Every
+ * the database — MySQL does not constrain the shape of a Json column. Every
  * write path must run through them; reads are correspondingly trusted.
  */
 
@@ -96,7 +96,7 @@ export const announcementBarSchema = z.object({
  * technical limit.
  *
  * As with every Json column on this row, THIS SCHEMA IS THE ONLY GATE —
- * Postgres constrains nothing inside `middleBarLinks`.
+ * MySQL constrains nothing inside `middleBarLinks`.
  *
  * See openspec/changes/add-header-middle-bar-links, design.md Decision 5.
  */
@@ -136,7 +136,7 @@ export const MAX_PERKS = 4;
  * The perks band's columns, in the order it renders them.
  *
  * As with every Json column on this row, THIS SCHEMA IS THE ONLY GATE —
- * Postgres constrains nothing inside `perks`.
+ * MySQL constrains nothing inside `perks`.
  *
  * EVERY FIELD IS REQUIRED, unlike the optional `icon` on a middle-bar link.
  * A perk with no icon leaves a hole in a row of otherwise-aligned columns, and
@@ -505,7 +505,7 @@ const shopPixelIdSchema = z
 /**
  * The storefront's floating chat bubble.
  *
- * Postgres constrains no Json column, so this schema is the ONLY gate on the
+ * MySQL constrains no Json column, so this schema is the ONLY gate on the
  * block's shape — and on the one rule that matters here: an ENABLED widget must
  * have somewhere to go.
  *
@@ -601,7 +601,7 @@ export const chatWidgetSchema = z
  * `IntegrationCredential`, encrypted, and the two halves of that one feature are
  * stored apart on purpose — see the column's comment in StoreSetting.prisma.
  *
- * Postgres constrains no Json column, so this schema is the ONLY gate. Every
+ * MySQL constrains no Json column, so this schema is the ONLY gate. Every
  * rule the storefront relies on has to be expressed here or it is not enforced
  * anywhere.
  */
@@ -1094,7 +1094,7 @@ export const MAX_CURRENCY_DECIMALS = 4;
 /**
  * How tall a header or footer logo may render, in pixels.
  *
- * THIS IS THE ONLY GATE. The columns are plain `Int` — Postgres could express
+ * THIS IS THE ONLY GATE. The columns are plain `Int` — MySQL could express
  * the range as a CHECK, but the convention on this row is a single Zod bound
  * for anything the schema cannot state (see `currencyDecimals` above), because
  * two gates that can disagree is worse than one.

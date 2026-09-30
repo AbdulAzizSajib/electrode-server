@@ -447,24 +447,37 @@ const deductStockForOrderLines = async (
      * Risks, tasks.md 4.9.
      */
 
-    // Every decrement in one statement. `CASE` keeps the per-row amounts
-    // distinct, and summing lets one row take from two lines correctly.
+    // Every decrement in one statement, so a checkout costs one round trip
+    // here however many lines it has. Summing first lets one stock row take
+    // from two order lines correctly.
     if (decrements.length > 0) {
         const totalById = new Map<string, number>();
         for (const { id, take } of decrements) {
             totalById.set(id, (totalById.get(id) ?? 0) + take);
         }
 
+        /*
+         * The per-row amounts are carried in as a derived table of UNION ALL'd
+         * SELECTs, which every MySQL and MariaDB version accepts.
+         *
+         * PostgreSQL did this with `unnest(ids::text[], takes::int[])` — two
+         * arrays zipped into rows. MySQL has no array type and no unnest, and
+         * the alternatives are worse: a VALUES table constructor cannot be
+         * given column names portably, and JSON_TABLE needs MariaDB 10.6+.
+         * The UNION ALL form names its columns in the first SELECT and works
+         * everywhere.
+         *
+         * Every id and quantity is still a bound parameter — Prisma.join only
+         * assembles the fragments, it does not interpolate the values.
+         */
+        const pairs = [...totalById.entries()].map(
+            ([id, take]) => Prisma.sql`SELECT ${id} AS id, ${take} AS take`,
+        );
+
         await tx.$executeRaw`
-            UPDATE "Stock" AS s
-            SET quantity = s.quantity - v.take
-            FROM (
-                SELECT * FROM unnest(
-                    ${[...totalById.keys()]}::text[],
-                    ${[...totalById.values()]}::int[]
-                ) AS t(id, take)
-            ) AS v
-            WHERE s.id = v.id
+            UPDATE Stock s
+            JOIN (${Prisma.join(pairs, " UNION ALL ")}) v ON s.id = v.id
+            SET s.quantity = s.quantity - v.take
         `;
     }
 

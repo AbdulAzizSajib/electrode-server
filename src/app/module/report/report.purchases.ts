@@ -112,18 +112,18 @@ const PURCHASE_INCLUDE = {
  */
 const owingIdsInRange = async (range: IResolvedRange, supplierId?: string) => {
     const rows = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT po."id"
-        FROM "PurchaseOrder" po
+        SELECT po.id
+        FROM PurchaseOrder po
         LEFT JOIN (
-            SELECT "purchaseOrderId", SUM("amount") AS paid
-            FROM "SupplierPayment"
-            GROUP BY "purchaseOrderId"
-        ) sp ON sp."purchaseOrderId" = po."id"
-        WHERE po."createdAt" >= ${range.start}
-          AND po."createdAt" <= ${range.end}
-          AND po."status" <> 'CANCELLED'
-          ${supplierId ? Prisma.sql`AND po."supplierId" = ${supplierId}` : Prisma.empty}
-          AND po."totalAmount" - COALESCE(sp.paid, 0) > 0
+            SELECT purchaseOrderId, SUM(amount) AS paid
+            FROM SupplierPayment
+            GROUP BY purchaseOrderId
+        ) sp ON sp.purchaseOrderId = po.id
+        WHERE po.createdAt >= ${range.start}
+          AND po.createdAt <= ${range.end}
+          AND po.status <> 'CANCELLED'
+          ${supplierId ? Prisma.sql`AND po.supplierId = ${supplierId}` : Prisma.empty}
+          AND po.totalAmount - COALESCE(sp.paid, 0) > 0
     `;
 
     return rows.map((row) => row.id);
