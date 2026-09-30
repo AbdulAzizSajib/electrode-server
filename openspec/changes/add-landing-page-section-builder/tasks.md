@@ -44,3 +44,18 @@
 - [x] 6.3 Run `npx tsx scripts/verify-revalidate-tags.ts` to confirm the backend and storefront tag sets still match. Verify it passes.
 - [x] 6.4 Run `npm run lint --workspace server`, `npm run test --workspace nextjs` and `npm run test --workspace admin`. Verify all pass, and report any pre-existing failures separately rather than folding them into this change.
 - [x] 6.5 Check the rendered page at phone and desktop width for horizontal scrolling and for two adjacent bands sharing a surface, in a reordered configuration and in one with sections disabled. Verify visually at both widths.
+
+## 7. Splitting the product from the order form
+
+Added after the change first shipped: `HERO` rendered the gallery, the copy, the
+price and the order form as one unreorderable block, so the one arrangement
+campaign pages most often want — the form first, for traffic that already knows
+from the ad what it is buying — could not be expressed at all.
+
+- [x] 7.1 Add `ORDER_FORM` to `LANDING_SECTION_KEYS`, to `DEFAULT_LANDING_SECTION_ORDER` directly after `HERO`, and to `LANDING_REQUIRED_SECTION_KEYS` in `landing-page.constant.ts`. **Keep the `HERO` key for the product half** rather than renaming it — every order stored since the editor shipped names it, and a rename would drop that entry on read and refuse it on the next save. Verify `npm run lint --workspace server` passes.
+- [x] 7.2 Mirror all three into `frontend/src/lib/landing-sections.ts` (default order, known keys, required keys) and `admin/src/lib/api/landing-pages.ts` (keys, default order, required keys, registry labels). Verify `npx tsx scripts/verify-landing-section-shapes.ts` passes on all three mirrors.
+- [x] 7.3 **Repoint `verify-landing-section-shapes.ts` and the other verify scripts at `frontend/`.** They still named the storefront `nextjs/`, so the mirror comparison had been reporting `MISSING` and returning early — the one check that would have caught a drifting key was itself broken. Verify each script now reads its mirrors and passes.
+- [x] 7.4 Render both keys from the folded list in `LandingPageView.tsx` and delete the hero block drawn above it, so the two are reorderable like every other section. Update the file's header comment: it stated the hero was outside the fold, which this makes false.
+- [x] 7.5 Drop the surface-alternation `offset` default from 1 to 0. It was 1 only because the hero was a band the count could not see; with every band in the list the hazard is gone by construction. Verify no two adjacent content bands share a surface, hero included.
+- [x] 7.6 Add the same restore pass to the admin's section editor that the storefront resolver has. Without it a page saved before the split shows a list missing the order form, and the merchant's next save is refused by a rule about a row the screen never showed them.
+- [x] 7.7 Verify end to end against a running storefront: the brand, then the product band, then the order form on a different surface; and `npx tsc --noEmit` plus the existing suites green in all three apps.

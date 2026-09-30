@@ -108,12 +108,31 @@ export const MAX_ORDER_QUANTITY = 100;
  */
 export const LANDING_SECTION_KEYS = [
     /*
-     * The gallery, headline, price and order form, as one block.
+     * The product: gallery, headline, subheadline, price and trust badges.
      *
-     * NOT DISABLEABLE and not reorderable out of first position — see
-     * LANDING_REQUIRED_SECTION_KEYS below. It is the page's reason to exist.
+     * THE KEY KEEPS ITS OLD NAME although it no longer covers the order
+     * form. Every sectionConfig stored since the editor shipped names
+     * "HERO" for this block, and renaming it would drop that entry on read
+     * and refuse it on the next save — losing the merchant's chosen position
+     * for a word they never see. What they read is the admin's label, and
+     * that says "Product".
+     *
+     * NOT DISABLEABLE — see LANDING_REQUIRED_SECTION_KEYS below — but
+     * reorderable like any other section, including below the order form.
      */
     "HERO",
+    /*
+     * The order form: the fields, the package picker and the summary.
+     *
+     * SPLIT OUT OF "HERO", which rendered the two as one block and so could
+     * not express "form first" or "form after the reviews" at all. Where the
+     * product sits and where the form sits are two decisions, and a merchant
+     * moving one almost never means the other.
+     *
+     * NOT DISABLEABLE either, and for the harder reason of the two: a
+     * campaign page with no order form is a paid click that cannot buy.
+     */
+    "ORDER_FORM",
     /** The countdown and the scarcity meter — both answer "why now". */
     "OFFER",
     /** The benefit cards. */
@@ -159,6 +178,7 @@ export type LandingSectionKey = (typeof LANDING_SECTION_KEYS)[number];
  */
 export const DEFAULT_LANDING_SECTION_ORDER: readonly LandingSectionKey[] = [
     "HERO",
+    "ORDER_FORM",
     "OFFER",
     "HIGHLIGHTS",
     "CTA",
@@ -192,10 +212,16 @@ export const LANDING_REPEATABLE_SECTION_KEYS: readonly LandingSectionKey[] = [
  *
  * Enforced in the service as well as hidden in the admin, because a warning is
  * dismissed once and the blank page stays live while the ads run. A campaign
- * with no hero and no order form is a paid click that can buy nothing.
+ * with no product and no order form is a paid click that can buy nothing.
+ *
+ * BOTH, since the two were split apart. While they were one key, requiring it
+ * covered the form as a side effect; separately, a page can be saved with the
+ * form removed and still have a product on it, which is the worse of the two
+ * blank pages — it looks like it works.
  */
 export const LANDING_REQUIRED_SECTION_KEYS: readonly LandingSectionKey[] = [
     "HERO",
+    "ORDER_FORM",
 ] as const;
 
 /**

@@ -65,7 +65,7 @@ interface BrandSource {
 }
 
 /**
- * Mirrors `resolveBrandSlot` in the storefront (nextjs/src/lib/brand-slot.ts).
+ * Mirrors `resolveBrandSlot` in the storefront (frontend/src/lib/brand-slot.ts).
  *
  * Three rules, in order: the mode decides; the footer falls back to the
  * header's artwork; anything unresolved falls back to text.

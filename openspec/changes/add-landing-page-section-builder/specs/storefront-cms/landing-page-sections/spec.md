@@ -36,9 +36,40 @@ including the sections that repeat.
 - **WHEN** one is ordered with the FAQ early and the other with the FAQ last
 - **THEN** each renders its own order, and neither affects the other
 
+### Requirement: The product and the order form are separate sections
+
+The system SHALL treat what the page sells and the form that orders it as two
+independently orderable sections, not as one block. A merchant SHALL be able
+to place the order form above the product, below it, or anywhere else in the
+page, without a code change.
+
+Neither section SHALL be removable or switchable off. The system SHALL refuse
+to store an order that omits either, SHALL restore either one back at its
+default position when reading an order that has lost it, and SHALL offer the
+merchant no control that would switch either off.
+
+#### Scenario: Merchant puts the order form first
+
+- **WHEN** a merchant moves the order form above the product section and saves
+- **THEN** the campaign page renders the form first, and the product below it
+- **AND** the two render as visually distinct bands rather than as one block
+
+#### Scenario: A page saved before the two were split
+
+- **GIVEN** a stored order written while the product and the order form were one section
+- **WHEN** the page is rendered, and when the merchant opens the section editor
+- **THEN** the order form appears directly after the product, which is where it rendered before
+- **AND** the merchant is not asked to re-save the page for this to happen
+
+#### Scenario: A request omits the order form
+
+- **WHEN** a request stores an order that does not name the order form section, or names it switched off
+- **THEN** the request is rejected rather than stored
+
 ### Requirement: A section can be switched off without losing its content
 
-The system SHALL let a merchant disable any section. A disabled section SHALL be
+The system SHALL let a merchant disable any section other than the two the
+requirement above names as required. A disabled section SHALL be
 omitted from the rendered page, and its content SHALL be retained unchanged.
 Re-enabling a section SHALL restore exactly the content it had, with no
 re-authoring.

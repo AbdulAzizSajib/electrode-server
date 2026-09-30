@@ -3,7 +3,7 @@
  *
  * The section keys, the default order, which keys may repeat, which may not be
  * switched off, and the custom-section bounds all exist THREE times: here in
- * `landing-page.constant.ts`, in `nextjs/src/lib/landing-sections.ts`, and in
+ * `landing-page.constant.ts`, in `frontend/src/lib/landing-sections.ts`, and in
  * `admin/src/lib/api/landing-pages.ts`. The packages never import each other,
  * so a key renamed in one place produces NO type error anywhere — and every
  * failure that follows is silent:
@@ -96,7 +96,7 @@ const numberLiteral = (source: string, name: string): number | null => {
     return match ? Number(match[1]) : null;
 };
 
-const STOREFRONT = "nextjs/src/lib/landing-sections.ts";
+const STOREFRONT = "frontend/src/lib/landing-sections.ts";
 const ADMIN = "admin/src/lib/api/landing-pages.ts";
 
 const main = () => {

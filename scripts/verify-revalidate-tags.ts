@@ -36,7 +36,7 @@ import path from "node:path";
 
 const SERVER_ROOT = process.cwd();
 const BACKEND_TAGS_FILE = path.join(SERVER_ROOT, "src", "app", "utils", "revalidateStorefront.ts");
-const STOREFRONT_ROOT = path.join(SERVER_ROOT, "..", "nextjs");
+const STOREFRONT_ROOT = path.join(SERVER_ROOT, "..", "frontend");
 const REVALIDATE_ROUTE = path.join(STOREFRONT_ROOT, "src", "app", "api", "revalidate", "route.ts");
 const SERVICES_DIR = path.join(STOREFRONT_ROOT, "src", "services");
 const MODULE_DIR = path.join(SERVER_ROOT, "src", "app", "module");

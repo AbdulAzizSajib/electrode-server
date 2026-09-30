@@ -1,7 +1,7 @@
 /**
  * Pins the three hand-synced copies of a landing page's offer shapes.
  *
- * The shape lives in the backend's Zod schema, in `nextjs/src/types/landing-page.ts`,
+ * The shape lives in the backend's Zod schema, in `frontend/src/types/landing-page.ts`,
  * and in `admin/src/lib/api/landing-pages.ts`. The packages never import each
  * other, so a field renamed in one place produces NO type error anywhere: the
  * admin simply saves a key the backend strips, and the merchant's change
@@ -137,7 +137,7 @@ const ALL_KEYS = [...new Set([...OFFER_KEYS, ...PACKAGE_KEYS, ...THEME_KEYS, "im
 const NOT_IN: Record<string, string[]> = { admin: ["scarcity"] };
 
 const mirrors: [string, string][] = [
-    ["storefront", "nextjs/src/types/landing-page.ts"],
+    ["storefront", "frontend/src/types/landing-page.ts"],
     ["admin", "admin/src/lib/api/landing-pages.ts"],
 ];
 
@@ -205,7 +205,7 @@ for (const [constant, value] of [
  *   - the package ribbon's white on `bg-sale`, which is the shop-wide "this is
  *     the deal" signal and must mean the same thing on every page.
  */
-const LANDING_DIR = join(ROOT, "nextjs", "src", "components", "landing");
+const LANDING_DIR = join(ROOT, "frontend", "src", "components", "landing");
 const ALLOWED_HARDCODED = ["bg-black/35", "text-white"];
 
 const offenders: string[] = [];

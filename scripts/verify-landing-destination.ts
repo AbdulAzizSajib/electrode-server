@@ -32,7 +32,7 @@
  * oversight: `resolveDeliveryOption` — the map from a district to an option key
  * — is storefront-only, by design.md Decision 4. It cannot be imported from
  * here (different tsconfig, different module resolution), and its own unit
- * tests live in `nextjs/src/lib/delivery-destination.test.ts`. What IS checked
+ * tests live in `frontend/src/lib/delivery-destination.test.ts`. What IS checked
  * here is the seam between them: that the option keys that file resolves to are
  * keys this shop actually has. A rename on either side is otherwise silent.
  *
@@ -102,7 +102,7 @@ const main = async () => {
      * just stops deriving anything, silently.
      */
     const resolverSource = readFileSync(
-        join(ROOT, "nextjs", "src", "lib", "delivery-destination.ts"),
+        join(ROOT, "frontend", "src", "lib", "delivery-destination.ts"),
         "utf-8",
     );
     /*

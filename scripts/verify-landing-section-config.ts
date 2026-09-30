@@ -119,6 +119,7 @@ const main = async () => {
      */
     const storedOrder: ILandingSectionConfigEntry[] = [
         { key: "HERO", enabled: true },
+        { key: "ORDER_FORM", enabled: true },
         { key: "QUOTES", enabled: true },
         { key: "FAQS", enabled: false },
         { key: "CUSTOM", enabled: true, id: "guarantee", heading: "গ্যারান্টি", layout: "HIGHLIGHT" },
@@ -254,32 +255,39 @@ const main = async () => {
 
         refuses("an unknown section key", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "NOT_A_SECTION", enabled: true },
         ]);
         refuses("two custom sections sharing one id", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "CUSTOM", enabled: true, id: "same", heading: "One" },
             { key: "CUSTOM", enabled: true, id: "same", heading: "Two" },
         ]);
         refuses("a custom section with no id", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "CUSTOM", enabled: true, heading: "Anonymous" },
         ]);
         refuses("a custom section with neither heading nor body", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "CUSTOM", enabled: true, id: "empty" },
         ]);
         refuses("a built-in section carrying custom content", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "FAQS", enabled: true, heading: "not mine" },
         ]);
         refuses("a repeated non-repeatable key", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             { key: "QUOTES", enabled: true },
             { key: "QUOTES", enabled: true },
         ]);
         refuses("more custom sections than the limit", [
             { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: true },
             ...Array.from({ length: MAX_CUSTOM_SECTIONS + 1 }, (_, i) => ({
                 key: "CUSTOM",
                 enabled: true,
@@ -300,12 +308,32 @@ const main = async () => {
         refuses("an order with no HERO at all", [{ key: "FAQS", enabled: true }]);
         refuses("an order with HERO switched off", [
             { key: "HERO", enabled: false },
+            { key: "ORDER_FORM", enabled: true },
+            { key: "FAQS", enabled: true },
+        ]);
+
+        /*
+         * The order form is required on exactly the same terms as the product,
+         * and is the worse of the two to lose: a page with a product on it and
+         * no form still looks like it works.
+         */
+        refuses("an order with no ORDER_FORM at all", [
+            { key: "HERO", enabled: true },
+            { key: "FAQS", enabled: true },
+        ]);
+        refuses("an order with ORDER_FORM switched off", [
+            { key: "HERO", enabled: true },
+            { key: "ORDER_FORM", enabled: false },
             { key: "FAQS", enabled: true },
         ]);
 
         // And the service must refuse it too, not just the schema in isolation.
         const rejected = await LandingPageService.updateLandingPage(undefined, configured!.id, {
-            sectionConfig: [{ key: "HERO", enabled: true }, { key: "QUOTES", enabled: true }],
+            sectionConfig: [
+                { key: "HERO", enabled: true },
+                { key: "ORDER_FORM", enabled: true },
+                { key: "QUOTES", enabled: true },
+            ],
         } as never)
             .then(() => null)
             .catch((error: Error) => error.message);
