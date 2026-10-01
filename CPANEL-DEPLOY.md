@@ -249,7 +249,96 @@ Backend-এর URL বদলাচ্ছে, তাই দুটোই **rebuild
 
 ---
 
-## ৭. সমস্যা হলে
+## ৭. Demo host — এক deployment, কয়েকটা demo shop
+
+**এই অংশটা শুধু আপনার নিজের demo সার্ভারের জন্য। কোনো client-এর cPanel-এ এর কিছুই লাগে না —
+সেখানে §৫-এর env তালিকাই যথেষ্ট, আর `DEMO_DATABASES` সেট না করলে এই পুরো ব্যবস্থাটা নিষ্ক্রিয়।**
+
+Prospect-দের দেখানোর জন্য কয়েকটা আলাদা দোকান — একেকটা আলাদা subdomain-এ, আলাদা database-এ —
+কিন্তু **একটাই Node app, একটাই storefront process**। Demo বাড়লেও RAM বাড়ে না, যেটা ২ GB-র
+account-এ গুরুত্বপূর্ণ।
+
+আপনার নিজের আসল site এই demo গুলোর সাথে **মেশাবেন না** — ওটা আলাদা stack হিসেবে §১–§৬ ধরে
+deploy করুন। তাতে একটা demo ভাঙলে আপনার business site অক্ষত থাকে, আর client যে পথে deploy
+হবে সেটা আপনি প্রতিদিন নিজেই যাচাই করতে থাকেন।
+
+### ৭.১ প্রতি demo-র জন্য subdomain + database
+
+cPanel-এ Subdomain সীমাহীন, Database-ও। প্রতিটা demo-র জন্য:
+
+1. **Subdomains** → `fashion`, `grocery` … (যেমন `fashion.apnardomain.com`)
+2. **MySQL Databases** → একটা করে DB, যেমন `cpuser_demo_fashion`
+3. **§২.২-এর `ALTER DATABASE` প্রতিটাতে চালান** — charset ঠিক না করলে বাংলা লেখা mojibake হবে,
+   আর সেটা পরে সারানো যায় না
+4. প্রতিটাতে migration চালান:
+
+   ```bash
+   source ~/nodevenv/backend/22/bin/activate && cd ~/backend
+   DATABASE_URL="mysql://cpuser_u:pass@localhost:3306/cpuser_demo_fashion" npx prisma migrate deploy
+   ```
+
+> **Subdomain-এর নাম-ই demo key।** `fashion.apnardomain.com` → key `fashion`। তাই subdomain-এর
+> নাম আর `DEMO_DATABASES`-এর key হুবহু এক হতে হবে।
+
+### ৭.২ `DEMO_DATABASES`
+
+Backend app-এর Environment variables-এ একটা লাইন — JSON, key → connection string:
+
+```
+DEMO_DATABASES={"fashion":"mysql://cpuser_u:pass@localhost:3306/cpuser_demo_fashion?connection_limit=2","grocery":"mysql://cpuser_u:pass@localhost:3306/cpuser_demo_grocery?connection_limit=2"}
+```
+
+**`?connection_limit=2` বাদ দেবেন না।** প্রতিটা demo নিজের connection pool খোলে, আর shared
+hosting-এ MySQL-এর concurrent connection সীমিত। ৪টা demo × default pool মিলে সীমা ছাড়ালে
+`Too many connections` এসে **সব** demo একসাথে বসে যাবে।
+
+`DATABASE_URL` আগের মতোই থাকবে — ওটা fallback: header ছাড়া বা অচেনা key নিয়ে আসা request
+ওই database থেকেই উত্তর পাবে।
+
+### ৭.৩ Storefront আর admin
+
+**দুটোরই একটা করে build, সব demo-র জন্য।**
+
+- **Storefront** — চারটে subdomain-ই একই Node app-এ যাবে। App নিজের incoming hostname দেখে
+  demo চিনে নেয় আর API-কে জানায়।
+- **Admin** — static file, তাই প্রতি demo subdomain-এ একই `dist/` রাখলেই হয়।
+  **`VITE_API_BASE_URL` সেট করবেন না** — না থাকলে panel নিজের origin-কে API ধরে, আর সেটাই
+  এক build-কে সব demo-তে কাজ করায়। (Client-এর install-এ উল্টো — সেখানে ওটা সেট করতেই হবে,
+  §৬ দেখুন।)
+
+### ৭.৪ Demo আবার আগের অবস্থায় ফেরানো
+
+Prospect ঘাঁটাঘাঁটি করে data এলোমেলো করে ফেললে — seed করার পরপরই প্রতিটা demo-র একটা dump
+রেখে দিন:
+
+```bash
+mysqldump -u cpuser_u -p cpuser_demo_fashion > ~/demo-backups/fashion.sql
+```
+
+ফেরাতে:
+
+```bash
+mysql -u cpuser_u -p cpuser_demo_fashion < ~/demo-backups/fashion.sql
+```
+
+ইচ্ছাকৃতভাবে হাতে — এক ক্লিকে DB মুছে ফেলার বোতাম বানানো হয়নি, কারণ ভুল database-এ চাপ পড়লে
+ফেরার পথ থাকে না।
+
+### ৭.৫ ⚠️ Demo key নিরাপত্তার সীমা নয়
+
+Demo key শুধু **routing** — কোন database, তাই বলে। যে কেউ অন্য demo-র key পাঠিয়ে সেই demo-র
+data দেখতে পারবে। এটা ঠেকানো হয়নি, ইচ্ছাকৃতভাবে।
+
+**তাই `DEMO_DATABASES` সেট করা আছে এমন কোনো deployment-এ আসল customer data রাখবেন না।**
+Demo host-এ শুধু দেখানোর জন্য বানানো data থাকবে।
+
+Client-এর install-এ এই ঝুঁকি নেই — সেখানে map নেই, তাই header সম্পূর্ণ উপেক্ষিত।
+
+কখনো যদি সত্যিকারের আলাদা করার দরকার হয়, এই নকশাটা তার জন্য নয় — তখন একে বদলাতে হবে,
+শক্ত করার চেষ্টা নয়। (`server/openspec/changes/add-multi-demo-hosting/design.md`, Decision 6)
+
+---
+## ৮. সমস্যা হলে
 
 - **503 / "Incomplete response"** — হাতে চালিয়ে আসল error দেখুন:
   ```bash

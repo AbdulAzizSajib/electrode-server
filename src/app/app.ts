@@ -6,6 +6,7 @@ import express, { Application, Request, Response } from "express";
 import qs from "qs";
 import { envVars } from "./config/env";
 import { auth } from "./lib/auth";
+import { DEMO_KEY_HEADER, resolveDemoKey, runInDemoScope } from "./lib/tenant";
 import { globalErrorHandler } from "./middleware/globalErrorHandler";
 import { notFound } from "./middleware/notFound";
 import { TEMPLATES_DIR } from "./utils/templatePath";
@@ -71,8 +72,30 @@ app.use(cors({
     // Idempotency-Key rides on checkout (see order.controller.ts). It reaches the
     // server today only because the storefront proxies through its own origin;
     // a direct browser call would have it stripped by preflight without this.
-    allowedHeaders : ["Content-Type", "Authorization", "Idempotency-Key"]
+    //
+    // The demo key is listed for the same reason and it matters more here: the
+    // admin panel calls this API from the browser, cross-origin, so without it
+    // preflight drops the header and every demo's admin would quietly edit the
+    // DATABASE_URL shop instead of its own.
+    allowedHeaders : ["Content-Type", "Authorization", "Idempotency-Key", DEMO_KEY_HEADER]
 }))
+
+/*
+ * Which demo's database serves this request.
+ *
+ * ABOVE better-auth's handler on purpose, not merely above /api/v1. The
+ * better-auth Prisma adapter reads the same `prisma` export as everything
+ * else, so a session written below this line would land in the DATABASE_URL
+ * shop while the rest of the request read a demo's — a login that appears to
+ * work and then cannot find its own user.
+ *
+ * Resolves to the default shop when the header is absent, when no demo map is
+ * configured, or when the key is unknown. A single-shop installation therefore
+ * behaves exactly as it did before this middleware existed.
+ */
+app.use((req, _res, next) => {
+    runInDemoScope(resolveDemoKey(req.headers[DEMO_KEY_HEADER]), next);
+});
 
 app.use("/api/auth", toNodeHandler(auth))
 

@@ -1,4 +1,5 @@
 import { envVars } from "../config/env";
+import { currentDemoKey, DEMO_KEY_HEADER } from "../lib/tenant";
 
 /**
  * Tells the storefront to drop a cached tag, so a merchant's settings save is
@@ -111,6 +112,22 @@ export const revalidateStorefront = (tag: string): void => {
     const secret = envVars.STOREFRONT_REVALIDATE_SECRET;
 
     /*
+     * Which demonstration shop's cache to expire, captured SYNCHRONOUSLY.
+     *
+     * The POST below is fire-and-forget, and the demo scope belongs to the
+     * request that triggered this save. Reading the key inside the async body
+     * would work today by context propagation, but it would be reading it after
+     * the caller has moved on — capturing it here makes the dependency explicit
+     * rather than incidental.
+     *
+     * The storefront cannot derive this itself: the backend posts to one fixed
+     * STOREFRONT_URL, so every demo's invalidation arrives at the same hostname.
+     * A single-shop installation sends `default`, and the storefront scopes its
+     * tags with the same constant, so the invalidation lands exactly as before.
+     */
+    const demo = currentDemoKey();
+
+    /*
      * STOREFRONT_URL first, FRONTEND_URL as the fallback. They are usually the
      * same origin, but not always — FRONTEND_URL also backs auth callbacks and
      * email links, so a deployment whose storefront is served from a different
@@ -148,6 +165,7 @@ export const revalidateStorefront = (tag: string): void => {
                     headers: {
                         "Content-Type": "application/json",
                         "x-revalidate-secret": secret,
+                        [DEMO_KEY_HEADER]: demo,
                     },
                     body: JSON.stringify({ tag }),
                     signal: AbortSignal.timeout(TIMEOUT_MS),
