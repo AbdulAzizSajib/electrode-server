@@ -89,6 +89,24 @@ try {
   cpSync(join(root, "prisma.config.ts"), join(staging, "prisma.config.ts"));
 
   /*
+   * The verify scripts ship too. CPANEL-DEPLOY.md §5.4 and
+   * DEPLOY-topitsolution.md §৫.৪ both instruct running
+   * `npx tsx scripts/verify-mysql-charset.ts` on the host immediately after
+   * `migrate deploy`, and that check is the one thing standing between a
+   * latin1 database and every Bangla product name silently becoming mojibake —
+   * unrecoverable once content is in. Omitting the directory made the
+   * documented step fail with ERR_MODULE_NOT_FOUND at exactly the moment it
+   * mattered, which reads as a broken deploy rather than a missing file.
+   *
+   * See openspec/changes/fix-cpanel-deploy-blockers.
+   *
+   * They are .ts and run through `npx tsx`, which the host fetches on demand;
+   * nothing here needs them compiled. `--omit=dev` below means tsx is NOT in
+   * the shipped node_modules, so that fetch is the only way they run.
+   */
+  cpSync(join(root, "scripts"), join(staging, "scripts"), { recursive: true });
+
+  /*
    * A fresh production install into the staging tree, NOT a copy of
    * server/node_modules.
    *

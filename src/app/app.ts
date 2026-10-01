@@ -60,8 +60,9 @@ const allowedOrigins = [
     "https://ecomsite-admin.vercel.app",
     "https://ecomsite-ui.vercel.app",
     "https://ecomsite-server.vercel.app",
-    "https://testdomain.aciag.info",
-    "https://testapi.aciag.info"
+    "https://ecommerce.topitsolution.com",
+    "https://api.topitsolution.com",
+    "https://admin.topitsolution.com"
 
 ].filter(Boolean) as string[];
 

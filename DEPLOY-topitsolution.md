@@ -65,11 +65,27 @@ RAM-এ শুধু দুটো process: storefront + backend।
 
 ### ⚠️ ৩.১ Charset ঠিক করুন — migration চালানোর আগেই
 
-**cPanel → Terminal:**
+**phpMyAdmin → ডান পাশের তালিকা থেকে database সিলেক্ট → SQL ট্যাব:**
 
-```bash
-mysql -u cpuser_topituser -p cpuser_topit -e "ALTER DATABASE cpuser_topit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```sql
+ALTER DATABASE cpuser_topit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
+
+> **Terminal নয়, phpMyAdmin — কারণ Terminal দুভাবে ব্যর্থ হয়, আর দুটোই নীরবে।**
+>
+> প্রথমত, shared cPanel-এ process limit (`nproc`) ভরে গেলে bash নতুন process চালু করতেই পারে না —
+> `bash: fork: retry: Resource temporarily unavailable` আসে আর `mysql` ক্লায়েন্ট আদৌ চলে না।
+> কমান্ডটা চলেনি, অথচ দেখে মনে হয় কিছু একটা হয়েছে।
+>
+> দ্বিতীয়ত, পেস্ট করলে লাইনের শুরুতে bracketed-paste-এর আবর্জনা (`^[[200~`) জুড়ে যায় আর কমান্ড নষ্ট
+> করে। phpMyAdmin দুটোই এড়ায়।
+
+**ALTER চললেও charset না বদলালে** — নিচের যাচাইয়ে `utf8mb3` বা `latin1` থেকে গেলে — আপনার MySQL
+user-এর `ALTER DATABASE` অনুমতি নেই। MySQL এক্ষেত্রে **কোনো error দেয় না, চুপ করে থাকে**। shared
+hosting-এ এটা স্বাভাবিক। হোস্টিং সাপোর্টকে এক লাইন লিখুন:
+
+> Please set the default character set of database `cpuser_topit` to utf8mb4 with collation
+> utf8mb4_unicode_ci. My MySQL user lacks ALTER DATABASE permission.
 
 **কেন এটা আগে:** Prisma-র migration প্রতিটা table-এ নিজেই `utf8mb4` বসায়, তাই app-এর table গুলো
 এমনিতেই নিরাপদ। কিন্তু database-এর default ঠিক করে `_prisma_migrations` table, পরে হাতে বানানো
@@ -86,7 +102,7 @@ mojibake হয়ে বসবে, আর সেটা আর উদ্ধা�
 ### ৪.১ Backend
 
 ```powershell
-cd "E:\Next Level Project\E-Commerce\Ecom\server"
+cd "D:\Next.js\electrode\server"
 npm run build:cpanel
 ```
 
@@ -94,34 +110,55 @@ npm run build:cpanel
 
 ### ৪.২ Storefront
 
-`frontend/.env.production.local` ফাইলে (না থাকলে বানান):
+`nextjs/.env.production.local` ফাইলে (না থাকলে বানান):
 
 ```
 NEXT_PUBLIC_API_BASE_URL=https://api.topitsolution.com/api/v1
 ```
 
 ```powershell
-cd "E:\Next Level Project\E-Commerce\Ecom\frontend"
+cd "D:\Next.js\electrode\nextjs"
 npm run build:cpanel
 ```
 
-→ `frontend/storefront.tar.gz` (~১৪ MB)
+→ `nextjs/storefront.tar.gz` (~১৪ MB)
 
 > `NEXT_PUBLIC_*` মান **build-এর সময়** bundle-এ বসে যায়। cPanel-এর env-এ পরে বদলালে কিছুই হবে না —
 > আবার build করতে হবে।
 
+**আপলোড করার আগে এই এক লাইন চালান** (Git Bash-এ, `nextjs/` ফোল্ডার থেকে):
+
+```bash
+grep -rhoE 'a\.x\("[^"]*-[0-9a-f]{16}"' .next/server/chunks/ssr/*.js | sort -u
+```
+
+**কিছু বেরোলে আপলোড করবেন না।** Turbopack একটা package-কে external ধরলে তার নামের শেষে
+একটা hash জুড়ে দেয় (`sanitize-html-6ef27188a4b3dc42`), আর ওই নামে কোনো package নেই — হোস্টে গিয়ে
+প্রতিটা page 500 দেবে। npm workspace সব dependency monorepo root-এ hoist করে বলে এটা এই repo-তে
+সহজেই ঘটে। সমাধান: `next.config.ts`-এর `transpilePackages`-এ package-টার নাম যোগ করুন।
+
+**`next build` সফল হওয়া কোনো প্রমাণ নয়** — এই bug-এর প্রতিটা রূপেই build exit 0 দেয়।
+
 ### ৪.৩ Admin
 
 ```powershell
-cd "E:\Next Level Project\E-Commerce\Ecom\admin"
+cd "D:\Next.js\electrode\admin"
 $env:VITE_API_BASE_URL="https://api.topitsolution.com/api/v1"
+$env:VITE_STOREFRONT_URL="https://topitsolution.com"
 npm run build
 ```
 
 → `admin/dist/`
 
-> এটাও build-time। **না দিলে** panel নিজের origin (`admin.topitsolution.com/api/v1`) কে API ধরবে,
-> যেখানে কিছু নেই — সব request 404 হবে।
+> এটাও build-time। **`VITE_API_BASE_URL` না দিলে** panel নিজের origin
+> (`admin.topitsolution.com/api/v1`) কে API ধরবে, যেখানে কিছু নেই — সব request 404 হবে।
+>
+> **`VITE_STOREFRONT_URL` বাদ দেবেন না।** Panel storefront-এ বাইরের দিকে link করে — landing
+> page-এর "View page", active-campaign banner। না দিলে ওগুলো `http://localhost:4000`-এ যাবে,
+> अর্থাৎ client-এর ব্রাউজারে ভাঙা link। দুটোই `admin/.env.example`-এ ব্যাখ্যা করা আছে।
+>
+> `.env.local` ফাইলে না লিখে PowerShell variable-এ দিচ্ছি কারণ `.env.local` local
+> development-ও production API-তে পাঠিয়ে দেয়। শেল বন্ধ করলেই variable মুছে যায়।
 
 ---
 
@@ -129,7 +166,22 @@ npm run build
 
 ### ৫.১ আপলোড
 
-FileZilla দিয়ে `backend.tar.gz` → `~/backend/` এ। (৭৭ MB File Manager-এ প্রায়ই আটকায়।)
+`backend.tar.gz` → `~/backend/` এ। (৭৭ MB File Manager-এ প্রায়ই আটকায়।)
+
+> **FileZilla-তে FTPS বাদ দিয়ে SFTP ব্যবহার করুন** — Protocol: SFTP, port **22**, user আপনার
+> **cPanel username** (FTP account নয়), password cPanel-এর। অফিসের ফায়ারওয়াল আর অ্যান্টিভাইরাসের
+> TLS-স্ক্যানিং FTPS-এর handshake ভেঙে দেয় — log-এ `Initializing TLS...` এ আটকে ৬০ সেকেন্ড পর
+> timeout হয়। SFTP দেখতে সাধারণ SSH ট্রাফিকের মতো, তাই এ সমস্যা হয় না।
+>
+> **সবচেয়ে সহজ বিকল্প — FileZilla এড়িয়ে যান।** আর্কাইভটা Google Drive / Dropbox-এ রেখে direct
+> link নিন, তারপর Terminal-এ:
+>
+> ```bash
+> cd ~/backend
+> curl -LO "<direct-download-url>"
+> ```
+>
+> সার্ভার নিজেই নামায় — আপনার upload ব্যান্ডউইথও লাগে না, অফিসের ফায়ারওয়ালও মাঝখানে থাকে না।
 
 **cPanel → Terminal:**
 
@@ -213,6 +265,69 @@ npx tsx scripts/verify-mysql-charset.ts
 **`verify-mysql-charset.ts`-এ একটাও FAIL এলে এগোবেন না** — §৩.১ ঠিকমতো হয়নি। Content বসানোর পর
 ঠিক করা যাবে না।
 
+> **`Cannot find module .../scripts/verify-mysql-charset.ts` এলে** — আপনার archive-টা
+> `scripts/` ফোল্ডার ছাড়াই বানানো। `scripts/package-cpanel.mjs` এখন ওটা আর্কাইভে পাঠায়, তাই
+> নতুন করে `npm run build:cpanel` চালালে সমস্যা থাকবে না। পুরনো archive নিয়ে এগোতে চাইলে নিচের
+> SQL-টা phpMyAdmin-এ চালান — হুবহু একই আটটা চেক করে। `tsx` on-demand install-ও §৩.১-এর
+> process limit-এ আটকাতে পারে, তাই SQL পথটা এমনিতেও নিরাপদ।
+
+<details>
+<summary>phpMyAdmin-এ একই যাচাই (SQL)</summary>
+
+`topitsolution_topit` এর জায়গায় আপনার আসল database-এর নাম বসান। `DATABASE()` ব্যবহার করা হয়নি —
+phpMyAdmin-এর SQL ট্যাবে ওটা খালি থাকতে পারে, তখন `tables exist` মিথ্যা করে `0` দেখায় আর
+তার পরের তিনটা চেক আপনাআপনি PASS হয় — শূন্যের মধ্যে কোনো ভুল table থাকে না বলে।
+
+```sql
+SELECT 'database charset' AS check_name,
+       DEFAULT_CHARACTER_SET_NAME AS value,
+       IF(DEFAULT_CHARACTER_SET_NAME = 'utf8mb4', 'PASS', 'FAIL') AS result
+FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'topitsolution_topit'
+UNION ALL
+SELECT 'database collation', DEFAULT_COLLATION_NAME,
+       IF(DEFAULT_COLLATION_NAME LIKE '%\_ci', 'PASS', 'FAIL')
+FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'topitsolution_topit'
+UNION ALL
+SELECT 'tables exist', CAST(COUNT(*) AS CHAR), IF(COUNT(*) > 0, 'PASS', 'FAIL')
+FROM information_schema.TABLES WHERE table_schema = 'topitsolution_topit' AND TABLE_TYPE = 'BASE TABLE'
+UNION ALL
+SELECT 'tables NOT utf8mb4', CAST(COUNT(*) AS CHAR), IF(COUNT(*) = 0, 'PASS', 'FAIL')
+FROM information_schema.TABLES WHERE table_schema = 'topitsolution_topit' AND TABLE_TYPE = 'BASE TABLE'
+  AND TABLE_COLLATION NOT LIKE 'utf8mb4%'
+UNION ALL
+SELECT 'tables NOT case-insensitive', CAST(COUNT(*) AS CHAR), IF(COUNT(*) = 0, 'PASS', 'FAIL')
+FROM information_schema.TABLES WHERE table_schema = 'topitsolution_topit' AND TABLE_TYPE = 'BASE TABLE'
+  AND TABLE_COLLATION NOT LIKE '%\_ci'
+UNION ALL
+SELECT 'tables NOT InnoDB', CAST(COUNT(*) AS CHAR), IF(COUNT(*) = 0, 'PASS', 'FAIL')
+FROM information_schema.TABLES WHERE table_schema = 'topitsolution_topit' AND TABLE_TYPE = 'BASE TABLE'
+  AND ENGINE <> 'InnoDB'
+UNION ALL
+SELECT 'Bangla round trip', 'চার্জার ফাস্ট',
+       IF('চার্জার ফাস্ট' = CONVERT('চার্জার ফাস্ট' USING utf8mb4), 'PASS', 'FAIL')
+UNION ALL
+SELECT 'case folding', 'Samsung = samsung',
+       IF('Samsung' = 'samsung', 'PASS', 'FAIL');
+```
+
+</details>
+
+**শুধু `database charset` FAIL করলে এগোনো যায়।** Prisma প্রতিটা table-এ নিজেই `utf8mb4_unicode_ci`
+বসায়, তাই shop-এর content নিরাপদ — ইমোজিসহ। database default-টা `_prisma_migrations`, পরে
+হাতে বানানো table আর raw query-র string literal-এর জন্য — ওটা পরে সাপোর্টকে দিয়ে ঠিক করা
+যায় (§৩.১)। **কিন্তু `tables NOT utf8mb4` বা `tables NOT case-insensitive` FAIL করলে থামুন** —
+সেটা content বসার আগেই সারাতে হবে:
+
+```sql
+SELECT CONCAT('ALTER TABLE `', TABLE_NAME,
+              '` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;') AS cmd
+FROM information_schema.TABLES
+WHERE table_schema = 'topitsolution_topit' AND TABLE_TYPE = 'BASE TABLE'
+  AND TABLE_COLLATION <> 'utf8mb4_unicode_ci';
+```
+
+ফলাফলের `ALTER` লাইনগুলো কপি করে চালান, তারপর যাচাই আবার চালান।
+
 আটটা PASS দেখলে:
 
 ```bash
@@ -235,6 +350,19 @@ tar -xzf storefront.tar.gz && rm storefront.tar.gz
 mkdir -p tmp && touch tmp/restart.txt
 ```
 
+> **পরে কখনো নতুন build তুললে পুরনোটা আগে মুছুন:**
+>
+> ```bash
+> cd ~/storefront
+> rm -rf .next node_modules public server.js package.json
+> tar -xzf storefront.tar.gz && rm storefront.tar.gz
+> touch tmp/restart.txt
+> ```
+>
+> `tar -xzf` পুরনো ফাইল overwrite করে, কিন্তু মুছে না — Next-এর chunk-এর নাম প্রতি build-এ
+> বদলায়, তাই পুরনো chunk পড়ে থাকলে Passenger কখনো সেগুলোই load করতে পারে। `tmp/` আর
+> `stderr.log` রেখে দিচ্ছি — log-টাই পরের বার সমস্যা ধরার একমাত্র উপায়।
+
 **Setup Node.js App → Create Application:**
 
 | ঘর | মান |
@@ -255,6 +383,23 @@ REVALIDATE_SECRET=<backend-এর STOREFRONT_REVALIDATE_SECRET-এর হুব�
 > timer-এ বদলাবে। কোনো error দেখাবে না, শুধু "পুরনো দেখাচ্ছে" মনে হবে।
 
 `touch ~/storefront/tmp/restart.txt` → `https://topitsolution.com` খুলুন।
+
+### ৬.১ Internal Server Error এলে — `stderr.log` পড়ুন, अনুমান করবেন না
+
+```bash
+tail -50 ~/storefront/stderr.log
+```
+
+Passenger crash করলে আসল কারণ ওখানেই লেখে। ব্রাউজারে সব ভুল একই "Internal Server Error"
+দেখায়। `.htaccess` না থাকলে সাধারণত **404** আসে, 500 নয় — তাই 500 মানে routing কাজ করছে,
+app নিজে ব্যর্থ হচ্ছে।
+
+| log-এ যা দেখবেন | কারণ |
+|---|---|
+| `Cannot find module '<package>-<16 hex>'` | §৪.২-এর build পুরনো। `next.config.ts`-এর `transpilePackages` এটা ঠেকায় — নতুন করে build করে উপরের পদ্ধতিতে পুরনো ফাইল মুছে তুলুন। প্যাকেজের নাম `postcss`, `sanitize-html` — যেকোনোটা হতে পারে |
+| `Cannot find module` — अন্য কোনো package | archive अসম্পূর্ণ বা अর্ধেক extract হয়েছে |
+| `EADDRINUSE` / port-সংক্রান্ত | Application startup file `server.js` কিনা দেখুন |
+| `ApiError` / `status 0` | backend চালু নয়, বা `NEXT_PUBLIC_API_BASE_URL` ভুল |
 
 ---
 
@@ -339,6 +484,12 @@ app-এ পাঠাতে হলে প্রতিটা subdomain-এর docu
 | **Admin সব request localhost-এ পাঠাচ্ছে** | `VITE_API_BASE_URL` ছাড়া build হয়েছে (§৪.৩) |
 | **`Too many connections`** | `DATABASE_URL`-এ `?connection_limit=5` যোগ করুন |
 | **`ERR_MODULE_NOT_FOUND`** | archive `npm run build:cpanel` দিয়ে বানানো হয়নি |
+| **Storefront-এ `Cannot find module '<package>-<16 hex>'`** | §৬.১ দেখুন — পুরনো build, নতুন করে build করে পুরনো ফাইল মুছে তুলুন |
+| **`bash: fork: Resource temporarily unavailable`** | cPanel-এর process limit ভরেছে — কমান্ডটা **চলেইনি**। কিছুক্ষণ अপেক্ষা করুন, বা কাজটা phpMyAdmin-এ করুন |
+| **FileZilla: `Initializing TLS...` এ আটকে timeout** | অফিস/অ্যান্টিভাইরাসের TLS স্ক্যানিং FTPS handshake ভাঙছে। **SFTP** ব্যবহার করুন (port 22, cPanel username), অথবা Terminal-এ `curl -LO <url>` দিয়ে সার্ভারকেই নামাতে দিন |
+| **`Cannot find module .../scripts/verify-*.ts`** | archive-এ `scripts/` নেই। `package-cpanel.mjs` এখন ওটা পাঠায় — নতুন build করুন, বা §৫.৪-এর SQL বিকল্প চালান |
+| **`ALTER DATABASE` চললো কিন্তু charset বদলায়নি** | MySQL user-এর অনুমতি নেই, আর MySQL কোনো error দেয় না। হোস্টিং সাপোর্টকে বলুন (§৩.১) |
+| **phpMyAdmin-এ `tables exist: 0` অথচ table দেখা যাচ্ছে** | SQL ট্যাবে `DATABASE()` খালি। কোয়ারিতে database-এর নাম সরাসরি লিখুন (§৫.৪) |
 | **প্রথম request ধীর** | অনেকক্ষণ কেউ না এলে Passenger app বন্ধ করে দেয়। স্বাভাবিক |
 
 ### Vercel-এ যা আপনাআপনি হতো, এখানে নিজে করতে হবে
