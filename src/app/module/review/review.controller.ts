@@ -121,8 +121,36 @@ const deleteReview = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const createAdminReview = catchAsync(async (req: Request, res: Response) => {
+    const result = await ReviewService.createAdminReview(req.user.userId, req.body);
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Review created successfully",
+        data: result,
+    });
+});
+
+const updateAdminReview = catchAsync(async (req: Request, res: Response) => {
+    const result = await ReviewService.updateAdminReview(
+        req.user.userId,
+        req.params.id as string,
+        req.body,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Review updated successfully",
+        data: result,
+    });
+});
+
 export const ReviewController = {
     createReview,
+    createAdminReview,
+    updateAdminReview,
     getPublicProductReviews,
     getAdminReviews,
     getMyReviews,

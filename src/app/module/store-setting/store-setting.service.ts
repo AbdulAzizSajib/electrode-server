@@ -576,6 +576,7 @@ const getPublicStoreSetting = async () => {
          * own shipped icon.
          */
         faviconUrl: merge(stored?.faviconUrl, DEFAULT_PUBLIC_SETTINGS.faviconUrl),
+        adminFaviconUrl: merge(stored?.adminFaviconUrl, DEFAULT_PUBLIC_SETTINGS.adminFaviconUrl),
         /*
          * Public for the same reason the logos above are: the storefront cannot
          * draw its header or footer without knowing which of the two things

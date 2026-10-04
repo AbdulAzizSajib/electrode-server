@@ -5,7 +5,9 @@ import { validateRequest } from "../../middleware/validateRequest";
 import { ReviewController } from "./review.controller";
 import {
     adminReplyZodSchema,
+    createAdminReviewZodSchema,
     createReviewZodSchema,
+    updateAdminReviewZodSchema,
     updateMyReviewZodSchema,
     updateReviewStatusZodSchema,
 } from "./review.validation";
@@ -27,6 +29,18 @@ router.get(
     "/admin",
     checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
     ReviewController.getAdminReviews,
+);
+router.post(
+    "/admin",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
+    validateRequest(createAdminReviewZodSchema),
+    ReviewController.createAdminReview,
+);
+router.patch(
+    "/admin/:id",
+    checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
+    validateRequest(updateAdminReviewZodSchema),
+    ReviewController.updateAdminReview,
 );
 router.patch(
     "/:id/status",

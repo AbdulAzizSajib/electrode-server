@@ -18,3 +18,25 @@ export interface IUpdateMyReviewPayload {
     title?: string;
     comment?: string;
 }
+
+export interface ICreateAdminReviewPayload {
+    productId: string;
+    authorName: string;
+    rating: number;
+    title?: string;
+    comment?: string;
+    status?: "PENDING" | "APPROVED" | "REJECTED" | "HIDDEN";
+    adminReply?: string;
+    createdAt?: string;
+}
+
+export interface IUpdateAdminReviewPayload {
+    productId?: string;
+    authorName?: string | null;
+    rating?: number;
+    title?: string | null;
+    comment?: string | null;
+    status?: "PENDING" | "APPROVED" | "REJECTED" | "HIDDEN";
+    adminReply?: string | null;
+    createdAt?: string;
+}

@@ -16,7 +16,9 @@ import { CustomerService } from "../customer/customer.service";
 import { NotificationService } from "../notification/notification.service";
 import {
     IAdminReplyPayload,
+    ICreateAdminReviewPayload,
     ICreateReviewPayload,
+    IUpdateAdminReviewPayload,
     IUpdateMyReviewPayload,
     IUpdateReviewStatusPayload,
 } from "./review.interface";
@@ -243,7 +245,7 @@ const updateReviewStatus = async (id: string, payload: IUpdateReviewStatusPayloa
      */
     revalidateReviews();
 
-    if (existing.customer.userId) {
+    if (existing.customer?.userId) {
         await NotificationService.createNotification(
             existing.customer.userId,
             NotificationType.REVIEW,
@@ -267,7 +269,7 @@ const replyToReview = async (id: string, payload: IAdminReplyPayload) => {
     // The reply renders beneath the review on the product page.
     revalidateReviews();
 
-    if (existing.customer.userId) {
+    if (existing.customer?.userId) {
         await NotificationService.createNotification(
             existing.customer.userId,
             NotificationType.REVIEW,
@@ -275,6 +277,95 @@ const replyToReview = async (id: string, payload: IAdminReplyPayload) => {
             payload.adminReply,
         );
     }
+
+    return updated;
+};
+
+const createAdminReview = async (userId: string, payload: ICreateAdminReviewPayload) => {
+    const product = await prisma.product.findUnique({ where: { id: payload.productId } });
+    if (!product) {
+        throw new AppError(status.NOT_FOUND, "Product not found");
+    }
+
+    const review = await prisma.$transaction(async (tx) => {
+        const created = await tx.review.create({
+            data: {
+                productId: payload.productId,
+                customerId: null,
+                authorName: payload.authorName.trim(),
+                rating: payload.rating,
+                title: payload.title,
+                comment: payload.comment,
+                status: payload.status ?? ReviewStatus.APPROVED,
+                adminReply: payload.adminReply,
+                ...(payload.createdAt ? { createdAt: new Date(payload.createdAt) } : {}),
+            },
+            include: { ...REVIEW_INCLUDE, product: { select: { id: true, name: true, slug: true } } },
+        });
+
+        await recalculateProductRating(tx, payload.productId);
+
+        return created;
+    });
+
+    await AuditLogService.record(userId, AuditAction.CREATE, "Review", review.id, {
+        newData: review,
+    });
+
+    revalidateReviews();
+
+    return review;
+};
+
+const updateAdminReview = async (
+    userId: string,
+    reviewId: string,
+    payload: IUpdateAdminReviewPayload,
+) => {
+    const existing = await prisma.review.findUnique({ where: { id: reviewId } });
+    if (!existing) {
+        throw new AppError(status.NOT_FOUND, "Review not found");
+    }
+
+    if (payload.productId && payload.productId !== existing.productId) {
+        const targetProduct = await prisma.product.findUnique({ where: { id: payload.productId } });
+        if (!targetProduct) {
+            throw new AppError(status.NOT_FOUND, "Product not found");
+        }
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+        const review = await tx.review.update({
+            where: { id: reviewId },
+            data: {
+                ...(payload.productId !== undefined ? { productId: payload.productId } : {}),
+                ...(payload.authorName !== undefined
+                    ? { authorName: payload.authorName ? payload.authorName.trim() : null }
+                    : {}),
+                ...(payload.rating !== undefined ? { rating: payload.rating } : {}),
+                ...(payload.title !== undefined ? { title: payload.title } : {}),
+                ...(payload.comment !== undefined ? { comment: payload.comment } : {}),
+                ...(payload.status !== undefined ? { status: payload.status } : {}),
+                ...(payload.adminReply !== undefined ? { adminReply: payload.adminReply } : {}),
+                ...(payload.createdAt !== undefined ? { createdAt: new Date(payload.createdAt) } : {}),
+            },
+            include: { ...REVIEW_INCLUDE, product: { select: { id: true, name: true, slug: true } } },
+        });
+
+        await recalculateProductRating(tx, existing.productId);
+        if (payload.productId && payload.productId !== existing.productId) {
+            await recalculateProductRating(tx, payload.productId);
+        }
+
+        return review;
+    });
+
+    await AuditLogService.record(userId, AuditAction.UPDATE, "Review", reviewId, {
+        oldData: existing,
+        newData: updated,
+    });
+
+    revalidateReviews();
 
     return updated;
 };
@@ -383,6 +474,8 @@ const deleteReview = async (userId: string, reviewId: string) => {
 
 export const ReviewService = {
     createReview,
+    createAdminReview,
+    updateAdminReview,
     getPublicProductReviews,
     getAdminReviews,
     getMyReviews,

@@ -14,7 +14,7 @@ export const MAX_TESTIMONIAL_RATING = 5;
  * list can mark the published entries that fall beyond it — a merchant whose
  * fifth testimonial never appears should be told why, not left to guess.
  */
-export const HOME_TESTIMONIAL_COUNT = 4;
+export const HOME_TESTIMONIAL_COUNT = 12;
 
 /** The cache tag the storefront drops when a testimonial changes. */
 export const TESTIMONIALS_TAG = "testimonials";

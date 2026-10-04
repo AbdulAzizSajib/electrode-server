@@ -362,6 +362,8 @@ export interface IUpdateStoreSettingPayload {
     footerLogoUrl?: string | null;
     /** The browser-tab icon's address. Nullable on the same rule as the two above. */
     faviconUrl?: string | null;
+    /** The admin panel's browser-tab icon. Nullable on the same rule as `faviconUrl`. */
+    adminFaviconUrl?: string | null;
     siteNameAccent?: string;
     aboutText?: string;
     copyrightText?: string;

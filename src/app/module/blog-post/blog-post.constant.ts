@@ -19,7 +19,7 @@ export const slugifyTitle = (title: string): string =>
  * exactly what the section shows and the admin can tell a merchant which of
  * their published posts fall beyond it.
  */
-export const HOME_BLOG_POST_COUNT = 4;
+export const HOME_BLOG_POST_COUNT = 12;
 
 /** The cache tag the storefront drops when a post changes. Matches the storefront's own constant. */
 export const BLOG_POSTS_TAG = "blog-posts";

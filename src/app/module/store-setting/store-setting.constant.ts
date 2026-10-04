@@ -648,6 +648,7 @@ export const HOME_SECTION_VARIANTS = {
     FEATURED_CATEGORIES: FEATURED_CATEGORIES_VARIANTS,
     BEST_SELLING: PRODUCT_ROW_VARIANTS,
     FEATURED_PRODUCTS: PRODUCT_ROW_VARIANTS,
+    DEAL_OF_WEEK: PRODUCT_ROW_VARIANTS,
     NEW_ARRIVALS: PRODUCT_ROW_VARIANTS,
 } as const satisfies Partial<Record<HomeSectionKey, readonly [string, ...string[]]>>;
 
@@ -976,6 +977,7 @@ export const DEFAULT_PUBLIC_SETTINGS = {
      * because it owns the asset; this answers only what the merchant chose.
      */
     faviconUrl: null as string | null,
+    adminFaviconUrl: null as string | null,
     /*
      * TEXT for both, which is what makes this change invisible on deploy: the
      * storefront rendered the wordmark unconditionally in both slots before

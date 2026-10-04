@@ -1330,6 +1330,7 @@ export const updateStoreSettingZodSchema = z.object({
      * default tab icon, which is visible and local to whoever set it.
      */
     faviconUrl: z.url("Favicon URL must be valid").max(500).nullable().optional(),
+    adminFaviconUrl: z.url("Admin favicon URL must be valid").max(500).nullable().optional(),
     siteNameAccent: z.string().max(100).optional(),
     aboutText: z.string().max(1000).optional(),
     copyrightText: z.string().max(300).optional(),

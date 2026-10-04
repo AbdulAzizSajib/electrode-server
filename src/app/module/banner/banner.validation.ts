@@ -59,7 +59,21 @@ const bannerFields = {
     bgColor: hexColor.optional(),
     textColor: hexColor.optional(),
 
-    link: z.url("Link must be a valid URL").optional(),
+    link: z
+        .string()
+        .refine(
+            (val) => {
+                // Accept absolute URLs (https://...) and relative paths (/products?sort=new)
+                try {
+                    new URL(val);
+                    return true;
+                } catch {
+                    return val.startsWith("/");
+                }
+            },
+            { message: "Link must be a valid URL or a relative path starting with /" },
+        )
+        .optional(),
     productId: z.string().optional(),
 
     /**

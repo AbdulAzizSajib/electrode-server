@@ -103,7 +103,8 @@ model StoreSetting {
   ///
   /// See openspec/changes/add-favicon-and-newsletter-section, design.md
   /// Decisions 1 and 2.
-  faviconUrl String? @db.VarChar(512)
+  faviconUrl      String? @db.VarChar(512)
+  adminFaviconUrl String? @db.VarChar(512)
 
   /// Whether each brand slot shows the wordmark or its logo image.
   ///
