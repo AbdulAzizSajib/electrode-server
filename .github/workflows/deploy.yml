@@ -1,0 +1,98 @@
+# Builds the backend on a Linux runner and releases it to cPanel over SSH.
+# Setup (SSH key, secrets, ~/deploy/backend.env) is in CICD-topitsolution.md.
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One at a time, never cancelled midway — a cancelled run can leave a
+# migration half applied.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Postman contract
+        run: npx tsx scripts/verify-postman-routes.ts
+
+      - name: Build archive
+        run: npm run build:cpanel
+        env:
+          # Only for prisma generate — no connection is made.
+          DATABASE_URL: mysql://ci:ci@localhost:3306/ci
+
+      - name: SSH setup
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host cpanel
+            HostName ${{ secrets.SSH_HOST }}
+            Port ${{ secrets.SSH_PORT }}
+            User ${{ secrets.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            ServerAliveInterval 30
+          EOF
+
+      - name: Upload
+        run: |
+          ssh cpanel 'mkdir -p ~/deploy'
+          scp backend.tar.gz cpanel:deploy/backend.tar.gz
+
+      - name: Release
+        run: |
+          ssh cpanel 'bash -s' <<'REMOTE'
+          set -eo pipefail
+          APP="$HOME/backend"
+          NEW="$HOME/backend.new"
+          OLD="$HOME/backend.old"
+
+          # 1. Unpack beside the live app — nothing running is touched yet.
+          rm -rf "$NEW" && mkdir -p "$NEW"
+          tar -xzf "$HOME/deploy/backend.tar.gz" -C "$NEW"
+          rm -f "$HOME/deploy/backend.tar.gz"
+          mkdir -p "$NEW/tmp"
+
+          # 2. Migrate. A failure stops here and the old app keeps serving.
+          source "$HOME/nodevenv/backend/22/bin/activate"
+          set -a; . "$HOME/deploy/backend.env"; set +a
+          cd "$NEW"
+          PRISMA_VERSION=$(node -p "require('./package.json').devDependencies.prisma")
+          npx --yes "prisma@$PRISMA_VERSION" migrate deploy
+
+          # 3. Swap. The previous release stays in backend.old for rollback.
+          cd "$HOME"
+          rm -rf "$OLD"
+          mv "$APP" "$OLD"
+          mv "$NEW" "$APP"
+          touch "$APP/tmp/restart.txt"
+          echo "Released."
+          REMOTE
+
+      - name: Health check
+        run: |
+          curl -fsS --retry 6 --retry-delay 10 --retry-all-errors \
+            https://api.topitsolution.com/api/v1/products | head -c 300
+
+      - name: Server log on failure
+        if: failure()
+        run: ssh cpanel 'tail -60 ~/backend/stderr.log 2>/dev/null || echo "no stderr.log"'
