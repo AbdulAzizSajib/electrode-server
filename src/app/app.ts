@@ -56,13 +56,15 @@ const allowedOrigins = [
     "http://localhost:4000",
     "http://localhost:5000",
     "http://localhost:5173",
-    "http://localhost:5174",
-    "https://ecomsite-admin.vercel.app",
-    "https://ecomsite-ui.vercel.app",
-    "https://ecomsite-server.vercel.app",
-    "https://ecommerce.topitsolution.com",
+    "https://edemo1.topitsolution.com",
     "https://api.topitsolution.com",
-    "https://admin.topitsolution.com"
+    "https://admin.topitsolution.com",
+    "https://edemo2.topitsolution.com",
+    "https://apiedemo2.vercel.app",
+    "https://adminedemo2.vercel.app",
+    "https://edemo3.topitsolution.com",
+    "https://apiedemo3.vercel.app",
+    "https://adminedemo3.vercel.app",
 
 ].filter(Boolean) as string[];
 

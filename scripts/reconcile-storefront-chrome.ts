@@ -12,7 +12,7 @@
  *   - The announcement bar's phone and email links pointed at "/contact"; the
  *     header linked to wa.me and mailto:.
  *   - The seeded email was contact@example.com; the header showed
- *     contact@sheisite.com.
+ *     contact@topitsolution.com.
  *   - The newsletter heading said "$10 Off"; the footer rendered "৳10 Off".
  *
  * This change makes the storefront read those columns, so the drift would have

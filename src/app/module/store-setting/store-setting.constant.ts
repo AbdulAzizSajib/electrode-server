@@ -97,8 +97,8 @@ export const DEFAULT_ANNOUNCEMENT_BAR = {
         },
         {
             icon: "garden:email-stroke-16",
-            label: "contact@sheisite.com",
-            href: "mailto:contact@sheisite.com",
+            label: "contact@topitsolution.com",
+            href: "mailto:contact@topitsolution.com",
             source: "contactEmail",
         },
     ],
@@ -918,7 +918,7 @@ export const STOREFRONT_SEED_DEFAULTS = {
     copyrightText: "Gadgets Mart - Electronics Store. Built with Next.js.",
     /*
      * The storefront carried TWO contact identities before this change: the
-     * header's announcement bar used contact@sheisite.com / +8801782521705,
+     * header's announcement bar used contact@topitsolution.com / +8801782521705,
      * while the footer's "About Information" block used demo@example.com /
      * (+91) 9876-543-210. One column cannot serve both, so the header's values
      * win — they are the real ones (the number matches the store's BDT
@@ -927,7 +927,7 @@ export const STOREFRONT_SEED_DEFAULTS = {
      * Consequence: the footer's contact block changes visibly on first deploy.
      * That is the point — the two blocks now agree.
      */
-    contactEmail: "contact@sheisite.com",
+    contactEmail: "contact@topitsolution.com",
     contactPhone: "+8801782521705",
     address: "Electrode - Electronics Store, 507 Union Trade, Ipsum Dolor Centre",
     mainNav: DEFAULT_MAIN_NAV,
