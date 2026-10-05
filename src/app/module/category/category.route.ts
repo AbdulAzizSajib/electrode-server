@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { multerUpload } from "../../config/multer.config";
+import { imageUpload } from "../../config/multer.config";
 import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
@@ -11,7 +11,7 @@ const router = Router();
 // Category artwork (image + optional banner) is uploaded directly (multipart),
 // not passed as pre-hosted URLs. A plain application/json request with URL
 // strings still works.
-const categoryImageUpload = multerUpload.fields([
+const categoryImageUpload = imageUpload.fields([
     { name: "image", maxCount: 1 },
     { name: "banner", maxCount: 1 },
 ]);

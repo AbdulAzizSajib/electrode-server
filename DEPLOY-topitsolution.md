@@ -1,6 +1,6 @@
 # topitsolution.com — cPanel deploy runbook
 
-আপনার নিজের site cPanel-এ তোলার ধাপে ধাপে নির্দেশ। **Demo site এখানে নেই** — ওটা পরে, §১০ দেখুন।
+আপনার নিজের site cPanel-এ তোলার ধাপে ধাপে নির্দেশ।
 
 > **এই ফাইলটা আপনার নিজের deployment-এর, generic নির্দেশ নয়।** এতে আসল domain আর DB-র নাম আছে।
 > `server/` repo-তে রাখা হয়েছে যাতে git-এ থাকে — root কোনো repo নয়, ওখানে রাখলে কোনো backup থাকত না।
@@ -266,9 +266,6 @@ STOREFRONT_REVALIDATE_SECRET=<random, frontend-এর REVALIDATE_SECRET-এর �
 > **`ADMIN_URL` না দিলে admin-এ CORS error** — allowlist এখান থেকেই তৈরি হয়
 > ([app.ts](src/app/app.ts))।
 
-> **`DEMO_DATABASES` দেবেন না।** ওটা শুধু demo host-এর জন্য (§১০)। না থাকলে এই install একদম
-> সাধারণ single-shop — ঠিক যেমন client-এর কাছে যাবে।
-
 ### ৫.৪ Migration, যাচাই, restart
 
 ```bash
@@ -460,27 +457,17 @@ https://api.topitsolution.com/api/auth/callback/google
 
 | পাঠ | মানে |
 |---|---|
-| ≤ ৩০০ MB | ৫টা site আলাদা আলাদা রাখলেও ধরবে। Demo-র কোড নিষ্ক্রিয় পড়ে থাকবে, ক্ষতি নেই |
+| ≤ ৩০০ MB | ৫টা site আলাদা আলাদা রাখলেও ধরবে |
 | ৩০০–৪০০ MB | সীমানায়। ভাগাভাগি করাই নিরাপদ |
 | > ৪০০ MB | ৫টা আলাদা রাখা অসম্ভব — ভাগাভাগি ছাড়া উপায় নেই |
 
 ---
 
-## ১০. Demo site — এখনো দুটো কাজ বাকি
+## ১০. Demo site — বাদ দেওয়া হয়েছে
 
-Demo-র কোড লেখা শেষ (`DEMO_DATABASES` দিলেই ৪টা demo এক process-এ চলবে), কিন্তু **cPanel-এ বসাতে
-গেলে দুটো জায়গায় আটকাবে**, আর এগুলো আমি design করার সময় ধরতে পারিনি:
+এক deployment থেকে কয়েকটা demo shop চালানোর পরিকল্পনা (`add-multi-demo-hosting`) বাতিল করা হয়েছে, আর তার code-ও সরানো হয়েছে। কোনো demo দরকার হলে সেটাকে একটা সাধারণ single-shop install হিসেবে আলাদা করে বসান: নিজের database, নিজের subdomain।
 
-**১. CORS allowlist ৪টা demo admin origin ধরতে পারে না.** [app.ts](src/app/app.ts)-এ
-`origin` একটা স্থির array, আর `ADMIN_URL` একটামাত্র মান। `fashion.admin.topitsolution.com`,
-`grocery.admin...` — কোনোটাই allow হবে না, admin login-ই হবে না।
-
-**২. cPanel এক Node app-কে এক Application URL-এ বাঁধে.** ৪টা storefront subdomain এক Next.js
-app-এ পাঠাতে হলে প্রতিটা subdomain-এর document root-এ একই Passenger `.htaccess` হাতে কপি করতে হবে।
-কাজ করে, কিন্তু কোথাও লেখা নেই।
-
-দুটোই ছোট কাজ। §৯-এর সংখ্যাটা পেলে তবেই বোঝা যাবে ভাগাভাগি আদৌ লাগবে কিনা — লাগলে এই দুটো বন্ধ
-করে তারপর demo বসাব।
+(Section-এর নম্বর রেখে দেওয়া হয়েছে, যাতে §১১ আর §১২-এর reference ঠিক থাকে।)
 
 ---
 
@@ -501,7 +488,7 @@ app-এ পাঠাতে হলে প্রতিটা subdomain-এর docu
 | **Admin-এ CORS error** | `ADMIN_URL` env-এ নেই, বা admin build-এ `VITE_API_BASE_URL` ভুল |
 | **Admin refresh করলে 404** | §৭-এর `.htaccess` বসানো হয়নি |
 | **Admin সব request localhost-এ পাঠাচ্ছে** | `VITE_API_BASE_URL` ছাড়া build হয়েছে (§৪.৩) |
-| **`Too many connections`** | `DATABASE_URL`-এ `?connection_limit=5` যোগ করুন |
+| **`Too many connections`** | `.env`-এ `DB_POOL_LIMIT` কমান (default 5) |
 | **`ERR_MODULE_NOT_FOUND`** | archive `npm run build:cpanel` দিয়ে বানানো হয়নি |
 | **Storefront-এ `Cannot find module '<package>-<16 hex>'`** | §৬.১ দেখুন — পুরনো build, নতুন করে build করে পুরনো ফাইল মুছে তুলুন |
 | **`bash: fork: Resource temporarily unavailable`** | cPanel-এর process limit ভরেছে — কমান্ডটা **চলেইনি**। কিছুক্ষণ अপেক্ষা করুন, বা কাজটা phpMyAdmin-এ করুন |

@@ -96,8 +96,12 @@ Code-এ **কিছু বদলায়নি** — CORS allowlist ([`src/app
    channel_binding সমস্যার জন্য ছিল, এখন [`prisma.config.ts`](prisma.config.ts) সরাসরি
    `DATABASE_URL` পড়ে।
 
-   > Host যদি connection সংখ্যা কম রাখে, URL-এ `?connection_limit=5` যোগ করুন।
-   > আসল সীমা কত সেটা host-ই বলতে পারে, তাই আগে থেকে বসানো নেই।
+   > Connection pool নিজে থেকেই ৫-এ সীমিত থাকে, `DB_POOL_LIMIT` দিয়ে বদলানো যায়। অলস
+   > connection ৬০ সেকেন্ড পর ছেড়ে দেয়। URL-এ `?connection_limit=` লেখার দরকার নেই, কারণ
+   > mariadb driver ওই নামটা পড়েই না। পুরোনো URL-এ থাকলে code নিজেই সেটাকে `connectionLimit`-এ বদলে নেয়।
+   >
+   > Local machine থেকে এই remote database-এ চালালে প্রতিটা query-তে প্রায় ২০ms network-এ যায়,
+   > তাই dev-এ API ধীর লাগে। Production-এ app আর DB একই host-এ থাকে, সেখানে এই খরচ নেই।
 
 ---
 
@@ -249,96 +253,7 @@ Backend-এর URL বদলাচ্ছে, তাই দুটোই **rebuild
 
 ---
 
-## ৭. Demo host — এক deployment, কয়েকটা demo shop
-
-**এই অংশটা শুধু আপনার নিজের demo সার্ভারের জন্য। কোনো client-এর cPanel-এ এর কিছুই লাগে না —
-সেখানে §৫-এর env তালিকাই যথেষ্ট, আর `DEMO_DATABASES` সেট না করলে এই পুরো ব্যবস্থাটা নিষ্ক্রিয়।**
-
-Prospect-দের দেখানোর জন্য কয়েকটা আলাদা দোকান — একেকটা আলাদা subdomain-এ, আলাদা database-এ —
-কিন্তু **একটাই Node app, একটাই storefront process**। Demo বাড়লেও RAM বাড়ে না, যেটা ২ GB-র
-account-এ গুরুত্বপূর্ণ।
-
-আপনার নিজের আসল site এই demo গুলোর সাথে **মেশাবেন না** — ওটা আলাদা stack হিসেবে §১–§৬ ধরে
-deploy করুন। তাতে একটা demo ভাঙলে আপনার business site অক্ষত থাকে, আর client যে পথে deploy
-হবে সেটা আপনি প্রতিদিন নিজেই যাচাই করতে থাকেন।
-
-### ৭.১ প্রতি demo-র জন্য subdomain + database
-
-cPanel-এ Subdomain সীমাহীন, Database-ও। প্রতিটা demo-র জন্য:
-
-1. **Subdomains** → `fashion`, `grocery` … (যেমন `fashion.apnardomain.com`)
-2. **MySQL Databases** → একটা করে DB, যেমন `cpuser_demo_fashion`
-3. **§২.২-এর `ALTER DATABASE` প্রতিটাতে চালান** — charset ঠিক না করলে বাংলা লেখা mojibake হবে,
-   আর সেটা পরে সারানো যায় না
-4. প্রতিটাতে migration চালান:
-
-   ```bash
-   source ~/nodevenv/backend/22/bin/activate && cd ~/backend
-   DATABASE_URL="mysql://cpuser_u:pass@localhost:3306/cpuser_demo_fashion" npx prisma migrate deploy
-   ```
-
-> **Subdomain-এর নাম-ই demo key।** `fashion.apnardomain.com` → key `fashion`। তাই subdomain-এর
-> নাম আর `DEMO_DATABASES`-এর key হুবহু এক হতে হবে।
-
-### ৭.২ `DEMO_DATABASES`
-
-Backend app-এর Environment variables-এ একটা লাইন — JSON, key → connection string:
-
-```
-DEMO_DATABASES={"fashion":"mysql://cpuser_u:pass@localhost:3306/cpuser_demo_fashion?connection_limit=2","grocery":"mysql://cpuser_u:pass@localhost:3306/cpuser_demo_grocery?connection_limit=2"}
-```
-
-**`?connection_limit=2` বাদ দেবেন না।** প্রতিটা demo নিজের connection pool খোলে, আর shared
-hosting-এ MySQL-এর concurrent connection সীমিত। ৪টা demo × default pool মিলে সীমা ছাড়ালে
-`Too many connections` এসে **সব** demo একসাথে বসে যাবে।
-
-`DATABASE_URL` আগের মতোই থাকবে — ওটা fallback: header ছাড়া বা অচেনা key নিয়ে আসা request
-ওই database থেকেই উত্তর পাবে।
-
-### ৭.৩ Storefront আর admin
-
-**দুটোরই একটা করে build, সব demo-র জন্য।**
-
-- **Storefront** — চারটে subdomain-ই একই Node app-এ যাবে। App নিজের incoming hostname দেখে
-  demo চিনে নেয় আর API-কে জানায়।
-- **Admin** — static file, তাই প্রতি demo subdomain-এ একই `dist/` রাখলেই হয়।
-  **`VITE_API_BASE_URL` সেট করবেন না** — না থাকলে panel নিজের origin-কে API ধরে, আর সেটাই
-  এক build-কে সব demo-তে কাজ করায়। (Client-এর install-এ উল্টো — সেখানে ওটা সেট করতেই হবে,
-  §৬ দেখুন।)
-
-### ৭.৪ Demo আবার আগের অবস্থায় ফেরানো
-
-Prospect ঘাঁটাঘাঁটি করে data এলোমেলো করে ফেললে — seed করার পরপরই প্রতিটা demo-র একটা dump
-রেখে দিন:
-
-```bash
-mysqldump -u cpuser_u -p cpuser_demo_fashion > ~/demo-backups/fashion.sql
-```
-
-ফেরাতে:
-
-```bash
-mysql -u cpuser_u -p cpuser_demo_fashion < ~/demo-backups/fashion.sql
-```
-
-ইচ্ছাকৃতভাবে হাতে — এক ক্লিকে DB মুছে ফেলার বোতাম বানানো হয়নি, কারণ ভুল database-এ চাপ পড়লে
-ফেরার পথ থাকে না।
-
-### ৭.৫ ⚠️ Demo key নিরাপত্তার সীমা নয়
-
-Demo key শুধু **routing** — কোন database, তাই বলে। যে কেউ অন্য demo-র key পাঠিয়ে সেই demo-র
-data দেখতে পারবে। এটা ঠেকানো হয়নি, ইচ্ছাকৃতভাবে।
-
-**তাই `DEMO_DATABASES` সেট করা আছে এমন কোনো deployment-এ আসল customer data রাখবেন না।**
-Demo host-এ শুধু দেখানোর জন্য বানানো data থাকবে।
-
-Client-এর install-এ এই ঝুঁকি নেই — সেখানে map নেই, তাই header সম্পূর্ণ উপেক্ষিত।
-
-কখনো যদি সত্যিকারের আলাদা করার দরকার হয়, এই নকশাটা তার জন্য নয় — তখন একে বদলাতে হবে,
-শক্ত করার চেষ্টা নয়। (`server/openspec/changes/add-multi-demo-hosting/design.md`, Decision 6)
-
----
-## ৮. সমস্যা হলে
+## ৭. সমস্যা হলে
 
 - **503 / "Incomplete response"** — হাতে চালিয়ে আসল error দেখুন:
   ```bash
@@ -359,7 +274,7 @@ Client-এর install-এ এই ঝুঁকি নেই — সেখান�
   `verify-mysql-charset.ts` দেখুন।
 - **বাংলা লেখা `????` বা উল্টোপাল্টা দেখাচ্ছে** — §2.2-এর `ALTER DATABASE` বাদ পড়েছে।
   ঐ data আর উদ্ধার হবে না; charset ঠিক করে আবার বসাতে হবে।
-- **`Too many connections`** — `DATABASE_URL`-এ `?connection_limit=5` যোগ করুন (§2.3)।
+- **`Too many connections`** — `.env`-এ `DB_POOL_LIMIT` কমান (default 5) (§2.3)।
 - **Login হয় কিন্তু টেকে না** — HTTPS নেই (§5.2)।
 - **Admin/storefront-এ CORS error** — `FRONTEND_URL` / `ADMIN_URL` env-এ ঐ ডোমেইনটা নেই।
 - **প্রথম request ধীর** — অনেকক্ষণ কেউ না এলে Passenger app বন্ধ করে দেয়। স্বাভাবিক।

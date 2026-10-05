@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { RoleName } from "../../constants/role.constant";
-import { multerUpload } from "../../config/multer.config";
+import { fileUpload, mediaUpload } from "../../config/multer.config";
 import { checkAuth } from "../../middleware/checkAuth";
 import { UploadController } from "./upload.controller";
 
@@ -11,7 +11,7 @@ const router = Router();
 router.post(
     "/image",
     checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
-    multerUpload.single("file"),
+    fileUpload.single("file"),
     UploadController.uploadImage,
 );
 
@@ -20,7 +20,7 @@ router.post(
 router.post(
     "/video",
     checkAuth(RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF),
-    multerUpload.fields([
+    mediaUpload.fields([
         { name: "video", maxCount: 1 },
         { name: "thumbnail", maxCount: 1 },
     ]),

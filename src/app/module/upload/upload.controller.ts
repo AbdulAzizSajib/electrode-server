@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
 import { uploadFileToCloudinary } from "../../config/cloudinary.config";
+import { IMAGE_MAX_BYTES } from "../../config/multer.config";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 
@@ -15,7 +16,7 @@ const uploadImage = catchAsync(async (req: Request, res: Response) => {
         throw new AppError(status.BAD_REQUEST, "An image file is required");
     }
 
-    const uploadResult = await uploadFileToCloudinary(req.file.buffer, req.file.originalname);
+    const uploadResult = await uploadFileToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -44,10 +45,19 @@ const uploadVideo = catchAsync(async (req: Request, res: Response) => {
         throw new AppError(status.BAD_REQUEST, "A video file is required");
     }
 
-    const uploaded = await uploadFileToCloudinary(video.buffer, video.originalname);
+    // mediaUpload's size limit is the video's; the poster is an image and gets
+    // the image ceiling, checked before anything is sent to Cloudinary.
+    if (thumbnail && thumbnail.size > IMAGE_MAX_BYTES) {
+        throw new AppError(
+            status.REQUEST_ENTITY_TOO_LARGE,
+            `The poster image is larger than the ${IMAGE_MAX_BYTES / (1024 * 1024)} MB limit`,
+        );
+    }
+
+    const uploaded = await uploadFileToCloudinary(video.buffer, video.originalname, video.mimetype);
 
     const uploadedThumbnail = thumbnail
-        ? await uploadFileToCloudinary(thumbnail.buffer, thumbnail.originalname)
+        ? await uploadFileToCloudinary(thumbnail.buffer, thumbnail.originalname, thumbnail.mimetype)
         : null;
 
     sendResponse(res, {

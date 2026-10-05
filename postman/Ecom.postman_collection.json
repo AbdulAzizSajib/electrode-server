@@ -894,7 +894,7 @@
                     }
                   ]
                 },
-                "description": "No auth. ACTIVE-only, paginated. `category` matches the product's primary category OR a supplementary ProductCategory tag.\n\nThe search param here is `searchTerm` (not `search`) — an unrecognised filter key is ignored, so `?search=jbl` silently returns every product instead of erroring. Use this endpoint for a full search RESULTS PAGE; for a search-as-you-type dropdown use `GET /products/search?q=` instead, which is roughly 10x faster."
+                "description": "No auth. ACTIVE-only, paginated. `category` matches the product's primary category OR a supplementary ProductCategory tag.\n\nThe search param here is `searchTerm` (not `search`) — an unrecognised filter key is ignored, so `?search=jbl` silently returns every product instead of erroring. Use this endpoint for a full search RESULTS PAGE; for a search-as-you-type dropdown use `GET /products/search?q=` instead, which is roughly 10x faster.\n\n**Search** (`searchTerm`) matches a product's `name` or `sku`, case-insensitive substring. It does not match `description` or `shortDescription` (the header type-ahead, `GET /products/search`, still does).\n\n**Page size** is capped at 60. A larger `limit` is served as 60, not rejected, and `meta.limit` reports what was applied. A non-numeric `limit` falls back to the default of 10.\n\n**Row shape**: a list row does not carry `description` (only `GET /products/:slug` does), and its `category` and `brand` are `{ id, name, slug }`."
               },
               "response": []
             },
@@ -4819,7 +4819,7 @@
                     }
                   ]
                 },
-                "description": "OWNER/ADMIN only. multipart/form-data variant of product create: the `data` field carries the same JSON payload the plain-JSON request uses, plus an optional `imageSlots` array ({altText?, sortOrder?, isPrimary?, variantIndex?}) matched by position to the uploaded files under the repeated `images` field (max 10). Select actual image files for the two `images` file fields before sending — Postman can't pre-fill a file picker. See openspec/changes/add-product-image-upload and link-product-images-to-variants."
+                "description": "OWNER/ADMIN only. multipart/form-data variant of product create: the `data` field carries the same JSON payload the plain-JSON request uses, plus an optional `imageSlots` array ({altText?, sortOrder?, isPrimary?, variantIndex?}) matched by position to the uploaded files under the repeated `images` field (max 10). Select actual image files for the two `images` file fields before sending — Postman can't pre-fill a file picker. See openspec/changes/add-product-image-upload and link-product-images-to-variants.\n\n**Limits**: each `images` file must be an image, at most 10 MB (otherwise **413**, or **415** for a wrong type). Photographic images are stored at most 2000 px on the longest side."
               },
               "response": []
             },
@@ -5245,7 +5245,7 @@
                     }
                   ]
                 },
-                "description": "OWNER/ADMIN/STAFF only. multipart/form-data with a single `file` field — pick a local image file in Postman before sending. Uploads to Cloudinary and returns { url }, usable as-is in Category/Product/Banner image fields elsewhere in this collection. Saves uploadedImageUrl."
+                "description": "OWNER/ADMIN/STAFF only. multipart/form-data with a single `file` field — pick a local image file in Postman before sending. Uploads to Cloudinary and returns { url }, usable as-is in Category/Product/Banner image fields elsewhere in this collection. Saves uploadedImageUrl.\n\n**Limits**: an image or a PDF, at most 10 MB. A larger file returns **413**, and any other type returns **415**, both with `errorSources[0].message` saying why. Photographic images (JPEG, PNG, WebP, AVIF, HEIC, TIFF, BMP) are stored at most 2000 px on the longest side with automatic quality. SVG, ICO and GIF are stored as uploaded."
               },
               "response": [],
               "event": [
@@ -5296,7 +5296,7 @@
                     }
                   ]
                 },
-                "description": "OWNER/ADMIN/STAFF only. multipart/form-data taking the video and its poster frame IN ONE REQUEST, because a video without a thumbnail shows a black rectangle until it plays — they are only useful as a pair and should fail or succeed together.\n\n`thumbnail` is optional: Cloudinary can render a frame from the video itself, so a merchant who supplies no poster still gets one. When supplied, it is the merchant's choice of frame and wins.\n\nReturns { url, thumbnailUrl } — set both on a product's `video` and `videoThumbnail`. Saves uploadedVideoUrl and uploadedVideoThumbnailUrl."
+                "description": "OWNER/ADMIN/STAFF only. multipart/form-data taking the video and its poster frame IN ONE REQUEST, because a video without a thumbnail shows a black rectangle until it plays — they are only useful as a pair and should fail or succeed together.\n\n`thumbnail` is optional: Cloudinary can render a frame from the video itself, so a merchant who supplies no poster still gets one. When supplied, it is the merchant's choice of frame and wins.\n\nReturns { url, thumbnailUrl } — set both on a product's `video` and `videoThumbnail`. Saves uploadedVideoUrl and uploadedVideoThumbnailUrl.\n\n**Limits**: `video` must be a video, at most 100 MB, and `thumbnail` must be an image, at most 10 MB. A file over its limit returns **413**, and a wrong type returns **415**."
               },
               "response": [],
               "event": [

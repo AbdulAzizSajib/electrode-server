@@ -8,10 +8,11 @@ import AppError from "../errorHelpers/AppError";
 import { handleZodError } from "../errorHelpers/handleZodError";
 import { TErrorResponse, TErrorSources } from "../interfaces/error.interface";
 
-/** Friendlier text for the multer error codes this API can actually trigger (upload routes use `.single`/`.array` with a numeric cap, no field-size/part-count limits configured). */
+/** Friendlier text for the multer error codes this API can actually trigger (upload routes use `.single`/`.array` with a numeric cap and a per-instance `fileSize` limit — see multer.config.ts). */
 const MULTER_ERROR_MESSAGES: Partial<Record<MulterError["code"], string>> = {
     LIMIT_FILE_COUNT: "Too many files uploaded",
     LIMIT_UNEXPECTED_FILE: "Unexpected file field in upload",
+    LIMIT_FILE_SIZE: "File is too large. Images may be up to 10 MB and videos up to 100 MB",
 };
 
 
@@ -62,7 +63,9 @@ export const globalErrorHandler = async (err: any, req: Request, res: Response, 
         stack = err.stack;
 
     } else if (err instanceof MulterError) {
-        statusCode = status.BAD_REQUEST;
+        // A file over its limit is 413, the status that says so; every other
+        // multer refusal is a malformed request.
+        statusCode = err.code === "LIMIT_FILE_SIZE" ? status.REQUEST_ENTITY_TOO_LARGE : status.BAD_REQUEST;
         message = MULTER_ERROR_MESSAGES[err.code] ?? err.message;
         stack = err.stack;
         errorSources = [

@@ -30,7 +30,7 @@ const mergeUploadedImages = async (req: Request): Promise<void> => {
 
     if (files.length > 0) {
         const uploaded = await Promise.all(
-            files.map((file) => uploadFileToCloudinary(file.buffer, file.originalname)),
+            files.map((file) => uploadFileToCloudinary(file.buffer, file.originalname, file.mimetype)),
         );
 
         // `url` is spread first so a slot can never override it. Slots are

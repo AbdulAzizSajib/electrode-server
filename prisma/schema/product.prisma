@@ -166,11 +166,21 @@ model Product {
 
   @@index([categoryId])
   @@index([brandId])
-  @@index([status])
   @@index([isFeatured])
   @@index([createdAt])
   @@index([averageRating])
   @@index([totalSold])
   @@index([viewCount])
+
+  // Storefront listings filter `status = ACTIVE` and sort by one column, so
+  // each sort gets a (status, sortKey) index and is served as a range scan
+  // with no filesort. These lead with `status`, which is why the single
+  // `status` index is gone. See improve-site-performance design D2.
+  @@index([status, createdAt])
+  @@index([status, totalSold])
+  @@index([status, offerPrice])
+  @@index([status, isFeatured, createdAt])
+  @@index([status, categoryId])
+  @@index([status, brandId])
 
 }

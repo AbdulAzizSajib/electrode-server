@@ -261,6 +261,9 @@ export const searchProductsZodSchema = z.object({
  * Deliberately NOT applied to the admin listing: an admin is already entitled
  * to every column, and restricting it would break admin tooling for no gain.
  */
+/** Most products a public listing returns per page; see `limit` below. */
+export const PUBLIC_PRODUCT_PAGE_SIZE_MAX = 60;
+
 export const PUBLIC_PRODUCT_SORT_FIELDS = [
     "createdAt",
     "offerPrice",
@@ -297,5 +300,20 @@ export const publicProductQueryZodSchema = z.looseObject({
     isFeatured: z
         .enum(["true", "false"], "isFeatured must be true or false")
         .transform((value) => value === "true")
+        .optional(),
+    /*
+     * The public page size is capped, so `?limit=1000` cannot pull the whole
+     * catalogue with its relations in one request. Clamped rather than
+     * refused: a storefront asking for too much should get a shorter page,
+     * not an error page, and `meta.limit` reports what was applied. Anything
+     * that is not a positive number falls back to QueryBuilder's default, as
+     * it always has. The admin list is a different endpoint and is not capped.
+     */
+    limit: z
+        .string()
+        .transform((value) => {
+            const requested = Math.trunc(Number(value));
+            return requested > 0 ? Math.min(requested, PUBLIC_PRODUCT_PAGE_SIZE_MAX) : undefined;
+        })
         .optional(),
 });

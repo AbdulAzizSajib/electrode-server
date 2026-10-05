@@ -27,4 +27,7 @@ model ProductImage {
 
   @@index([productId])
   @@index([variantId])
+  // A list card's primary image, and a product page's ordered gallery.
+  @@index([productId, isPrimary])
+  @@index([productId, sortOrder])
 }

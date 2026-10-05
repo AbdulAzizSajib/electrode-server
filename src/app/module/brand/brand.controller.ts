@@ -40,7 +40,7 @@ const mergeUploadedBrandLogo = catchAsync(
             throw new AppError(status.BAD_REQUEST, "Uploaded logo file is empty");
         }
 
-        const uploaded = await uploadFileToCloudinary(file.buffer, file.originalname);
+        const uploaded = await uploadFileToCloudinary(file.buffer, file.originalname, file.mimetype);
         req.body.logo = uploaded.secure_url;
 
         next();

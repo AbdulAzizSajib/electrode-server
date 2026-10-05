@@ -87,6 +87,7 @@ const updateOwnProfile = catchAsync(async (req: Request, res: Response) => {
         const uploadResult = await uploadFileToCloudinary(
             req.file.buffer,
             req.file.originalname,
+            req.file.mimetype,
         );
         payload.image = uploadResult.secure_url;
     }

@@ -27,4 +27,6 @@ model Campaign {
   @@index([startsAt])
   @@index([endsAt])
   @@index([placement])
+  // The active-campaign lookup every product list and detail read makes.
+  @@index([status, startsAt, endsAt])
 }

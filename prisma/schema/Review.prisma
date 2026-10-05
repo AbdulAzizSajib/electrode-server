@@ -24,4 +24,6 @@ model Review {
   @@index([customerId])
   @@index([status])
   @@index([rating])
+  // A product's approved reviews.
+  @@index([productId, status])
 }

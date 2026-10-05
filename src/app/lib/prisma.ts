@@ -1,35 +1,11 @@
+import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import "dotenv/config";
 import { PrismaClient } from "../../generated/prisma/client";
-import { currentClient } from "./tenant";
+import { envVars } from "../config/env";
 
 /*
- * The Prisma client for the request in hand.
- *
- * ── Why this is a Proxy and not a client ──────────────────────────────────
- *
- * This module used to export one `PrismaClient`. It now exports a stand-in that
- * forwards every property access to whichever client is in scope, so that one
- * deployment can serve several demonstration shops from separate databases.
- *
- * The point of doing it here rather than at the call sites: 55 files do
- * `import { prisma } from ".../lib/prisma"`, and every service, controller and
- * script in them is unchanged by this. A service written tomorrow gets the
- * right database without knowing any of this exists. The alternative — passing
- * a client into every function — would have edited all 55 and made every future
- * service remember.
- *
- * Outside a request there is no scope, and `currentClient()` answers with the
- * `DATABASE_URL` client. That is what seeds, cron jobs and the verify scripts
- * get, and it is what a single-shop installation gets for every request too.
- * See lib/tenant.ts and openspec/changes/add-multi-demo-hosting/design.md.
- *
- * ── The one rule this imposes ─────────────────────────────────────────────
- *
- * `prisma` is no longer a value worth holding on to. Capturing it in a
- * module-scope variable and using it later would resolve against whatever scope
- * happened to be active then, not the one it was captured in. Nothing does this
- * today; import it and use it, as every existing caller already does.
- *
- * ── Raw-query decoding, unchanged by the above ────────────────────────────
+ * How raw-query results decode, because it is not the same as it was under the
+ * `pg` adapter and every $queryRaw call site depends on it:
  *
  *   DECIMAL  -> string   (driver default `decimalAsNumber: false`)
  *   BIGINT   -> BigInt   (driver default `bigIntAsNumber: false`)
@@ -43,19 +19,47 @@ import { currentClient } from "./tenant";
  * The third has no option to change. A raw-query boolean must be read as
  * truthy/falsy or coerced — never compared with `=== true`, which silently
  * never matches. See the `sqlBoolean` decoder in report.payments.ts.
+ *
+ * Driver options cannot be passed through the adapter's second argument, which
+ * only takes `database` and `onConnectionError`. They go in the connection
+ * string — which is how the pool is sized below.
  */
-const prisma = new Proxy({} as PrismaClient, {
-    get: (_target, property, receiver) => {
-        const client = currentClient();
-        const value = Reflect.get(client, property, receiver);
-        // Methods must keep their client as `this` — `$transaction`, `$queryRaw`
-        // and every delegate rely on it, and an unbound function would lose it.
-        return typeof value === "function" ? value.bind(client) : value;
-    },
-    has: (_target, property) => Reflect.has(currentClient(), property),
-    ownKeys: () => Reflect.ownKeys(currentClient()),
-    getOwnPropertyDescriptor: (_target, property) =>
-        Reflect.getOwnPropertyDescriptor(currentClient(), property),
-});
+
+const DEFAULT_POOL_LIMIT = 5;
+
+/**
+ * The connection string with the pool sized explicitly.
+ *
+ * The mariadb driver reads pool options only under its own names. Prisma's old
+ * `connection_limit` is silently ignored, and the driver's defaults are 10
+ * connections, all of them held open (`minimumIdle` defaults to the limit) —
+ * past the per-user cap of shared cPanel MySQL. So: an explicit limit (the
+ * URL's own, else `DB_POOL_LIMIT`, else 5), one idle connection kept warm, and
+ * idle ones released after 60s, before a host's `wait_timeout` can kill them
+ * under us.
+ *
+ * Done on the string rather than by building a config object so every other
+ * option in the URL keeps the driver's own parsing.
+ */
+const poolConnectionString = (connectionString: string): string => {
+    const url = new URL(connectionString);
+    const params = url.searchParams;
+
+    const legacyLimit = params.get("connection_limit");
+    params.delete("connection_limit");
+
+    if (!params.has("connectionLimit")) {
+        const limit = Number(legacyLimit ?? envVars.DB_POOL_LIMIT) || DEFAULT_POOL_LIMIT;
+        params.set("connectionLimit", String(limit));
+    }
+    if (!params.has("minimumIdle")) params.set("minimumIdle", "1");
+    if (!params.has("idleTimeout")) params.set("idleTimeout", "60");
+
+    return url.toString();
+};
+
+const adapter = new PrismaMariaDb(poolConnectionString(envVars.DATABASE_URL));
+
+const prisma = new PrismaClient({ adapter });
 
 export { prisma };

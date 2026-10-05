@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { ALL_ROLES } from "../../constants/role.constant";
-import { multerUpload } from "../../config/multer.config";
+import { imageUpload } from "../../config/multer.config";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
 import { AuthController } from "./auth.controller";
@@ -32,7 +32,7 @@ router.get("/me", checkAuth(...ALL_ROLES), AuthController.getMe);
 router.patch(
     "/me",
     checkAuth(...ALL_ROLES),
-    multerUpload.single("image"),
+    imageUpload.single("image"),
     validateRequest(updateOwnProfileZodSchema),
     AuthController.updateOwnProfile,
 );

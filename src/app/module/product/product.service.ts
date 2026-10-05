@@ -181,7 +181,22 @@ const PUBLIC_PRODUCT_SCALARS = {
 } as const;
 
 /**
- * Public list projection: the safe scalars plus the relations a card renders.
+ * What a public read carries of a product's category, brand, or tag: enough to
+ * name it and link to it. The full rows hold descriptions, images and SEO text
+ * no product payload renders, and a listing would repeat them on every row.
+ */
+const PUBLIC_REF_SELECT = { select: { id: true, name: true, slug: true } } as const;
+
+/**
+ * The list scalars: the public ones minus the long `description`, which only
+ * the product page renders (quick view fetches detail). Derived rather than
+ * listed again, so a scalar added to the allowlist later reaches lists too.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { description: _detailOnly, ...PUBLIC_PRODUCT_LIST_SCALARS } = PUBLIC_PRODUCT_SCALARS;
+
+/**
+ * Public list projection: the list scalars plus the relations a card renders.
  *
  * Deliberately does NOT carry each image's `variantId`: a card shows one
  * primary image and has no variant selector, so the association would be dead
@@ -190,17 +205,17 @@ const PUBLIC_PRODUCT_SCALARS = {
  * See link-product-images-to-variants design.md Decision 8.
  */
 const PUBLIC_PRODUCT_LIST_SELECT = {
-    ...PUBLIC_PRODUCT_SCALARS,
-    category: true,
-    brand: true,
+    ...PUBLIC_PRODUCT_LIST_SCALARS,
+    category: PUBLIC_REF_SELECT,
+    brand: PUBLIC_REF_SELECT,
     images: { where: { isPrimary: true }, take: 1 },
 } as const;
 
 /** Public detail projection: as above, plus what a product page renders. */
 const PUBLIC_PRODUCT_DETAIL_SELECT = {
     ...PUBLIC_PRODUCT_SCALARS,
-    category: true,
-    brand: true,
+    category: PUBLIC_REF_SELECT,
+    brand: PUBLIC_REF_SELECT,
     images: { orderBy: { sortOrder: "asc" as const } },
     // Variants carry their own purchasePrice, so they are projected too rather
     // than selected wholesale.
@@ -224,9 +239,9 @@ const PUBLIC_PRODUCT_DETAIL_SELECT = {
         },
     },
     attributes: true,
-    categories: { include: { category: true } },
+    categories: { include: { category: PUBLIC_REF_SELECT } },
     // Tags only — the merchandising the shopper is meant to see.
-    tags: { include: { tag: true } },
+    tags: { include: { tag: { select: { id: true, name: true } } } },
     /*
      * Deliberately NOT projected: `taxRule`. It is commercial policy, not
      * product description — a shopper is told what tax costs at checkout, where
@@ -883,10 +898,14 @@ const getPublicProducts = async (queryParams: IPublicProductQuery) => {
 
     const queryBuilder = new QueryBuilder<
         Prisma.ProductGetPayload<{
-            include: { category: true; brand: true; images: { where: { isPrimary: true }; take: 1 } };
+            select: typeof PUBLIC_PRODUCT_LIST_SELECT;
         }>
     >(prisma.product, queryParams, {
-        searchableFields: ["name", "description", "shortDescription"],
+        // Name and SKU only. `description` is TEXT, and `LIKE '%term%'` over it
+        // was a full scan run twice per request (rows and count). The header
+        // type-ahead (`searchProducts`) still weighs descriptions; this is the
+        // listing's filter. See improve-site-performance design D3.
+        searchableFields: ["name", "sku"],
     });
 
     queryBuilder.search().sort().paginate();

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { multerUpload } from "../../config/multer.config";
+import { imageUpload } from "../../config/multer.config";
 import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
@@ -14,7 +14,7 @@ const router = Router();
  * non-file payload rides along as a `data` JSON field, which `validateRequest`
  * already unwraps. A plain application/json request with URL strings still works.
  */
-const bannerImageUpload = multerUpload.fields([
+const bannerImageUpload = imageUpload.fields([
     { name: "image", maxCount: 1 },
     { name: "mobileImage", maxCount: 1 },
 ]);

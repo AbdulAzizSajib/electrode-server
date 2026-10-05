@@ -53,6 +53,13 @@ interface EnvConfig {
      */
     STOREFRONT_URL?: string;
     /**
+     * Connections each database pool may hold. Optional — 5 when unset, which
+     * fits shared cPanel MySQL's per-user connection cap. A connection string
+     * carrying `connectionLimit` (or the legacy `connection_limit`) overrides
+     * it. See lib/prisma.ts `poolConnectionString`.
+     */
+    DB_POOL_LIMIT?: string;
+    /**
      * IANA timezone the admin reports resolve a date range in, so "1–31 March"
      * means the same 31 days whichever machine asks for it (design decision
      * 14). Optional; `Asia/Dhaka` when unset, which is where this store trades.
@@ -229,6 +236,7 @@ const loadEnvVariables = (): EnvConfig => {
         SUBSCRIPTION_BKASH_NUMBER: process.env.SUBSCRIPTION_BKASH_NUMBER as string,
         STOREFRONT_REVALIDATE_SECRET: process.env.STOREFRONT_REVALIDATE_SECRET,
         STOREFRONT_URL: process.env.STOREFRONT_URL,
+        DB_POOL_LIMIT: process.env.DB_POOL_LIMIT,
         STORE_TIMEZONE: process.env.STORE_TIMEZONE,
         INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY as string,
         STEADFAST_API_KEY: process.env.STEADFAST_API_KEY,

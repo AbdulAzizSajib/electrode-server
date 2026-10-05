@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { multerUpload } from "../../config/multer.config";
+import { imageUpload } from "../../config/multer.config";
 import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
@@ -10,7 +10,7 @@ const router = Router();
 
 // Brand logo is uploaded directly (multipart) rather than passed as a pre-hosted
 // URL. A plain application/json request with a `logo` URL string still works.
-const brandLogoUpload = multerUpload.single("logo");
+const brandLogoUpload = imageUpload.single("logo");
 
 // Admin (any status)
 router.get(

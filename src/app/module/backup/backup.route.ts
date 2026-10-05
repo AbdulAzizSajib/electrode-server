@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { multerUpload } from "../../config/multer.config";
+import { backupUpload } from "../../config/multer.config";
 import { RoleName } from "../../constants/role.constant";
 import { checkAuth } from "../../middleware/checkAuth";
 import { BackupController } from "./backup.controller";
@@ -22,7 +22,7 @@ router.get("/export", checkAuth(RoleName.OWNER), BackupController.exportBackup);
 router.post(
     "/restore",
     checkAuth(RoleName.OWNER),
-    multerUpload.single("backup"),
+    backupUpload.single("backup"),
     BackupController.prepareRestore,
 );
 

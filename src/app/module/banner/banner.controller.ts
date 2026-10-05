@@ -40,7 +40,7 @@ const mergeUploadedBannerImages = catchAsync(
                 throw new AppError(status.BAD_REQUEST, `Uploaded ${field} file is empty`);
             }
 
-            const uploaded = await uploadFileToCloudinary(file.buffer, file.originalname);
+            const uploaded = await uploadFileToCloudinary(file.buffer, file.originalname, file.mimetype);
             req.body[field] = uploaded.secure_url;
         }
 

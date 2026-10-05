@@ -9,9 +9,34 @@ cloudinary.config({
     api_secret: envVars.CLOUDINARY.CLOUDINARY_API_SECRET,
 })
 
+/**
+ * Photographic formats Cloudinary re-encodes well. Vector (SVG), icon (ICO)
+ * and animated (GIF) uploads are stored as they arrive: rasterising a logo or
+ * flattening an animation would be a loss, and they are small anyway.
+ */
+const RESIZABLE_IMAGE_TYPES = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+]);
+
+/**
+ * Longest side an uploaded image is stored at. Covers the widest render (a
+ * full-bleed hero on a 1920px screen) at 1x; every smaller size the storefront
+ * asks for is derived from this rather than from a 6000px phone original,
+ * which is what made each first-time derivative slow.
+ */
+const STORED_IMAGE_MAX_PX = 2000;
+
 export const uploadFileToCloudinary = async (
     buffer : Buffer,
     fileName: string,
+    mimeType: string,
 ) : Promise<UploadApiResponse> =>{
 
     if(!buffer || !fileName) {
@@ -45,6 +70,18 @@ export const uploadFileToCloudinary = async (
                 resource_type: "auto",
                 public_id: `Bariyan/${folder}/${uniqueName}`,
                 folder : `Bariyan/${folder}`,
+                // An incoming transformation: Cloudinary stores the result as
+                // the asset. `limit` only ever shrinks, never upscales.
+                ...(RESIZABLE_IMAGE_TYPES.has(mimeType) && {
+                    transformation: [
+                        {
+                            width: STORED_IMAGE_MAX_PX,
+                            height: STORED_IMAGE_MAX_PX,
+                            crop: "limit",
+                            quality: "auto",
+                        },
+                    ],
+                }),
             },
             (error, result) => {
                 if(error){
