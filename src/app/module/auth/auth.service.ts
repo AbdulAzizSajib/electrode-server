@@ -1,3 +1,4 @@
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import status from "http-status";
 import { JwtPayload } from "jsonwebtoken";
 import { RoleName } from "../../constants/role.constant";
@@ -353,7 +354,113 @@ const googleLoginSuccess = async (session: Record<string, any>) => {
     const accessToken = tokenUtils.getAccessToken(tokenPayload);
     const refreshToken = tokenUtils.getRefreshToken(tokenPayload);
 
-    return { accessToken, refreshToken };
+    return {
+        accessToken,
+        refreshToken,
+        sessionId: session.session.id as string,
+        sessionToken: session.session.token as string,
+    };
+};
+
+/**
+ * Hands a completed Google handshake to a storefront on another host.
+ *
+ * The backend's session cookies are host-only on the API's own host, so a
+ * storefront elsewhere never receives them — the cookie bridge the storefront
+ * callback used to rely on only ever worked on localhost, where cookies ignore
+ * ports. Instead the success step mints a code, puts it in the redirect, and
+ * the storefront's SERVER redeems it for the token trio. No token is ever in a
+ * URL. See openspec/changes/fix-google-oauth-cross-domain, design.md Decision 2.
+ *
+ * Stored in better-auth's own `Verification` table — the table it keeps OAuth
+ * state and email OTPs in, the same (identifier, value, expiry) shape — rather
+ * than a model of our own, which would cost a migration for no difference. The
+ * prefix keeps our rows apart from better-auth's, whose identifiers are emails
+ * and state strings.
+ */
+const GOOGLE_EXCHANGE_PREFIX = "google-exchange:";
+
+/** One redirect and one server-to-server call; normally well under a second. */
+const GOOGLE_EXCHANGE_TTL_MS = 60 * 1000;
+
+/**
+ * Only the HASH is stored, so a read of the table — a backup, a logged query —
+ * redeems nothing. A fast hash is right: the input is 256 random bits, so there
+ * is nothing to brute-force, and the lookup has to be by equality.
+ */
+const googleExchangeIdentifier = (code: string) =>
+    GOOGLE_EXCHANGE_PREFIX + createHash("sha256").update(code).digest("hex");
+
+/**
+ * Stores the SESSION ID, not its token: redemption re-reads the session, so one
+ * signed out or expired in the meantime is refused with no second check to
+ * forget, and no second copy of the token sits in another table.
+ */
+const createGoogleExchangeCode = async (sessionId: string) => {
+    const code = randomBytes(32).toString("base64url");
+    // The API process's clock, never the database's, so expiry is written and
+    // compared against one clock.
+    const now = new Date();
+
+    // Abandoned codes are swept here rather than by a cron.
+    await prisma.verification.deleteMany({
+        where: {
+            identifier: { startsWith: GOOGLE_EXCHANGE_PREFIX },
+            expiresAt: { lte: now },
+        },
+    });
+
+    await prisma.verification.create({
+        data: {
+            id: randomUUID(),
+            identifier: googleExchangeIdentifier(code),
+            value: sessionId,
+            expiresAt: new Date(now.getTime() + GOOGLE_EXCHANGE_TTL_MS),
+        },
+    });
+
+    return code;
+};
+
+/**
+ * Trades a code for the same `{ accessToken, refreshToken, sessionToken }` that
+ * sign-in and refresh return.
+ *
+ * SINGLE USE IS ENFORCED BY THE DELETE, not by a read-then-check: two concurrent
+ * redemptions can both read the row, but the database serialises their deletes
+ * and exactly one sees a count of 1. A "used" flag checked before use would let
+ * both through.
+ *
+ * Every refusal — unknown, expired, replayed, revoked session — is the same 401
+ * with the same message. Telling them apart would tell a caller which codes once
+ * existed. See design.md Decisions 3 and 4.
+ */
+const redeemGoogleExchangeCode = async (code: string) => {
+    const refuse = () =>
+        new AppError(status.UNAUTHORIZED, "Invalid or expired sign-in code");
+    const now = new Date();
+
+    const row = await prisma.verification.findFirst({
+        where: { identifier: googleExchangeIdentifier(code), expiresAt: { gt: now } },
+    });
+    if (!row) throw refuse();
+
+    const { count } = await prisma.verification.deleteMany({ where: { id: row.id } });
+    if (count !== 1) throw refuse();
+
+    const session = await prisma.session.findFirst({
+        where: { id: row.value, expiresAt: { gt: now } },
+        include: { user: true },
+    });
+    if (!session || !session.user) throw refuse();
+
+    const tokenPayload = await buildTokenPayload(session.user);
+
+    return {
+        accessToken: tokenUtils.getAccessToken(tokenPayload),
+        refreshToken: tokenUtils.getRefreshToken(tokenPayload),
+        sessionToken: session.token,
+    };
 };
 
 export const AuthService = {
@@ -369,4 +476,6 @@ export const AuthService = {
     forgetPassword,
     resetPassword,
     googleLoginSuccess,
+    createGoogleExchangeCode,
+    redeemGoogleExchangeCode,
 };

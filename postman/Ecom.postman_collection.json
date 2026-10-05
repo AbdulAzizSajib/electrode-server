@@ -694,6 +694,34 @@
               "response": []
             },
             {
+              "name": "Google OAuth - Exchange Code",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"code\": \"<code from the /google/success redirect>\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/auth/google/exchange",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "google",
+                    "exchange"
+                  ]
+                },
+                "description": "Server-to-server: the storefront callback redeems the one-time code the Google success redirect carries for { accessToken, refreshToken, sessionToken }. Single use, valid 60 s; every refusal is 401. See server/openspec/changes/fix-google-oauth-cross-domain."
+              }
+            },
+            {
               "name": "Google OAuth - Error Callback",
               "request": {
                 "method": "GET",

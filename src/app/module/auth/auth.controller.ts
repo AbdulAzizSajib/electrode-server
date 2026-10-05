@@ -3,6 +3,7 @@ import status from "http-status";
 import { uploadFileToCloudinary } from "../../config/cloudinary.config";
 import { envVars } from "../../config/env";
 import AppError from "../../errorHelpers/AppError";
+import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "../../lib/auth";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
@@ -290,18 +291,28 @@ const googleLogin = catchAsync(async (req: Request, res: Response) => {
     return res.redirect(response.url);
 });
 
+/*
+ * The end of the Google handshake: better-auth has just created the session and
+ * redirected here on the API's own host.
+ *
+ * THE SESSION IS ASKED OF BETTER-AUTH, NEVER READ BY COOKIE NAME. In production
+ * `useSecureCookies` makes better-auth name its cookie
+ * `__Secure-better-auth.session_token`; this handler used to read the bare
+ * name, found nothing, and sent every production customer to `oauth_failed`
+ * after Google had already approved them — while localhost, with no prefix,
+ * worked. Passing the raw headers lets better-auth look its cookie up under the
+ * name it set it with, and verify its signature while doing so.
+ *
+ * THE STOREFRONT GETS A CODE, NOT COOKIES. Cookies set here are host-only on the
+ * API's host and never reach a storefront on another one, so the redirect
+ * carries a one-time code its server redeems at `POST /auth/google/exchange`.
+ * See openspec/changes/fix-google-oauth-cross-domain.
+ */
 const googleLoginSuccess = catchAsync(async (req: Request, res: Response) => {
     const redirectPath = (req.query.redirect as string) || "/dashboard";
-    const sessionToken = req.cookies["better-auth.session_token"];
-
-    if (!sessionToken) {
-        return res.redirect(
-            `${envVars.FRONTEND_URL}/login?error=oauth_failed`,
-        );
-    }
 
     const session = await auth.api.getSession({
-        headers: { Cookie: `better-auth.session_token=${sessionToken}` },
+        headers: fromNodeHeaders(req.headers),
     });
 
     if (!session) {
@@ -317,7 +328,7 @@ const googleLoginSuccess = catchAsync(async (req: Request, res: Response) => {
     }
 
     const result = await AuthService.googleLoginSuccess(session);
-    const { accessToken, refreshToken } = result;
+    const { accessToken, refreshToken, sessionId } = result;
 
     tokenUtils.setAccessTokenCookie(res, accessToken);
     tokenUtils.setRefreshTokenCookie(res, refreshToken);
@@ -328,7 +339,25 @@ const googleLoginSuccess = catchAsync(async (req: Request, res: Response) => {
         redirectPath.startsWith("/") && !redirectPath.startsWith("//");
     const finalRedirectPath = isValidRedirectPath ? redirectPath : "/dashboard";
 
-    res.redirect(`${envVars.FRONTEND_URL}${finalRedirectPath}`);
+    // Built with URL so a `?next=` already on the path survives beside the code.
+    const destination = new URL(finalRedirectPath, envVars.FRONTEND_URL);
+    destination.searchParams.set(
+        "code",
+        await AuthService.createGoogleExchangeCode(sessionId),
+    );
+
+    res.redirect(destination.toString());
+});
+
+const exchangeGoogleCode = catchAsync(async (req: Request, res: Response) => {
+    const result = await AuthService.redeemGoogleExchangeCode(req.body.code);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Signed in with Google",
+        data: result,
+    });
 });
 
 const handleOAuthError = catchAsync((req: Request, res: Response) => {
@@ -351,5 +380,6 @@ export const AuthController = {
     resetPassword,
     googleLogin,
     googleLoginSuccess,
+    exchangeGoogleCode,
     handleOAuthError,
 };

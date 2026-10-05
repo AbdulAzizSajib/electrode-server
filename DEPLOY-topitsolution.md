@@ -10,7 +10,24 @@
 
 ---
 
+---
+
+## এই ফাইলে দুটো অংশ — আপনার কোনটা দরকার?
+
+| | কখন | কোথায় |
+|---|---|---|
+| **PART ১ — প্রথমবার বসানো** | নতুন host, নতুন database। একবারই লাগে | §০ – §৯, নিচে |
+| **PART ২ — প্রতিবার update** | কোড বদলেছে, নতুন field/table যোগ হয়েছে, বা শুধু নতুন build তুলবেন | §১২ |
+
+**সব কিছু ইতিমধ্যে চালু থাকলে PART ১ লাগবে না** — সোজা §১২-এ যান।
+
+# PART ১ — প্রথমবার বসানো (একবারের কাজ)
+
 ## ০. শুরুর আগে তিনটে কথা
+
+> **⚠️ এই §০ প্রথম deploy-এর কথা, আজকের অবস্থা নয়।** Database এখন **খালি নয়** — আসল order,
+> product, customer আছে। তাই schema বদলানোর আগে **§১২.২ পড়ুন**: `migrate reset` আর `db push`
+> এখন সব মুছে দেবে, যেখানে খালি database-এ ওগুলো নিরাপদ ছিল।
 
 **১. পুরনো কোনো data যাচ্ছে না।** নতুন MySQL database সম্পূর্ণ খালি শুরু হবে। Neon-এ যা আছে
 (product, order, customer) তার কিছুই আপনাআপনি আসবে না — দুই engine আলাদা, migration history নতুন।
@@ -337,7 +354,6 @@ touch ~/backend/tmp/restart.txt
 প্রথম boot-এ role আর super admin নিজে থেকেই তৈরি হবে (`SUPER_ADMIN_EMAIL`/`PASSWORD` দিয়ে)।
 
 **পরীক্ষা:** `https://api.topitsolution.com/api/v1/products` খুলুন — `{"success":true,...}` আসা উচিত।
-
 ---
 
 ## ৬. Storefront বসানো
@@ -476,6 +492,9 @@ app-এ পাঠাতে হলে প্রতিটা subdomain-এর docu
 | **`Environment variable X is required`** | §৫.৩-এর কোনো একটা বাদ পড়েছে। Server ইচ্ছাকৃতভাবে boot করে না, যাতে অর্ধেক-configure করা deployment চুপচাপ না চলে |
 | **`P1001: Can't reach database server`** | `DATABASE_URL` `mysql://` দিয়ে শুরু হচ্ছে কি না, host `localhost`, port `3306`, আর password-এ special character থাকলে URL-encode করা আছে কি না |
 | **`Data too long for column 'x'`** | ঐ column `VARCHAR(191)` রয়ে গেছে যেখানে `@db.Text` দরকার। `server/openspec/changes/switch-database-to-mysql/string-field-audit.tsv` দেখুন |
+| **`The migration ... was modified after it was applied` / `We need to reset`** | **reset-এ রাজি হবেন না, সব ডেটা মুছে যাবে।** §১২.২-এর `repair-migration-checksums.ts` দেখুন |
+| **নতুন column যোগ করতে গিয়ে migration ফেল** | Table-এ আগেই row আছে, column-টা nullable বা `@default(...)` নয়। §১২.২ দেখুন |
+| **App নতুন field খুঁজছে, database-এ নেই** | `migrate deploy` চালানো হয়নি — build আপলোড হয়েছে কিন্তু schema পুরনো (§১২.২ ধাপ ৩) |
 | **বাংলা লেখা `????` দেখাচ্ছে** | §৩.১ বাদ পড়েছে। ঐ data আর উদ্ধার হবে না — charset ঠিক করে আবার বসাতে হবে |
 | **একই নামের brand দুবার তৈরি হচ্ছে** | collation `_ci` নয়। `verify-mysql-charset.ts` চালান |
 | **Login হয় কিন্তু টেকে না** | HTTPS নেই (§২) |
@@ -502,3 +521,254 @@ curl -s -X POST https://api.topitsolution.com/api/v1/courier/sync \
 ```
 
 না দিলে dispatch আর webhook চলবে, কিন্তু কোনো missed webhook আর কখনো catch-up হবে না।
+
+---
+
+# PART ২ — প্রতিবারের কাজ
+
+## ১২. প্রতিবার update — রুটিন কাজ
+
+PART ১ একবারই লাগে। এরপর থেকে যা করবেন সেটা এখানে।
+
+**প্রথমে ঠিক করুন কোন ধরনের update:**
+
+| কী বদলেছে | কী করতে হবে | কোথায় |
+|---|---|---|
+| শুধু backend কোড (service, route, controller) | build → upload → restart | §১২.১ |
+| Prisma schema — নতুন field বা table | উপরেরটা **+ migration** | §১২.২ |
+| Storefront কোড | আলাদা build, backend ছোঁয়ার দরকার নেই | §১২.৩ |
+| Admin কোড | আলাদা build | §১২.৪ |
+| শুধু product/banner/setting যোগ করা | **কিছুই না** — admin panel থেকেই হয় | — |
+
+> **শেষ সারিটা খেয়াল করুন।** নতুন product, category, banner বা setting যোগ করা **database-এর
+> content**, schema নয় — ওগুলোর জন্য কোনো deploy, migration বা restart লাগে না। Admin panel
+> থেকে save করলেই storefront-এ চলে আসে (cache tag নিজে থেকে invalidate হয়)।
+
+---
+
+### ১২.১ শুধু backend কোড বদলালে
+
+নিজের PC-তে:
+
+```powershell
+cd "D:\Next.js\electrode\server"
+npm run build:cpanel
+```
+
+`backend.tar.gz` আপলোড করে cPanel Terminal-এ:
+
+```bash
+cd ~/backend
+tar -xzf backend.tar.gz && rm backend.tar.gz
+bash scripts/server-deploy.sh
+```
+
+`server-deploy.sh` দুটো কাজ করে: `package.json` বদলালে production dependency install করে
+(না বদলালে বাদ দেয়), তারপর `tmp/restart.txt` touch করে Passenger reload করায়।
+
+**Output-এর শেষ লাইন `==> Deploy complete.` কি না দেখুন।** Script টা `set -e` দিয়ে চলে — মাঝের
+কোনো ধাপে (যেমন `npm install`) error হলে সেখানেই থামে, restart পর্যন্ত পৌঁছায়ই না। তখন disk-এ
+নতুন code থাকে অথচ চলতে থাকে পুরনোটা, কারণ Node code একবারই memory-তে পড়ে।
+
+**পরীক্ষা — আপনি যা বদলেছেন সেটাই খুঁজুন, শুধু `success` নয়।** `{"success":true}` পুরনো code-ও
+দেয়, তাই ওটা দেখে বোঝা যায় না নতুন code চলছে কি না। যেমন নতুন setting field যোগ করলে
+`https://api.topitsolution.com/api/v1/settings/public?v=2`-এ ঐ key টা আছে কি না দেখুন (`?v=2`
+cache এড়ায়)। না থাকলে:
+
+```bash
+touch ~/backend/tmp/restart.txt
+```
+
+তাতেও না হলে cPanel → **Setup Node.js App** → **Restart**।
+
+> ২০২৬-১০-০৫: `adminFaviconUrl` যোগ করার পর disk-এ নতুন `dist` ছিল, database-এ column আর মান
+> ছিল, তবু API-তে key টা আসছিল না — app restart হয়নি। `success:true` পরীক্ষা এটা ধরতে পারেনি।
+
+---
+
+### ১২.২ Prisma schema বদলালে — নতুন field বা নতুন table
+
+এটাই একমাত্র ধরনের update যেখানে **ডেটা নষ্ট হতে পারে**, তাই ধাপগুলো ক্রমে মানুন।
+
+#### ⚠️ এই তিনটে command কখনো চালাবেন না
+
+**এখন database খালি নয়, আসল order/product/customer আছে।** §০-এর কথাটা প্রথম deploy-এর, তারপর
+থেকে আর খাটে না। তাই schema বদলানোর নিয়মও বদলে গেছে: যে command গুলো খালি database-এ নিরাপদ
+ছিল, এখন সেগুলোই সব মুছে দিতে পারে।
+
+**তিনটে command কখনো চালাবেন না** — কোনোটাই জিজ্ঞেস করে না, আর কোনোটাই ফেরানো যায় না:
+
+| ❌ Command | কী করে |
+|---|---|
+| `prisma migrate reset` | **প্রতিটা table drop করে** নতুন করে বানায়। সব order, customer, product শেষ |
+| `prisma db push` | migration file ছাড়াই database বদলায়। column rename/type বদলালে প্রায়ই "drop করে নতুন বানাই" পথ নেয় |
+| `npm run push --workspace server` | উপরেরটারই shortcut — `package.json`-এ আছে, কিন্তু ওটা খালি database-এর জন্য |
+
+> **`db push` কেন খারাপ, যদিও এটা "দ্রুত":** কোনো migration file তৈরি হয় না। মানে cPanel-এ ঐ
+> একই বদল আনার কোনো উপায় থাকে না — local আর production schema আলাদা হয়ে যায়। আর তারপর
+> `migrate dev` চালালে Prisma history-র সাথে অমিল দেখে **`migrate reset` অফার করে**, অর্থাৎ
+> দ্রুত পথটা শেষ হয় সব ডেটা মোছার প্রস্তাবে।
+
+#### যা করবেন — তিন ধাপ
+
+**ধাপ ১ — Local-এ migration বানান**
+
+```powershell
+cd "D:\Next.js\electrode\server"
+npm run migrate -- --name add_product_warranty
+```
+
+(এটাই `prisma migrate dev`।) এটা `prisma/migrations/`-এ নতুন folder বানায়, local database-এ
+চালায়, আর Prisma client regenerate করে।
+
+> **⚠️ চালানোর আগে `server/.env`-এ `DATABASE_URL` কয়টা আছে আর সেটা কোথায় যায়, দুটোই দেখুন।**
+>
+> ```bash
+> grep -c "^DATABASE_URL" .env                 # ১ ছাড়া অন্য কিছু এলে থামুন
+> grep "^DATABASE_URL" .env | grep -c "@localhost"   # ১ না এলে থামুন — ওটা local নয়
+> ```
+>
+> **শুধু গোনা যথেষ্ট নয়।** ২০২৬-১০-০৫ তারিখে ওখানে প্রথমে **৪টে** ছিল (দুটো পুরনো Neon, একটা
+> local, একটা production)। dotenv একই key বারবার পেলে **শেষেরটা জেতে**, তাই কোনটা সক্রিয় সেটা
+> ফাইলের ক্রম দেখে বোঝা যায় না। পরে সেগুলো কমিয়ে **একটায়** আনা হয় — কিন্তু যেটা থেকে গেল
+> সেটা ছিল `topitsolution.com:3306`, অর্থাৎ **production database সরাসরি**। গুনলে `1` আসত,
+> অথচ `migrate dev` গিয়ে পড়ত আসল shop-এ। তাই দ্বিতীয় লাইনটা host যাচাই করে।
+>
+> **একটাই রাখুন, সেটা local** (`mysql://root:...@localhost:3306/ecom`)। Production URL দরকার
+> হলে `.env.production` নামে আলাদা ফাইলে রাখুন — কোনো Prisma command ওটা নিজে থেকে পড়ে না।
+
+**ধাপ ২ — Generated SQL পড়ুন, তারপর commit**
+
+```bash
+cat prisma/migrations/<নতুন-folder>/migration.sql
+```
+
+`DROP TABLE`, `DROP COLUMN` বা `TRUNCATE` থাকলে **থামুন** — আপনি শুধু কিছু যোগ করতে চেয়েছিলেন,
+অথচ Prisma মোছার SQL লিখেছে। সাধারণত এর মানে schema-তে rename হয়েছে, আর Prisma rename বোঝে
+না: পুরনো column drop করে নতুন একটা বানায়, মাঝের ডেটা হারিয়ে যায়।
+
+**ধাপ ৩ — Server-এ apply করুন**
+
+নতুন build আপলোডের পর (§৫.১), restart-এর **আগে**:
+
+```bash
+source ~/nodevenv/backend/22/bin/activate
+cd ~/backend
+npx prisma migrate deploy
+touch tmp/restart.txt
+```
+
+`migrate deploy` নিরাপদ — শুধু যে migration গুলো এখনো চলেনি সেগুলো চালায়, কোনো reset করে না,
+কিছু জিজ্ঞেসও করে না। **এর আগে phpMyAdmin → Export দিয়ে backup নিন।**
+
+#### নতুন column যোগ করার নিয়ম
+
+Table-এ আগে থেকেই row আছে, তাই নতুন column-কে হয় **nullable**, নয় **default** দিতে হবে:
+
+```prisma
+warranty      String?                      // ✅ nullable
+isFeatured    Boolean  @default(false)      // ✅ default আছে
+stockAlert    Int                           // ❌ migration ফেল করবে
+```
+
+তৃতীয়টায় MySQL বলবে পুরনো row গুলোতে কী বসাবে সেটা জানা নেই।
+
+#### Checksum mismatch — এখানেই আসল ফাঁদ
+
+Migration file apply হওয়ার **পরে** সেটা edit করলে Prisma বলবে:
+
+```
+The migration `...` was modified after it was applied.
+We need to reset the database
+```
+
+**ঐ reset-এ রাজি হবেন না।** আপনার migration এখন মাত্র একটা (৬৩ table-এর `init`), তাই reset
+মানে পুরো shop মুছে যাওয়া। এর জন্য আলাদা script আছে:
+
+```bash
+npx tsx scripts/repair-migration-checksums.ts          # শুধু দেখায়
+npx tsx scripts/repair-migration-checksums.ts --force  # লেখে
+```
+
+এটা শুধু `_prisma_migrations`-এর recorded hash ঠিক করে — কোনো DDL চালায় না, কোনো table ছোঁয়
+না। **তবে এটা নিরাপদ শুধু তখনই যখন edit-টা আসলে কিছু বদলায়নি** (comment, formatting, বা যে
+statement আগেই চলে গেছে)। আসল DDL যোগ করে এটা চালালে database-এ ঐ DDL কখনো চলেনি অথচ "চলেছে"
+লেখা থাকবে। Script-টার header comment-এ পুরো ব্যাখ্যা আছে — চালানোর আগে পড়ুন।
+
+#### Drift আছে কি না — অনুমান না করে জেনে নিন
+
+Schema আর database মিলছে কি না, সেটা Prisma নিজেই বলে দেয়:
+
+```powershell
+npx prisma migrate status
+```
+
+**"Database schema is up to date!"** এলে সব ঠিক — কিছু করার নেই।
+
+আরো নিশ্চিত হতে চাইলে আসল database-এর সাথে schema মিলিয়ে দেখুন (read-only, কিছু বদলায় না):
+
+```powershell
+npx prisma migrate diff --from-config-datasource --to-schema prisma/schema --script
+```
+
+`-- This is an empty migration.` এলে কোনো অমিল নেই।
+
+> **⚠️ `--from-migrations` দিয়ে drift যাচাই করবেন না।** ওটা migration folder থেকে schema
+> পুনর্গঠনের চেষ্টা করে, আর এই repo-তে ব্যর্থ হয়ে "শূন্য থেকে সব বানাও" ধরে নেয় — ফলে ৫৯টা
+> `CREATE TABLE` আর ২৭২টা `DROP` সহ ১৭৬৭ লাইনের SQL বেরোয়, যা দেখতে ভয়ানক drift-এর মতো
+> অথচ আসলে কোনো drift নয়। **ঐ SQL ভুল করে চালালে পুরো database মুছে যাবে।** যাচাই করতে
+> সবসময় `--from-config-datasource` (আসল database) ব্যবহার করুন।
+
+> **Shadow database লাগলে আলাদা খালি একটা বানান** — `CREATE DATABASE shadow_tmp;`।
+> কাজের database (`ecom`) shadow হিসেবে দেবেন না: `migrate diff` ওখানে schema বানায় আর
+> মুছে ফেলে, অর্থাৎ ওর সব table চলে যাবে।
+
+**যদি সত্যিই drift পান** — database-এ column আছে কিন্তু migration-এ নেই — তখন
+`migrate diff`-এর SQL দিয়ে একটা migration folder বানিয়ে `migrate resolve --applied <folder>`
+চালাতে হবে। এটা কোনো SQL চালায় না, শুধু `_prisma_migrations`-এ লিখে রাখে যে ওটা আগেই চলেছে।
+
+---
+
+### ১২.৩ Storefront কোড বদলালে
+
+```powershell
+cd "D:\Next.js\electrode\nextjs"
+npm run build:cpanel
+```
+
+§৪.২-এর hash-check চালাতে ভুলবেন না, তারপর §৬-এর নিয়মে **পুরনো ফাইল মুছে** নতুন build তুলুন:
+
+```bash
+cd ~/storefront
+rm -rf .next node_modules public server.js package.json
+tar -xzf storefront.tar.gz && rm storefront.tar.gz
+touch tmp/restart.txt
+```
+
+> Backend-এর URL না বদলালে backend-এ কিছু করার দরকার নেই — দুটো আলাদা app।
+
+---
+
+### ১২.৪ Admin কোড বদলালে
+
+```powershell
+cd "D:\Next.js\electrode\admin"
+$env:VITE_API_BASE_URL="https://api.topitsolution.com/api/v1"
+$env:VITE_STOREFRONT_URL="https://topitsolution.com"
+npm run build
+```
+
+`admin/dist/`-এর **ভেতরের সব ফাইল** → `~/admin-public/` এ। `.htaccess` আগের বারেরটাই থাকবে,
+আবার বানাতে হবে না।
+
+> দুটো `$env:` ভুলবেন না — এগুলো build-time মান। না দিলে panel localhost-এ request পাঠাবে (§৪.৩)।
+
+---
+
+### ১২.৫ প্রতিটা update-এর আগে — ছোট checklist
+
+- [ ] Schema বদলেছে? → §১২.২, আর **phpMyAdmin → Export দিয়ে backup**
+- [ ] `.env`-এ কয়টা `DATABASE_URL` সক্রিয়? → `grep -c "^DATABASE_URL" .env` (১ হওয়া উচিত)
+- [ ] Storefront build করলে hash-check চালিয়েছেন? → §৪.২
+- [ ] Admin build করলে দুটো `$env:` দিয়েছেন? → §৪.৩
+- [ ] Deploy-এর পর `settings/public` খুলে দেখেছেন?

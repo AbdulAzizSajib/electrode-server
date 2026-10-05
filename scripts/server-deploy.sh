@@ -1,19 +1,25 @@
 #!/bin/bash
-# এই স্ক্রিপ্টটা cPanel server-এ চলে (GitHub Actions SSH দিয়ে call করে)।
+# এই স্ক্রিপ্টটা cPanel server-এ চলে (GitHub Actions SSH দিয়ে call করে —
+# .github/workflows/deploy-backend.yml দেখুন)।
 # কাজ: package.json বদলালে production dependencies install করা, তারপর Passenger restart।
 #
-# কেন: rsync শুধু dist/ + package.json + prisma/ পাঠায়। dependency বদলালে
-# server-এ নতুন package install দরকার; না বদলালে শুধু restart-ই যথেষ্ট।
+# কেন: rsync শুধু বদলানো file পাঠায়। dependency বদলালে server-এ নতুন package
+# install দরকার; না বদলালে শুধু restart-ই যথেষ্ট।
+#
+# ⚠️ এই script কোনো Prisma command চালায় না — migrate deploy ও নয়।
+# Database-এ আসল order/product/customer data আছে। Schema বদলালে সেটা হাতে,
+# backup নিয়ে চালাতে হবে (CPANEL-DEPLOY.md §5.4)। `prisma migrate reset` আর
+# `prisma db push` data মুছে দেয় — এই ফাইলে ওগুলো কখনো আসবে না।
 
 set -euo pipefail
 
-APP_DIR="$HOME/my-nodejs-pro"
-NODE_ENV_ACTIVATE="$HOME/nodevenv/my-nodejs-pro/20/bin/activate"
+APP_DIR="$HOME/backend"
+NODE_ENV_ACTIVATE="$HOME/nodevenv/backend/22/bin/activate"
 HASH_FILE="$APP_DIR/.deploy-pkg-hash"
 
 cd "$APP_DIR"
 
-# cPanel Node 20 environment activate (node + npm PATH-এ আসে)।
+# cPanel Node 22 environment activate (node + npm PATH-এ আসে)।
 # cPanel-এর activate script CL_VIRTUAL_ENV-এর মতো unset variable ছোঁয়,
 # তাই source করার সময় `set -u` (nounset) সাময়িকভাবে বন্ধ রাখি।
 set +u
@@ -32,10 +38,14 @@ fi
 
 if [ "$NEW_HASH" != "$OLD_HASH" ]; then
   echo "==> package.json changed → installing production dependencies..."
-  # package-lock.json থাকলে পুরোনো version আটকে রাখে — মুছে দিই (DEPLOYMENT.md অনুযায়ী)।
-  rm -f package-lock.json
-  # Build server-এ হয় না, prisma generate লাগে না (driver adapter)।
-  # তাই শুধু production deps install করি।
+  # `npm ci` নয়, `npm install` — archive-এ package-lock.json যায় না
+  # (scripts/package-cpanel.mjs staging tree-তে lock রাখে না), আর ci lock
+  # ছাড়া চলে না।
+  #
+  # package-lock.json মুছি না। আগের version মুছত "পুরোনো version আটকে রাখে"
+  # যুক্তিতে, কিন্তু lock-এর কাজই সেটা: ওটা মুছলে প্রতিবার dependency-র নতুন
+  # minor/patch আসে, ফলে host-এ যা চলছে তা CI-তে build হওয়া tree-র সাথে আর
+  # মেলে না — আর সেই অমিল কেবল production-এ ধরা পড়ে।
   npm install --omit=dev --no-audit --no-fund
   echo "$NEW_HASH" > "$HASH_FILE"
 else

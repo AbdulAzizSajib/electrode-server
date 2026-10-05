@@ -8,6 +8,7 @@ import { updateOwnProfileZodSchema } from "../user/user.validation";
 import {
     changePasswordZodSchema,
     forgetPasswordZodSchema,
+    googleExchangeZodSchema,
     loginUserZodSchema,
     registerUserZodSchema,
     resendOtpZodSchema,
@@ -71,6 +72,13 @@ router.post(
 
 router.get("/login/google", AuthController.googleLogin);
 router.get("/google/success", AuthController.googleLoginSuccess);
+// Called server-to-server by the storefront callback, never by a browser. See
+// openspec/changes/fix-google-oauth-cross-domain.
+router.post(
+    "/google/exchange",
+    validateRequest(googleExchangeZodSchema),
+    AuthController.exchangeGoogleCode,
+);
 router.get("/oauth/error", AuthController.handleOAuthError);
 
 export const AuthRoutes = router;

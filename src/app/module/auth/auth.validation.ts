@@ -53,3 +53,12 @@ export const resetPasswordZodSchema = z.object({
         .min(6, "Password must be at least 6 characters")
         .max(50, "Password must be at most 50 characters"),
 });
+
+/**
+ * The one-time code a Google handshake hands the storefront. Shape only: whether
+ * it was issued, has expired or was already used is the service's to answer,
+ * and every one of those is the same 401 there.
+ */
+export const googleExchangeZodSchema = z.object({
+    code: z.string("Code is required").min(1, "Code is required").max(128),
+});
