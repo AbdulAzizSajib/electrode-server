@@ -36,7 +36,15 @@ if [ -f "$HASH_FILE" ]; then
   OLD_HASH="$(cat "$HASH_FILE")"
 fi
 
-if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+if [ -d node_modules ] && [ ! -L node_modules ]; then
+  # A real node_modules directory means it came inside backend.tar.gz
+  # (scripts/package-cpanel.mjs installs production deps into the archive).
+  # The dependencies are already here, and CloudLinux's NodeJS Selector refuses
+  # `npm install` while node_modules is a folder rather than its own symlink
+  # into ~/nodevenv — so installing would only fail. Record the hash and move on.
+  echo "==> node_modules shipped in the archive → skipping npm install."
+  echo "$NEW_HASH" > "$HASH_FILE"
+elif [ "$NEW_HASH" != "$OLD_HASH" ]; then
   echo "==> package.json changed → installing production dependencies..."
   # `npm ci` নয়, `npm install` — archive-এ package-lock.json যায় না
   # (scripts/package-cpanel.mjs staging tree-তে lock রাখে না), আর ci lock

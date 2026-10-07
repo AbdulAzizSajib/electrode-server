@@ -550,8 +550,10 @@ tar -xzf backend.tar.gz && rm backend.tar.gz
 bash scripts/server-deploy.sh
 ```
 
-`server-deploy.sh` দুটো কাজ করে: `package.json` বদলালে production dependency install করে
-(না বদলালে বাদ দেয়), তারপর `tmp/restart.txt` touch করে Passenger reload করায়।
+`server-deploy.sh` দুটো কাজ করে। প্রথমত, dependency দেখে: archive-এর ভেতরে `node_modules` এলে
+(এই পদ্ধতিতে সবসময় আসে) install বাদ দেয়, কারণ সব package আগে থেকেই আছে। তা ছাড়া CloudLinux
+`node_modules` folder থাকা অবস্থায় `npm install` চালাতে দেয় না। অন্য ক্ষেত্রে `package.json` বদলালে
+install করে। দ্বিতীয়ত, `tmp/restart.txt` touch করে Passenger reload করায়।
 
 **Output-এর শেষ লাইন `==> Deploy complete.` কি না দেখুন।** Script টা `set -e` দিয়ে চলে — মাঝের
 কোনো ধাপে (যেমন `npm install`) error হলে সেখানেই থামে, restart পর্যন্ত পৌঁছায়ই না। তখন disk-এ

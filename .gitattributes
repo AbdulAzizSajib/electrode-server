@@ -1,0 +1,5 @@
+# Shell scripts run on the Linux host (cPanel). A CRLF checkout on Windows
+# (core.autocrlf=true) ships them with a carriage return on every line, and
+# bash then fails with "$'\r': command not found" / "set: pipefail: invalid
+# option" — which is what scripts/server-deploy.sh did on 2026-10-06.
+*.sh text eol=lf
