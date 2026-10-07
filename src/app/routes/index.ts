@@ -8,7 +8,7 @@ import { PromoBannerGroupRoutes } from "../module/promo-banner-group/promo-banne
 import { BlogPostRoutes } from "../module/blog-post/blog-post.route";
 import { BrandRoutes } from "../module/brand/brand.route";
 import { CampaignRoutes } from "../module/campaign/campaign.route";
-import { CartRoutes } from "../module/cart/cart.route";
+import { AbandonedCartRoutes, CartRoutes } from "../module/cart/cart.route";
 import { CategoryRoutes } from "../module/category/category.route";
 import { CartCouponRoutes, CouponRoutes } from "../module/coupon/coupon.route";
 import { CustomerAddressRoutes, CustomerRoutes } from "../module/customer/customer.route";
@@ -130,6 +130,11 @@ router.use("/seo", SeoRoutes);
 router.use("/roles", RoleRoutes);
 router.use("/permissions", PermissionRoutes);
 router.use("/audit-logs", AuditLogRoutes);
+// The admin's view of carts shoppers filled and left. NOT under /cart: that
+// router applies optionalAuth to everything it mounts, and these are admin
+// routes. A top-level mount with no parent to swallow it, so no ordering
+// constraint. See openspec/changes/add-abandoned-carts-admin.
+router.use("/abandoned-carts", AbandonedCartRoutes);
 // Read-only and derived — reports how much of the database and of Cloudinary
 // the shop is actually using. A single literal segment, so no ordering
 // constraint. See storage.route.ts for why it is admin-gated.

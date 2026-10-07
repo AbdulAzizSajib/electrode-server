@@ -9618,6 +9618,119 @@
               "response": []
             }
           ]
+        },
+        {
+          "name": "Abandoned Carts",
+          "item": [
+            {
+              "name": "List Abandoned Carts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/abandoned-carts?page=1&limit=20",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "abandoned-carts"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "OWNER/ADMIN/STAFF. Carts holding items with no item added or changed for 24h, newest activity first, valued at current (campaign-aware) prices. Never returns guestToken. See server/openspec/changes/add-abandoned-carts-admin."
+              }
+            },
+            {
+              "name": "Abandoned Cart Summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/abandoned-carts/summary",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "abandoned-carts",
+                    "summary"
+                  ]
+                },
+                "description": "OWNER/ADMIN/STAFF. Count (total/customer/guest) and total value of abandoned carts. See server/openspec/changes/add-abandoned-carts-admin."
+              }
+            },
+            {
+              "name": "Delete Carts",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ids\": [\n    \"<cart id>\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/abandoned-carts",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "abandoned-carts"
+                  ]
+                },
+                "description": "OWNER/ADMIN only (STAFF 403). 1-100 ids; ids already gone are ignored. Audited with the ids removed. See server/openspec/changes/add-abandoned-carts-admin."
+              }
+            },
+            {
+              "name": "Purge Carts",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"guestOlderThanDays\": 30,\n  \"emptyCarts\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/abandoned-carts/purge",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "abandoned-carts",
+                    "purge"
+                  ]
+                },
+                "description": "OWNER/ADMIN only (STAFF 403). guestOlderThanDays: 7 | 30 | 90 (guest carts only); emptyCarts: empty carts older than 24h. At least one required. Never removes a customer cart holding items. Audited with rules and counts. See server/openspec/changes/add-abandoned-carts-admin."
+              }
+            }
+          ]
         }
       ]
     }

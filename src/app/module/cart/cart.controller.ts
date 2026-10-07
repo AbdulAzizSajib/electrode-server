@@ -98,3 +98,58 @@ export const CartController = {
     updateItemQuantity,
     removeItem,
 };
+
+/* Abandoned carts — admin only. See openspec/changes/add-abandoned-carts-admin. */
+
+const getAbandonedCarts = catchAsync(async (req: Request, res: Response) => {
+    const { page, limit } = req.validatedQuery as { page: number; limit: number };
+    const { data, meta } = await CartService.getAbandonedCarts({ page, limit });
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Abandoned carts fetched successfully",
+        data,
+        meta,
+    });
+});
+
+const getAbandonedCartSummary = catchAsync(async (_req: Request, res: Response) => {
+    const result = await CartService.getAbandonedCartSummary();
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Abandoned cart summary fetched successfully",
+        data: result,
+    });
+});
+
+const deleteCarts = catchAsync(async (req: Request, res: Response) => {
+    const result = await CartService.deleteCarts(req.user.userId, req.body.ids);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `${result.deleted} cart(s) deleted`,
+        data: result,
+    });
+});
+
+const purgeCarts = catchAsync(async (req: Request, res: Response) => {
+    const result = await CartService.purgeCarts(req.user.userId, req.body);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Carts purged",
+        data: result,
+    });
+});
+
+export const AbandonedCartController = {
+    getAbandonedCarts,
+    getAbandonedCartSummary,
+    deleteCarts,
+    purgeCarts,
+};

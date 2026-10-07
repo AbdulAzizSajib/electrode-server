@@ -1,12 +1,19 @@
 import crypto from "crypto";
 import status from "http-status";
 import AppError from "../../errorHelpers/AppError";
-import { Prisma, ProductStatus } from "../../../generated/prisma/client";
+import { AuditAction, Prisma, ProductStatus } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { CampaignService } from "../campaign/campaign.service";
 import { CouponService } from "../coupon/coupon.service";
 import { CustomerService } from "../customer/customer.service";
-import { IAddCartItemPayload } from "./cart.interface";
+import { ABANDONED_AFTER_HOURS, EMPTY_CART_MIN_AGE_HOURS } from "./cart.constant";
+import {
+    IAbandonedCart,
+    IAbandonedCartSummary,
+    IAddCartItemPayload,
+    IPurgeCartsPayload,
+} from "./cart.interface";
 
 const CART_INCLUDE = {
     items: {
@@ -438,10 +445,274 @@ const mergeGuestCartIntoCustomerCart = async (customerId: string, guestToken: st
     });
 };
 
+/* ------------------------------------------------------------------------ *
+ * Abandoned carts — the admin's view of carts shoppers filled and left.
+ * See openspec/changes/add-abandoned-carts-admin.
+ * ------------------------------------------------------------------------ */
+
+const HOUR_MS = 60 * 60 * 1000;
+
+const abandonedCutoff = () => new Date(Date.now() - ABANDONED_AFTER_HOURS * HOUR_MS);
+
+/**
+ * "Holds items, and none was added or changed since `cutoff`." Measured on the
+ * ITEMS: `Cart.updatedAt` does not move when items change, so filtering on it
+ * would call a cart abandoned while its shopper was still filling it. The raw
+ * list query in `getAbandonedCarts` states the same rule as
+ * `MAX(updatedAt) <= cutoff`; the two must stay equivalent. Design.md Decision 1.
+ */
+const abandonedWhere = (cutoff: Date): Prisma.CartWhereInput => ({
+    items: { some: {}, none: { updatedAt: { gt: cutoff } } },
+});
+
+/** Money in cents, so a sum of lines cannot drift a paisa from its parts. */
+const toCents = (value: number) => Math.round(value * 100);
+
+/**
+ * What an admin may see of a cart. `guestToken` is deliberately ABSENT: it is
+ * the credential that opens a guest's cart, and this screen has no use for it.
+ */
+const ABANDONED_CART_SELECT = {
+    id: true,
+    customerId: true,
+    customer: { select: { firstName: true, lastName: true, email: true, phone: true } },
+    items: {
+        select: {
+            productId: true,
+            variantId: true,
+            quantity: true,
+            product: { select: { name: true, offerPrice: true } },
+            variant: { select: { name: true, offerPrice: true } },
+        },
+        orderBy: { createdAt: "asc" as const },
+    },
+} satisfies Prisma.CartSelect;
+
+/**
+ * One page of abandoned carts, most recent activity first, valued at what the
+ * shopper would be charged now — campaign prices included, through the same
+ * `withEffectivePrices` their own cart uses, so the two never disagree.
+ *
+ * Ordered in SQL because "newest item first" is an aggregate over a relation,
+ * which Prisma's `orderBy` cannot express; the page's carts are then loaded
+ * through Prisma and put back in that order. `cartId` breaks ties so paging is
+ * stable. Design.md Decisions 2 and 3.
+ */
+const getAbandonedCarts = async ({ page, limit }: { page: number; limit: number }) => {
+    const cutoff = abandonedCutoff();
+    const skip = (page - 1) * limit;
+
+    const [pageRows, totals] = await Promise.all([
+        prisma.$queryRaw<{ cartId: string; lastActivityAt: Date }[]>`
+            SELECT ci.cartId AS cartId, MAX(ci.updatedAt) AS lastActivityAt
+            FROM CartItem ci
+            GROUP BY ci.cartId
+            HAVING MAX(ci.updatedAt) <= ${cutoff}
+            ORDER BY lastActivityAt DESC, ci.cartId ASC
+            LIMIT ${limit} OFFSET ${skip}
+        `,
+        prisma.$queryRaw<{ total: bigint | number }[]>`
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT ci.cartId
+                FROM CartItem ci
+                GROUP BY ci.cartId
+                HAVING MAX(ci.updatedAt) <= ${cutoff}
+            ) abandoned
+        `,
+    ]);
+
+    const total = Number(totals[0]?.total ?? 0);
+    const meta = { page, limit, total, totalPages: Math.ceil(total / limit) };
+    if (pageRows.length === 0) return { data: [] as IAbandonedCart[], meta };
+
+    const carts = await prisma.cart.findMany({
+        where: { id: { in: pageRows.map((row) => row.cartId) } },
+        select: ABANDONED_CART_SELECT,
+    });
+
+    // One campaign lookup for the whole page, not one per cart.
+    const priced = await withEffectivePrices(
+        carts.flatMap((cart) => cart.items.map((item) => ({ ...item, cartId: cart.id }))),
+    );
+
+    const cartsById = new Map(carts.map((cart) => [cart.id, cart]));
+    const data: IAbandonedCart[] = [];
+
+    for (const row of pageRows) {
+        const cart = cartsById.get(row.cartId);
+        // Deleted between the two queries — simply not on this page.
+        if (!cart) continue;
+
+        const items = priced
+            .filter((item) => item.cartId === cart.id)
+            .map((item) => {
+                const unitCents = toCents(item.effectiveUnitPrice);
+                return {
+                    productId: item.productId,
+                    variantId: item.variantId,
+                    name: item.product.name,
+                    variantName: item.variant?.name ?? null,
+                    quantity: item.quantity,
+                    unitPrice: unitCents / 100,
+                    lineTotal: (unitCents * item.quantity) / 100,
+                };
+            });
+
+        data.push({
+            id: cart.id,
+            isGuest: cart.customerId === null,
+            customer: cart.customer
+                ? {
+                      name: [cart.customer.firstName, cart.customer.lastName]
+                          .filter(Boolean)
+                          .join(" "),
+                      phone: cart.customer.phone,
+                      email: cart.customer.email,
+                  }
+                : null,
+            items,
+            itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
+            total: items.reduce((sum, item) => sum + toCents(item.lineTotal), 0) / 100,
+            lastActivityAt: new Date(row.lastActivityAt).toISOString(),
+        });
+    }
+
+    return { data, meta };
+};
+
+/**
+ * How many carts are abandoned, split by owner, and what they are worth.
+ *
+ * The value is priced item by item through `withEffectivePrices`, like the
+ * list, rather than summed in SQL from `offerPrice`: a SQL sum would ignore
+ * campaigns and disagree with the rows beneath it. That means loading every
+ * abandoned item — bounded by real abandoned volume, which purging keeps down.
+ * Design.md Decision 3.
+ */
+const getAbandonedCartSummary = async (): Promise<IAbandonedCartSummary> => {
+    const where = abandonedWhere(abandonedCutoff());
+
+    const [total, guest, items] = await Promise.all([
+        prisma.cart.count({ where }),
+        prisma.cart.count({ where: { ...where, customerId: null } }),
+        prisma.cartItem.findMany({
+            where: { cart: where },
+            select: {
+                productId: true,
+                variantId: true,
+                quantity: true,
+                product: { select: { offerPrice: true } },
+                variant: { select: { offerPrice: true } },
+            },
+        }),
+    ]);
+
+    const priced = await withEffectivePrices(items);
+    const valueCents = priced.reduce(
+        (sum, item) => sum + toCents(item.effectiveUnitPrice) * item.quantity,
+        0,
+    );
+
+    return { total, customer: total - guest, guest, value: valueCents / 100 };
+};
+
+/**
+ * Deletes the chosen carts; their items go with them by the database cascade.
+ * Ids that no longer exist are ignored, so a repeated or concurrent delete
+ * settles instead of failing. The audit record names the carts that were
+ * actually there. A shopper whose cart is deleted simply gets a new empty one
+ * on their next request (`resolveCart`). Design.md Decisions 5 and 6.
+ */
+const deleteCarts = async (userId: string, ids: string[]) => {
+    const existing = await prisma.cart.findMany({
+        where: { id: { in: ids } },
+        select: { id: true },
+    });
+    const existingIds = existing.map((cart) => cart.id);
+
+    const { count } = await prisma.cart.deleteMany({ where: { id: { in: existingIds } } });
+
+    await AuditLogService.record(userId, AuditAction.DELETE, "Cart", undefined, {
+        oldData: { ids: existingIds, deleted: count },
+    });
+
+    return { deleted: count };
+};
+
+/**
+ * The purge rules as `where` clauses, exported so `verify-abandoned-carts.ts`
+ * can exercise EXACTLY these rules restricted to its own `__verify_` carts. The
+ * verify scripts run against the real database, where an unscoped purge would
+ * delete real shoppers' carts.
+ */
+export const CART_PURGE_RULES = {
+    guest: (olderThanDays: number): Prisma.CartWhereInput => {
+        const cutoff = new Date(Date.now() - olderThanDays * 24 * HOUR_MS);
+        return {
+            guestToken: { not: null },
+            createdAt: { lt: cutoff },
+            items: { none: { updatedAt: { gt: cutoff } } },
+        };
+    },
+    empty: (): Prisma.CartWhereInput => ({
+        items: { none: {} },
+        createdAt: { lt: new Date(Date.now() - EMPTY_CART_MIN_AGE_HOURS * HOUR_MS) },
+    }),
+};
+
+/**
+ * The two bulk clean-ups, each one `deleteMany` whose `where` IS the rule, so
+ * "no recent item" is judged when the row is deleted rather than in an earlier
+ * read — a shopper adding an item mid-purge either lands first and keeps the
+ * cart, or lands after and gets a fresh one.
+ *
+ * Neither rule can reach a customer's cart that still holds items: the guest
+ * rule requires a `guestToken`, the empty rule requires no items. That is the
+ * guarantee the spec states, held by construction rather than by a check.
+ *
+ * Guest rule: `createdAt` older than the cutoff is what makes an EMPTY guest
+ * cart count from its creation; for a cart with items it is implied, since no
+ * item is older than its cart. Design.md Decision 5.
+ */
+const purgeCarts = async (userId: string, payload: IPurgeCartsPayload) => {
+    const removed = { guest: 0, empty: 0 };
+
+    if (payload.guestOlderThanDays) {
+        const { count } = await prisma.cart.deleteMany({
+            where: CART_PURGE_RULES.guest(payload.guestOlderThanDays),
+        });
+        removed.guest = count;
+    }
+
+    if (payload.emptyCarts) {
+        const { count } = await prisma.cart.deleteMany({ where: CART_PURGE_RULES.empty() });
+        removed.empty = count;
+    }
+
+    // Criteria and counts, not ids: a first purge on a long-running shop can
+    // remove thousands of rows. Design.md Decision 6.
+    await AuditLogService.record(userId, AuditAction.DELETE, "Cart", undefined, {
+        oldData: {
+            rules: {
+                guestOlderThanDays: payload.guestOlderThanDays ?? null,
+                emptyCarts: payload.emptyCarts ?? false,
+            },
+            removed,
+        },
+    });
+
+    return removed;
+};
+
 export const CartService = {
     getCart,
     addItem,
     updateItemQuantity,
     removeItem,
     mergeGuestCartIntoCustomerCart,
+    getAbandonedCarts,
+    getAbandonedCartSummary,
+    deleteCarts,
+    purgeCarts,
 };
