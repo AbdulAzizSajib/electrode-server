@@ -196,16 +196,6 @@ const updateCategory = async (userId: string, id: string, payload: IUpdateCatego
         );
     }
 
-    // Best-effort cleanup of previously stored images when they're being
-    // replaced, so uploads don't accumulate as orphans in Cloudinary. External
-    // URLs (not on Cloudinary) are skipped by deleteFileFromCloudinary.
-    if (payload.image && payload.image !== existing.image) {
-        await deleteFileFromCloudinary(existing.image);
-    }
-    if (payload.banner && payload.banner !== existing.banner) {
-        await deleteFileFromCloudinary(existing.banner);
-    }
-
     const updated = await prisma.category.update({
         where: { id },
         data: { ...payload, slug },
@@ -218,7 +208,32 @@ const updateCategory = async (userId: string, id: string, payload: IUpdateCatego
 
     revalidateStorefront(CATEGORIES_TAG);
 
+    // Artwork the save replaced or removed (`null`) is now orphaned. AFTER the
+    // save, never before: this used to delete the old file first, so a failed
+    // update left the category pointing at an image that was already gone.
+    await releaseCategoryImages([
+        updated.image !== existing.image ? existing.image : null,
+        updated.banner !== existing.banner ? existing.banner : null,
+    ]);
+
     return updated;
+};
+
+/**
+ * Deletes from Cloudinary the category artwork nothing uses any more. Called
+ * after the database write. An image another category still uses — the same
+ * address pasted into two — is kept, so removing it from one never breaks the
+ * other. Non-Cloudinary URLs are ignored by `deleteFileFromCloudinary`.
+ */
+const releaseCategoryImages = async (urls: (string | null | undefined)[]) => {
+    const candidates = [...new Set(urls.filter((url): url is string => Boolean(url)))];
+
+    for (const url of candidates) {
+        const stillUsed = await prisma.category.count({
+            where: { OR: [{ image: url }, { banner: url }] },
+        });
+        if (stillUsed === 0) await deleteFileFromCloudinary(url);
+    }
 };
 
 const deleteCategory = async (userId: string, id: string) => {
@@ -236,6 +251,9 @@ const deleteCategory = async (userId: string, id: string) => {
     await AuditLogService.record(userId, AuditAction.DELETE, "Category", id, { oldData: existing });
 
     revalidateStorefront(CATEGORIES_TAG);
+
+    // The category is gone; its artwork goes too (it used to stay behind).
+    await releaseCategoryImages([existing.image, existing.banner]);
 
     return deleted;
 };

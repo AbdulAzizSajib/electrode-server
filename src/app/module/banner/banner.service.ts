@@ -1,6 +1,7 @@
 import status from "http-status";
 import { BannerStatus, Prisma } from "../../../generated/prisma/client";
 import AppError from "../../errorHelpers/AppError";
+import { deleteFileFromCloudinary } from "../../config/cloudinary.config";
 import { IQueryParams } from "../../interfaces/query.interface";
 import { prisma } from "../../lib/prisma";
 import { QueryBuilder } from "../../utils/QueryBuilder";
@@ -185,6 +186,31 @@ const getAdminBanners = async (queryParams: IQueryParams) => {
     return queryBuilder.search().filter().sort().paginate().execute();
 };
 
+/**
+ * Deletes from Cloudinary the banner images that are no longer used — the Home
+ * Slider, Banners and Promo tiles are all Banner rows, so this is where all
+ * three stop leaving their old artwork behind.
+ *
+ * CALLED AFTER THE DATABASE WRITE, never before: if the update or delete fails,
+ * the image the row still points at must survive.
+ *
+ * AN IMAGE ANOTHER BANNER STILL USES IS KEPT. Reslotting and re-saving can
+ * leave two rows on one URL, and deleting it under the other would break that
+ * slot on the storefront. The check covers both `image` and `mobileImage`.
+ * URLs that are not on our Cloudinary account are ignored by
+ * `deleteFileFromCloudinary` itself.
+ */
+const releaseBannerImages = async (urls: (string | null | undefined)[]) => {
+    const candidates = [...new Set(urls.filter((url): url is string => Boolean(url)))];
+
+    for (const url of candidates) {
+        const stillUsed = await prisma.banner.count({
+            where: { OR: [{ image: url }, { mobileImage: url }] },
+        });
+        if (stillUsed === 0) await deleteFileFromCloudinary(url);
+    }
+};
+
 const getBannerOrThrow = async (id: string) => {
     const banner = await prisma.banner.findUnique({ where: { id } });
 
@@ -255,6 +281,14 @@ const updateBanner = async (id: string, payload: IUpdateBannerPayload) => {
 
     revalidateStorefront(BANNERS_TAG);
 
+    // An image the update replaced or cleared is now orphaned — unless another
+    // banner still uses it; `releaseBannerImages` checks. Only fields the
+    // request actually changed are candidates.
+    await releaseBannerImages([
+        banner.image !== existing.image ? existing.image : null,
+        banner.mobileImage !== existing.mobileImage ? existing.mobileImage : null,
+    ]);
+
     /*
      * Fires when the banner was in a group BEFORE, or is in one AFTER — not
      * only when the request mentions the field.
@@ -277,6 +311,9 @@ const deleteBanner = async (id: string) => {
     const banner = await prisma.banner.delete({ where: { id } });
 
     revalidateStorefront(BANNERS_TAG);
+
+    // The row is gone; its artwork goes too, unless another banner shares it.
+    await releaseBannerImages([existing.image, existing.mobileImage]);
 
     // Deleting a tile shortens the strip it belonged to.
     if (existing.promoBannerGroupId) {

@@ -1236,6 +1236,17 @@ export const themeSchema = z
         brandDark: hexColorSchema,
         accent: hexColorSchema,
         sale: hexColorSchema,
+        /*
+         * The browsing cards' background (product cards, category, brand,
+         * testimonial and blog tiles). THREE STATES, so `.nullable().optional()`:
+         * omitted keeps the stored colour (carried forward by the service, as
+         * `adminFont` is), a hex sets it, and `null` clears it so the shop
+         * returns to the default look — white product cards, grey category
+         * tiles. Deliberately absent from DEFAULT_THEME: "unset" renders
+         * differently per surface and must survive a read. See
+         * openspec/changes/add-card-background-theme-color, design.md Decision 1.
+         */
+        cardBackground: hexColorSchema.nullable().optional(),
         maxWidth: z.union(
             [z.literal(FULL_WIDTH), z.literal(SITE_CONTENT_WIDTHS)],
             `Content width must be "${FULL_WIDTH}" or one of ${SITE_CONTENT_WIDTHS.join(", ")}px`,

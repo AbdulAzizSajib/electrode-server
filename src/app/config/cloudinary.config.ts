@@ -95,34 +95,55 @@ export const uploadFileToCloudinary = async (
 
 }
 
+/**
+ * Deletes the Cloudinary asset behind `url`. Best-effort: it never throws, so a
+ * failed clean-up can never roll back the operation that made the file
+ * obsolete. Callers delete AFTER their own write has succeeded.
+ *
+ * ONLY OUR OWN ASSETS. A URL that is not on this account's
+ * `res.cloudinary.com/<cloud_name>/` — an external image a merchant pasted, a
+ * different account — is left alone rather than guessed at.
+ *
+ * THE ANSWER IS READ. `destroy` does not throw for a wrong public id; it
+ * resolves `{ result: "not found" }`. This used to log "deleted" regardless, so
+ * a clean-up that never happened looked like one that had. Now only `"ok"` is
+ * logged as a deletion, and anything else is logged as what it was.
+ */
 export const deleteFileFromCloudinary = async (url: string | undefined | null) => {
-
-    // Best-effort helper — nothing to delete if there's no URL to work with.
     if (!url) return;
 
+    // Trimmed: a stray space or CR in the setting must not switch deletion off.
+    const ownPrefix = `/${envVars.CLOUDINARY.CLOUDINARY_CLOUD_NAME.trim()}/`;
+    let pathname: string;
     try {
-        const regex = /\/v\d+\/(.+?)(?:\.[a-zA-Z0-9]+)+$/;
-
-        const match = url.match(regex);
-
-        if (match && match[1]) {
-            const publicId = match[1];
-
-            await cloudinary.uploader.destroy(
-                publicId, {
-                resource_type: "image"
-            }
-            )
-
-            console.log(`File ${publicId} deleted from cloudinary`);
+        const parsed = new URL(url);
+        if (parsed.hostname !== "res.cloudinary.com" || !parsed.pathname.startsWith(ownPrefix)) {
+            return;
         }
-
-    } catch (error) {
-        // Best-effort cleanup: a failed old-file deletion must not roll back the
-        // main operation (tenant update/delete). Log and move on.
-        console.error("Error deleting file from Cloudinary:", error);
+        pathname = parsed.pathname;
+    } catch {
+        return; // not a URL at all — nothing of ours to delete
     }
-}
+
+    // `/<cloud>/<resource_type>/upload/[transformations/]v<version>/<public_id>.<ext>`
+    const match = pathname.match(/^\/[^/]+\/(image|video|raw)\/upload\/(?:.*?\/)?v\d+\/(.+?)(?:\.[a-zA-Z0-9]+)?$/);
+    if (!match) {
+        console.warn(`Cloudinary: could not read a public id from ${url}; not deleted`);
+        return;
+    }
+    const [, resourceType, publicId] = match;
+
+    try {
+        const response = await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
+        if (response?.result === "ok") {
+            console.log(`Cloudinary: deleted ${publicId}`);
+        } else {
+            console.warn(`Cloudinary: ${publicId} not deleted (${response?.result ?? "no result"})`);
+        }
+    } catch (error) {
+        console.error(`Cloudinary: error deleting ${publicId}:`, error);
+    }
+};
 
 
 export const cloudinaryUpload = cloudinary;

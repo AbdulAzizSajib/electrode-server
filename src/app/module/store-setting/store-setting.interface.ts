@@ -240,6 +240,11 @@ export interface ITheme {
     brandDark: string;
     accent: string;
     sale: string;
+    /**
+     * The browsing cards' background. Optional and nullable: absent means the
+     * default look, `null` on a save clears a stored colour. Never defaulted.
+     */
+    cardBackground?: string | null;
     /** Pixels, or `"full"` for an unconstrained content width. */
     maxWidth: number | "full";
     /** The storefront's typeface. */

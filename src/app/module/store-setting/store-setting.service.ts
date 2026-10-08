@@ -1125,6 +1125,18 @@ const resolveThemeFonts = async (
         resolved.adminFont = storedTheme.adminFont;
     }
 
+    /*
+     * The card colour's three states (design.md Decision 1 of
+     * openspec/changes/add-card-background-theme-color): a hex is stored as
+     * sent, `null` CLEARS it — the key is dropped, so the read sees "unset" —
+     * and an omitted key keeps whatever is stored, like `adminFont` above.
+     */
+    if (theme.cardBackground === null) {
+        delete resolved.cardBackground;
+    } else if (theme.cardBackground === undefined && typeof storedTheme?.cardBackground === "string") {
+        resolved.cardBackground = storedTheme.cardBackground;
+    }
+
     return { ...payload, theme: resolved as unknown as ITheme };
 };
 

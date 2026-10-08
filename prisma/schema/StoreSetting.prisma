@@ -308,7 +308,13 @@ model StoreSetting {
   ///     See openspec/changes/add-advance-payment-checkout, design.md D1.
   ///
   /// theme: { background, foreground, brand, brandDark, accent, sale,
-  ///          maxWidth, font: { family, url }, adminFont: { family, url } }
+  ///          cardBackground?, maxWidth, font: { family, url },
+  ///          adminFont: { family, url } }
+  ///   `cardBackground` is OPTIONAL and has no default: absent means the
+  ///   browsing cards keep their default look (white product cards, grey
+  ///   category tiles); a stored hex themes them all. A save omitting it
+  ///   keeps it; `null` removes it. See
+  ///   openspec/changes/add-card-background-theme-color.
   ///   Colours are strict hex - the values are interpolated into an inline
   ///   style attribute on the storefront's <html>, so a value that could carry
   ///   further declarations is rejected. Both `url`s are REBUILT by the parser

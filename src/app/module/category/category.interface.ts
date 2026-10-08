@@ -15,8 +15,8 @@ export interface IUpdateCategoryPayload {
     name?: string;
     slug?: string;
     description?: string;
-    image?: string;
-    banner?: string;
+    image?: string | null;
+    banner?: string | null;
     status?: boolean;
     parentId?: string | null;
     seoTitle?: string;
