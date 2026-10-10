@@ -208,6 +208,9 @@ export interface IBankAccount {
     iconUrl?: string;
 }
 
+/** How the advance payment requirement is calculated. */
+export type IAdvanceCalculationMode = "PERCENTAGE" | "FIXED";
+
 /**
  * Whether the store collects money before it ships, and where that money goes.
  *
@@ -218,6 +221,9 @@ export interface IBankAccount {
  */
 export interface IAdvancePaymentConfig {
     enabled: boolean;
+    calculationMode: IAdvanceCalculationMode;
+    percentage: number;
+    fixedAmount: number;
     mobileAccounts: IMobileBankingAccount[];
     bankAccounts: IBankAccount[];
 }

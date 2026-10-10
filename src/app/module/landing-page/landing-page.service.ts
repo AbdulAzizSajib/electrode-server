@@ -1129,9 +1129,10 @@ const quoteLandingPageOrder = async (
             DELIVERY_CHARGE: splitAdvance(
                 "DELIVERY_CHARGE",
                 totalAmount,
-                charges.shippingAmount,
+                charges.subtotal,
+                checkoutConfig.advancePayment,
             ),
-            FULL: splitAdvance("FULL", totalAmount, charges.shippingAmount),
+            FULL: splitAdvance("FULL", totalAmount, charges.subtotal, checkoutConfig.advancePayment),
         },
     };
 };

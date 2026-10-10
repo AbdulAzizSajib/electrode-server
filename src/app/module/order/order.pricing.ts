@@ -3,7 +3,7 @@ import AppError from "../../errorHelpers/AppError";
 import { ChargeType } from "../../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 import { StoreSettingService } from "../store-setting/store-setting.service";
-import type { ICheckoutConfig } from "../store-setting/store-setting.interface";
+import type { ICheckoutConfig, IAdvanceCalculationMode } from "../store-setting/store-setting.interface";
 
 /**
  * Checkout pricing: what tax and delivery cost, given a set of lines and the
@@ -396,19 +396,32 @@ export interface IAdvanceSplit {
 export const splitAdvance = (
     choice: "DELIVERY_CHARGE" | "FULL",
     totalAmount: number,
-    shippingAmount: number,
+    subtotal: number,
+    advanceConfig?: {
+        calculationMode?: IAdvanceCalculationMode;
+        percentage?: number;
+        fixedAmount?: number;
+    },
 ): IAdvanceSplit => {
     const total = roundMoney(totalAmount);
 
+    if (choice === "FULL") {
+        return { advanceAmount: total, balanceAmount: 0 };
+    }
+
+    let calculatedAdvance = 0;
+    if (advanceConfig?.calculationMode === "FIXED") {
+        calculatedAdvance = advanceConfig.fixedAmount ?? 100;
+    } else {
+        const pct = advanceConfig?.percentage ?? 10;
+        calculatedAdvance = (subtotal * pct) / 100;
+    }
+
     /*
-     * Clamped to the total rather than trusted blindly. A delivery charge
-     * cannot exceed the total that contains it, so this can only fire if a
-     * caller passes a mismatched pair — and the failure it prevents is a
-     * NEGATIVE balance, which would render to the shopper as "you will be
-     * refunded ৳20 on delivery" and be collected as a debt by the courier.
+     * Clamped to the total rather than trusted blindly.
+     * Prevents a NEGATIVE balance if the calculated advance exceeds total order amount.
      */
-    const advance =
-        choice === "FULL" ? total : Math.min(roundMoney(shippingAmount), total);
+    const advance = Math.min(roundMoney(calculatedAdvance), total);
 
     return { advanceAmount: advance, balanceAmount: roundMoney(total - advance) };
 };

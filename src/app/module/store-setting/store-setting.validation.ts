@@ -448,9 +448,15 @@ const bankAccountSchema = z
  * used. That is the rule stated on `StoreSetting.integrationConfig` and already
  * applied to the Facebook Pixel id against its CAPI token.
  */
+export const ADVANCE_CALCULATION_MODES = ["PERCENTAGE", "FIXED"] as const;
+export type AdvanceCalculationMode = (typeof ADVANCE_CALCULATION_MODES)[number];
+
 const advancePaymentSchema = z
     .object({
         enabled: z.boolean(),
+        calculationMode: z.enum(ADVANCE_CALCULATION_MODES).default("PERCENTAGE"),
+        percentage: z.number().min(1).max(100).default(10),
+        fixedAmount: z.number().nonnegative().max(1_000_000).default(100),
         mobileAccounts: z.array(mobileBankingAccountSchema).max(MAX_PAYMENT_ACCOUNTS),
         bankAccounts: z.array(bankAccountSchema).max(MAX_PAYMENT_ACCOUNTS),
     })

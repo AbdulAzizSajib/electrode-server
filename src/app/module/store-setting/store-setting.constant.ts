@@ -208,6 +208,9 @@ export const DEFAULT_CHAT_WIDGET = {
  */
 export const DEFAULT_ADVANCE_PAYMENT = {
     enabled: false,
+    calculationMode: "PERCENTAGE" as const,
+    percentage: 10,
+    fixedAmount: 100,
     mobileAccounts: [] as {
         id: string;
         provider: "BKASH" | "NAGAD" | "ROCKET";

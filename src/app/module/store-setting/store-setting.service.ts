@@ -895,7 +895,21 @@ const withCheckoutDefaults = (stored: unknown): unknown => {
         }
         filled.delivery = delivery;
     }
-    if (!("advancePayment" in filled)) filled.advancePayment = DEFAULT_ADVANCE_PAYMENT;
+    if (!("advancePayment" in filled)) {
+        filled.advancePayment = DEFAULT_ADVANCE_PAYMENT;
+    } else if (typeof filled.advancePayment === "object" && filled.advancePayment !== null && !Array.isArray(filled.advancePayment)) {
+        const advance = { ...(filled.advancePayment as Record<string, unknown>) };
+        if (!("calculationMode" in advance) || (advance.calculationMode !== "PERCENTAGE" && advance.calculationMode !== "FIXED")) {
+            advance.calculationMode = "PERCENTAGE";
+        }
+        if (typeof advance.percentage !== "number") {
+            advance.percentage = 10;
+        }
+        if (typeof advance.fixedAmount !== "number") {
+            advance.fixedAmount = 100;
+        }
+        filled.advancePayment = advance;
+    }
     return filled;
 };
 

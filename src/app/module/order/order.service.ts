@@ -1328,21 +1328,19 @@ const placeOrder = async (
      */
     const advanceSplit =
         claim && claimedAccount
-            ? splitAdvance(claim.choice, totalAmount, shippingAmount)
+            ? splitAdvance(claim.choice, totalAmount, subtotal, checkoutConfig.advancePayment)
             : { advanceAmount: 0, balanceAmount: totalAmount };
 
     if (claim && claimedAccount) {
         /*
-         * A zero advance is not an order, it is a mistake. It happens when the
-         * shopper picked "pay the delivery charge" on an order whose delivery
-         * was waived — the free-shipping threshold, or a coupon. Asking them to
+         * A zero advance is not an order, it is a mistake. Asking them to
          * send ৳0 and then verify it would be asking for a transaction that
          * cannot exist.
          */
         if (advanceSplit.advanceAmount <= 0) {
             throw new AppError(
                 status.BAD_REQUEST,
-                "There is no delivery charge to pay in advance on this order — please place it as cash on delivery.",
+                "There is no advance payment required on this order — please place it as cash on delivery.",
             );
         }
 
@@ -1911,10 +1909,13 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
      * select a default before this is ever called — and quoting without one
      * would mean showing a total that omits a charge the order will carry.
      */
+    const checkoutConfig = StoreSettingService.checkoutConfigOf(storeSetting.checkoutConfig);
+
     const charges = await quoteCharges({
         lines: pricingLines,
         discountAmount,
         deliveryOptionKey: payload.deliveryOptionKey,
+        checkoutConfig,
         couponWaivesShipping: Boolean(couponResult?.freeShipping),
         freeShippingThreshold:
             storeSetting.freeShippingThreshold === null
@@ -1944,8 +1945,13 @@ const quoteCheckout = async (actor: ICheckoutActor, payload: IQuoteCheckoutPaylo
      * feature on mid-session.
      */
     const advanceOptions = {
-        DELIVERY_CHARGE: splitAdvance("DELIVERY_CHARGE", quotedTotal, charges.shippingAmount),
-        FULL: splitAdvance("FULL", quotedTotal, charges.shippingAmount),
+        DELIVERY_CHARGE: splitAdvance(
+            "DELIVERY_CHARGE",
+            quotedTotal,
+            charges.subtotal,
+            checkoutConfig.advancePayment,
+        ),
+        FULL: splitAdvance("FULL", quotedTotal, charges.subtotal, checkoutConfig.advancePayment),
     };
 
     return {
