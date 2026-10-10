@@ -266,6 +266,7 @@ export const DEFAULT_CHECKOUT_CONFIG = {
      * `checkoutConfigUpdateSchema`.
      */
     delivery: {
+        feeMode: "AUTOMATIC" as const,
         offersPickup: false,
         options: [] as {
             key: string;

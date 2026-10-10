@@ -223,6 +223,7 @@ const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const MAX_DELIVERY_OPTIONS = 20;
 
 export const DELIVERY_KINDS = ["DELIVERY", "PICKUP"] as const;
+export const DELIVERY_FEE_MODES = ["AUTOMATIC", "MANUAL"] as const;
 
 /**
  * One delivery choice a shopper picks at checkout.
@@ -261,6 +262,7 @@ const deliveryOptionSchema = z
  */
 const deliverySettingsSchema = z
     .object({
+        feeMode: z.enum(DELIVERY_FEE_MODES).default("AUTOMATIC"),
         offersPickup: z.boolean(),
         options: z.array(deliveryOptionSchema).max(MAX_DELIVERY_OPTIONS),
     })

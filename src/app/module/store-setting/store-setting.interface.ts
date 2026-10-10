@@ -141,6 +141,9 @@ export interface ICheckoutField {
 /** Whether an option is delivered to the shopper or collected by them. */
 export type IDeliveryKind = "DELIVERY" | "PICKUP";
 
+/** Whether the delivery fee is automatically derived from the address or manually chosen by the shopper. */
+export type IDeliveryFeeMode = "AUTOMATIC" | "MANUAL";
+
 /**
  * One delivery choice offered at checkout.
  *
@@ -157,6 +160,8 @@ export interface IDeliveryOption {
 }
 
 export interface IDeliverySettings {
+    /** Delivery fee mode: AUTOMATIC (derived from destination) or MANUAL (chosen by customer). */
+    feeMode: IDeliveryFeeMode;
     /** When false, pickup options are not offered even if some are configured. */
     offersPickup: boolean;
     /** Empty only for a store that has never configured delivery, which cannot take orders. */

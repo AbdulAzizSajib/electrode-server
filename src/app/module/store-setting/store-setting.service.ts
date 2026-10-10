@@ -886,7 +886,15 @@ const withCheckoutDefaults = (stored: unknown): unknown => {
     if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return stored;
 
     const filled: Record<string, unknown> = { ...stored };
-    if (!("delivery" in filled)) filled.delivery = DEFAULT_CHECKOUT_CONFIG.delivery;
+    if (!("delivery" in filled)) {
+        filled.delivery = DEFAULT_CHECKOUT_CONFIG.delivery;
+    } else if (typeof filled.delivery === "object" && filled.delivery !== null && !Array.isArray(filled.delivery)) {
+        const delivery = { ...(filled.delivery as Record<string, unknown>) };
+        if (!("feeMode" in delivery) || (delivery.feeMode !== "AUTOMATIC" && delivery.feeMode !== "MANUAL")) {
+            delivery.feeMode = "AUTOMATIC";
+        }
+        filled.delivery = delivery;
+    }
     if (!("advancePayment" in filled)) filled.advancePayment = DEFAULT_ADVANCE_PAYMENT;
     return filled;
 };
