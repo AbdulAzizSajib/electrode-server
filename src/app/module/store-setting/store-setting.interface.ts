@@ -374,7 +374,7 @@ export interface IUpdateStoreSettingPayload {
     copyrightText?: string;
 
     /**
-     * Which of the two things each brand slot shows, set independently.
+     * What each brand slot shows (TEXT, LOGO or BOTH), set independently.
      *
      * The mode decides — not whether `logoUrl`/`footerLogoUrl` above are set —
      * so a slot showing the wordmark keeps its artwork on file. Omitting a key

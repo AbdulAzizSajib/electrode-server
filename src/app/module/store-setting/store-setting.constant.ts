@@ -360,7 +360,30 @@ export const DEFAULT_CATALOG_CONFIG = {
      * Decision 5c.
      */
     cardQuantityControl: false,
+    /*
+     * How many product cards a full-width product grid shows across on a large
+     * screen — one of PRODUCT_GRID_COLUMNS below.
+     *
+     * SIX because that is what every such grid rendered before this was a
+     * setting, so a store that never saves it — and a storefront whose settings
+     * read fails — keeps the layout it has always had.
+     *
+     * See openspec/changes/add-product-grid-columns-setting, design.md.
+     */
+    productGridColumns: 6,
 };
+
+/**
+ * The column counts a merchant may choose for `catalogConfig.productGridColumns`.
+ *
+ * A closed set rather than a range: the storefront needs a LITERAL Tailwind
+ * class per count (it cannot build `lg:grid-cols-${n}`), so every value here
+ * must have one written out there. Mirrored by hand, in this order, in the
+ * admin's PRODUCT_GRID_COLUMN_OPTIONS and the storefront's `lib/product-grid.ts`.
+ */
+export const PRODUCT_GRID_COLUMNS = [4, 5, 6] as const;
+
+export type ProductGridColumns = (typeof PRODUCT_GRID_COLUMNS)[number];
 
 /**
  * Every section the storefront homepage can be composed from, in the order it

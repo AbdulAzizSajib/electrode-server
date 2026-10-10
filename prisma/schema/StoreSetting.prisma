@@ -106,10 +106,12 @@ model StoreSetting {
   faviconUrl      String? @db.VarChar(512)
   adminFaviconUrl String? @db.VarChar(512)
 
-  /// Whether each brand slot shows the wordmark or its logo image.
+  /// What each brand slot shows: the wordmark (TEXT), its logo image (LOGO),
+  /// or the logo with the wordmark beside it (BOTH).
   ///
-  /// Set INDEPENDENTLY — header logo above a wordmark footer, or the reverse,
-  /// are both ordinary configurations. See the BrandDisplayMode doc-comment for
+  /// Set INDEPENDENTLY — header logo above a wordmark footer, the reverse, or
+  /// logo and name in the header above a wordmark footer, are all ordinary
+  /// configurations. See the BrandDisplayMode doc-comment for
   /// why this is a stored mode rather than something derived from whether an
   /// image happens to be uploaded.
   ///
@@ -120,8 +122,8 @@ model StoreSetting {
   /// already uploaded artwork. The migration is additive with no backfill and
   /// changes no storefront's rendering on deploy.
   ///
-  /// A slot in LOGO mode whose fallback chain yields no URL renders the
-  /// wordmark. The brand block is on every page of the site, so a blank one is
+  /// A slot in LOGO or BOTH mode whose fallback chain yields no URL renders
+  /// the wordmark alone. The brand block is on every page of the site, so a blank one is
   /// worse than the text it replaced — see the `storefront-branding` spec, "A
   /// brand slot never renders empty".
   headerBrandMode BrandDisplayMode @default(TEXT)
@@ -329,8 +331,13 @@ model StoreSetting {
   checkoutConfig Json?
   theme          Json?
 
-  /// Which optional catalog features the storefront offers:
-  /// { showWishlist, showCompare, showQuickView }, all booleans.
+  /// Which optional catalog features the storefront offers, and how a listing
+  /// is laid out: { showWishlist, showCompare, showQuickView, openCartOnAdd,
+  /// cardQuantityControl }, all booleans, plus productGridColumns, one of
+  /// 4 | 5 | 6 (PRODUCT_GRID_COLUMNS) — how many product cards a full-width
+  /// product grid shows across on a large screen. It defaults to 6, the grid
+  /// every store had before it was a setting. See
+  /// openspec/changes/add-product-grid-columns-setting.
   ///
   /// Zod-validated on write like the blobs above — `catalogConfigSchema` in
   /// store-setting.validation.ts is the ONLY gate on its shape.

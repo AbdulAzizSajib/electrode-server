@@ -54,7 +54,7 @@ const FOOTER_ART = "https://example.invalid/__verify_footer_logo.png";
  * The resolver — mode × artwork, both slots
  * ------------------------------------------------------------------ */
 
-type Mode = "TEXT" | "LOGO";
+type Mode = "TEXT" | "LOGO" | "BOTH";
 type Slot = "header" | "footer";
 
 interface BrandSource {
@@ -64,15 +64,29 @@ interface BrandSource {
     footerLogoUrl: string | null;
 }
 
+/** The alt text a logo-alone slot carries. Stands in for the shop's name. */
+const SHOP_NAME = "__verify_shop";
+
+interface Resolved {
+    kind: "text" | "logo";
+    src?: string;
+    alt?: string;
+    withWordmark?: boolean;
+}
+
 /**
  * Mirrors `resolveBrandSlot` in the storefront (frontend/src/lib/brand-slot.ts).
  *
  * Three rules, in order: the mode decides; the footer falls back to the
- * header's artwork; anything unresolved falls back to text.
+ * header's artwork; anything unresolved falls back to text. LOGO and BOTH share
+ * the artwork chain; BOTH adds the wordmark and empties the alt, so the name is
+ * announced once, by the visible text. See add-brand-display-both design.md,
+ * Decision 3.
  */
-const resolve = (settings: BrandSource, slot: Slot): { kind: "text" | "logo"; src?: string } => {
+const resolve = (settings: BrandSource, slot: Slot): Resolved => {
     const mode = slot === "header" ? settings.headerBrandMode : settings.footerBrandMode;
-    if (mode !== "LOGO") return { kind: "text" };
+    if (mode === "TEXT") return { kind: "text" };
+    const withWordmark = mode === "BOTH";
 
     /*
      * `||` and not `??`: a cleared footer logo arrives as `""` as readily as
@@ -82,7 +96,7 @@ const resolve = (settings: BrandSource, slot: Slot): { kind: "text" | "logo"; sr
      */
     const src = slot === "header" ? settings.logoUrl : settings.footerLogoUrl || settings.logoUrl;
 
-    return src ? { kind: "logo", src } : { kind: "text" };
+    return src ? { kind: "logo", src, alt: withWordmark ? "" : SHOP_NAME, withWordmark } : { kind: "text" };
 };
 
 const source = (over: Partial<BrandSource> = {}): BrandSource => ({
@@ -193,6 +207,43 @@ check(
     "a store that has never opened the branding screen renders exactly as it did before this change",
 );
 
+console.log("\n--- Brand slot resolution: logo and name together (BOTH) ---\n");
+
+check(
+    "BOTH in the header renders the header's artwork with the wordmark",
+    (() => {
+        const r = resolve(source({ headerBrandMode: "BOTH", logoUrl: HEADER_ART }), "header");
+        return r.kind === "logo" && r.src === HEADER_ART && r.withWordmark === true;
+    })(),
+    "the same artwork chain as LOGO, with the name beside it",
+);
+
+check(
+    "BOTH in the footer borrows the header's artwork",
+    (() => {
+        const r = resolve(source({ footerBrandMode: "BOTH", logoUrl: HEADER_ART }), "footer");
+        return r.kind === "logo" && r.src === HEADER_ART && r.withWordmark === true;
+    })(),
+    "the footer fallback carries over unchanged",
+);
+
+check(
+    "BOTH with no artwork anywhere degrades to the wordmark alone",
+    resolve(source({ headerBrandMode: "BOTH" }), "header").kind === "text" &&
+        resolve(source({ footerBrandMode: "BOTH" }), "footer").kind === "text",
+    "never an empty or broken image beside the name",
+);
+
+check(
+    "the alt is empty exactly when the wordmark is beside the logo",
+    (() => {
+        const both = resolve(source({ headerBrandMode: "BOTH", logoUrl: HEADER_ART }), "header");
+        const logo = resolve(source({ headerBrandMode: "LOGO", logoUrl: HEADER_ART }), "header");
+        return both.alt === "" && logo.alt === SHOP_NAME && logo.withWordmark === false;
+    })(),
+    "the shop's name is announced once per slot, whatever its mode",
+);
+
 /* ------------------------------------------------------------------ *
  * Persistence — the partial upsert and the height bounds
  * ------------------------------------------------------------------ */
@@ -274,6 +325,28 @@ async function persistence() {
             "a one-key PATCH leaves the other slot's mode alone",
             afterSwitch?.footerBrandMode === "TEXT" && afterSwitch?.footerLogoUrl === FOOTER_ART,
             "an omitted key means 'leave unchanged', which is what makes the two slots independent",
+        );
+
+        /* BOTH is storable, and saving it into one slot leaves the other alone. */
+        await StoreSettingService.updateStoreSetting(VERIFY_USER, { headerBrandMode: "BOTH" });
+        const afterBoth = await StoreSettingService.getPublicStoreSetting();
+        check(
+            "BOTH round-trips through the public read",
+            afterBoth.headerBrandMode === "BOTH",
+            `header ${afterBoth.headerBrandMode}`,
+        );
+        check(
+            "saving BOTH into the header leaves the footer untouched",
+            afterBoth.footerBrandMode === "TEXT" && afterBoth.footerLogoUrl === FOOTER_ART,
+            `footer ${afterBoth.footerBrandMode}`,
+        );
+        check(
+            "the storefront would render logo and name in the header",
+            (() => {
+                const r = resolve(afterBoth as BrandSource, "header");
+                return r.kind === "logo" && r.withWordmark === true;
+            })(),
+            "resolved from what was actually stored",
         );
 
         /*

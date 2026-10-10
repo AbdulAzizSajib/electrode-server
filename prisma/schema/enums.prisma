@@ -454,15 +454,21 @@ enum SiteMode {
 /// makes the header's logo fall through into the footer by the fallback in
 /// StoreSetting.
 ///
-/// A closed set of two rather than a boolean `headerShowsLogo`, for the reason
-/// SiteMode above gives: a third variant (logo and wordmark side by side) would
-/// be an added value rather than a second flag to keep consistent with the
-/// first. Both columns default to TEXT, which is exactly what every storefront
-/// rendered before this enum existed. See add-header-footer-brand-display
-/// design.md, Decision 1.
+/// A closed set rather than a boolean `headerShowsLogo`, for the reason
+/// SiteMode above gives: the third variant it anticipated, BOTH (logo and
+/// wordmark side by side), arrived as an added value rather than a second flag
+/// to keep consistent with the first. Both columns default to TEXT, which is
+/// exactly what every storefront rendered before this enum existed. See
+/// add-header-footer-brand-display design.md, Decision 1.
+///
+/// BOTH is APPENDED after LOGO, never inserted: MySQL stores an ENUM by index,
+/// so appending is an in-place metadata change and existing rows keep their
+/// meaning, while reordering would rewrite the table. Keep any later value at
+/// the end too. See add-brand-display-both design.md, Decision 1.
 enum BrandDisplayMode {
   TEXT
   LOGO
+  BOTH
 }
 
 /// Whether a shopper takes delivery of an order or collects it themselves.

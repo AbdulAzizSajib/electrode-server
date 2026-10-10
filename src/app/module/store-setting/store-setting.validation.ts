@@ -1,7 +1,12 @@
 import z from "zod";
 import { isValidPhone, normalizePhone } from "../../utils/phone";
 import { parseGoogleFontEmbed } from "./google-font";
-import { HOME_SECTION_KEYS, HOME_SECTION_VARIANTS, PROMO_SECTION_KEY } from "./store-setting.constant";
+import {
+    HOME_SECTION_KEYS,
+    HOME_SECTION_VARIANTS,
+    PRODUCT_GRID_COLUMNS,
+    PROMO_SECTION_KEY,
+} from "./store-setting.constant";
 
 /**
  * These schemas are the ONLY thing standing between a malformed nav tree and
@@ -733,7 +738,7 @@ export const seoConfigSchema = z
  * Which optional catalog features the storefront offers.
  *
  * `.strict()` like the blobs around it, so a typo'd key is a 400 rather than a
- * flag silently reading at its default forever. All FIVE are required on write:
+ * flag silently reading at its default forever. All SIX are required on write:
  * the admin panel edits them as one screen, and a partial write would leave the
  * reader unable to tell "the merchant turned this off" from "this key predates
  * the flag" — a distinction the per-key read default already handles, and which
@@ -743,6 +748,13 @@ export const seoConfigSchema = z
  * its own: what it governs is what a LISTING does when a shopper acts on it,
  * which is what the three beside it govern too. See
  * openspec/changes/add-product-slider-and-card-quantity, design.md Decision 6.
+ *
+ * `productGridColumns` is the one key that is not a boolean, and joined for the
+ * same reason: it decides how a listing is laid out. A LITERAL set, not
+ * `z.number().int().min(4).max(6)`, so the accepted set is exactly
+ * PRODUCT_GRID_COLUMNS — the storefront has one generated class per member and
+ * nothing for any other value. `"5"` is refused, not coerced. See
+ * openspec/changes/add-product-grid-columns-setting, design.md Decisions 1-2.
  */
 export const catalogConfigSchema = z
     .object({
@@ -751,6 +763,7 @@ export const catalogConfigSchema = z
         showQuickView: z.boolean(),
         openCartOnAdd: z.boolean(),
         cardQuantityControl: z.boolean(),
+        productGridColumns: z.literal(PRODUCT_GRID_COLUMNS),
     })
     .strict();
 
@@ -1347,9 +1360,9 @@ export const updateStoreSettingZodSchema = z.object({
     copyrightText: z.string().max(300).optional(),
 
     /*
-     * Which of the two things each brand slot shows. `.optional()` alone, like
+     * Which of the three things each brand slot shows. `.optional()` alone, like
      * every other scalar here: an omitted key means "leave unchanged", and a
-     * mode always has one of exactly two values, so there is no third "unset"
+     * mode always has one of exactly three values, so there is no extra "unset"
      * state that would call for `.nullable()`.
      *
      * The MODE decides what renders — not whether `logoUrl`/`footerLogoUrl`
@@ -1359,10 +1372,10 @@ export const updateStoreSettingZodSchema = z.object({
      * design.md, Decision 1.
      */
     headerBrandMode: z
-        .enum(["TEXT", "LOGO"], "Header brand display must be TEXT or LOGO")
+        .enum(["TEXT", "LOGO", "BOTH"], "Header brand display must be TEXT, LOGO or BOTH")
         .optional(),
     footerBrandMode: z
-        .enum(["TEXT", "LOGO"], "Footer brand display must be TEXT or LOGO")
+        .enum(["TEXT", "LOGO", "BOTH"], "Footer brand display must be TEXT, LOGO or BOTH")
         .optional(),
 
     /* Bounded here and nowhere else — see MIN_LOGO_HEIGHT above. */
